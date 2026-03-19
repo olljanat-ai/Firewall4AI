@@ -1,3 +1,7 @@
 bin/
+dist/
 data/
 *.exe
+*.qcow2
+*.vmdk
+*.vhdx

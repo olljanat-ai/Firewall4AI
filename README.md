@@ -36,6 +36,40 @@ State is persisted to a JSON file in the data directory.
 
 ## Quick Start
 
+### Option A: VM Appliance (Recommended)
+
+Download a pre-built VM image from the [Releases](../../releases) page:
+
+| Format | Platform |
+|--------|----------|
+| `squid4claw-*.qcow2` | QEMU/KVM, Proxmox |
+| `squid4claw-*.vmdk` | VMware ESXi/Workstation |
+| `squid4claw-*.vhdx` | Hyper-V |
+
+The VM is a minimal Alpine Linux appliance that runs Squid4Claw as the main service with two network interfaces:
+
+| Interface | Configuration | Purpose |
+|-----------|--------------|---------|
+| `eth0` | DHCP client | External/uplink to the internet |
+| `eth1` | Static `10.255.255.1/24` | Internal network for AI agents |
+
+**What's included:**
+- **DHCP server** on eth1 serving `10.255.255.10` - `10.255.255.254` to agents
+- **DNS server** (dnsmasq) forwarding to `1.1.1.1` and `1.0.0.1`
+- **iptables firewall** that blocks all direct internet access from the agent network -- agents can only reach the proxy (port 8080) and admin UI (port 8443)
+- **TLS MITM inspection** with auto-generated CA certificate
+
+**Setup:**
+1. Create a VM with 2 NICs: one bridged/NAT to the internet, one on an isolated internal network
+2. Boot the VM from the downloaded disk image
+3. Access the admin UI at `https://10.255.255.1:8443` from the agent network
+4. Download the CA cert at `https://10.255.255.1:8443/ca.crt` and install it on agent machines
+5. Configure agents to use `http://10.255.255.1:8080` as their HTTP proxy
+
+Default root password: `squid4claw` (change after first login via serial console or SSH)
+
+### Option B: Standalone Binary
+
 ```bash
 # Build
 make build
@@ -304,6 +338,17 @@ make build
 make all
 ```
 
+## Building VM Images Locally
+
+To build VM images locally (requires root on Alpine Linux or a CI environment):
+
+```bash
+cd vm
+sudo VERSION=v1.0.0 ./build.sh
+```
+
+This produces `dist/squid4claw-v1.0.0.{qcow2,vmdk,vhdx}`.
+
 ## Release
 
 Releases are automated via GitHub Actions. To create a release:
@@ -313,7 +358,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-This builds a Linux amd64 binary and creates a GitHub release with auto-generated release notes.
+This builds a Linux amd64 binary and VM appliance images (qcow2, vmdk, vhdx), then creates a GitHub release with auto-generated release notes.
 
 ## License
 

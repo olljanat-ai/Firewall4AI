@@ -31,9 +31,58 @@ jobs:
             -o squid4claw-linux-amd64 \
             ./cmd/squid4claw/
 
+      - name: Build VM images
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+
+          # Install dependencies for alpine-make-vm-image
+          sudo apt-get update
+          sudo apt-get install -y qemu-utils e2fsprogs dosfstools
+
+          # Download alpine-make-vm-image
+          wget -q https://raw.githubusercontent.com/alpinelinux/alpine-make-vm-image/v0.13.3/alpine-make-vm-image
+          chmod +x alpine-make-vm-image
+
+          # Build the binary for the VM
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags "-s -w -X main.Version=${VERSION}" \
+            -o vm/squid4claw \
+            ./cmd/squid4claw/
+
+          # Build qcow2 image
+          sudo ./alpine-make-vm-image \
+            --image-format qcow2 \
+            --image-size 1G \
+            --branch latest-stable \
+            --packages "iptables dnsmasq" \
+            --fs-skel-dir vm/rootfs \
+            --serial-console \
+            --script-chroot \
+            -- \
+            "squid4claw-${VERSION}.qcow2" \
+            vm/configure.sh
+
+          # Convert to VMware vmdk
+          qemu-img convert -f qcow2 -O vmdk \
+            -o adapter_type=lsilogic,subformat=streamOptimized \
+            "squid4claw-${VERSION}.qcow2" "squid4claw-${VERSION}.vmdk"
+
+          # Convert to Hyper-V vhdx
+          qemu-img convert -f qcow2 -O vhdx \
+            -o subformat=dynamic \
+            "squid4claw-${VERSION}.qcow2" "squid4claw-${VERSION}.vhdx"
+
+          # Cleanup build artifact
+          rm -f vm/squid4claw
+
+          ls -lh squid4claw-${VERSION}.*
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             squid4claw-linux-amd64
+            squid4claw-*.qcow2
+            squid4claw-*.vmdk
+            squid4claw-*.vhdx
