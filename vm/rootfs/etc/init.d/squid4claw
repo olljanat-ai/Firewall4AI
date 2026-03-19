@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+
+description="Squid4Claw AI proxy"
+command="/usr/bin/squid4claw"
+command_args="-config /etc/squid4claw/config.json"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/squid4claw.log"
+error_log="/var/log/squid4claw.log"
+
+depend() {
+    need net
+    after dnsmasq
+    after local
+}
+
+start_pre() {
+    checkpath -d -m 0755 /var/lib/squid4claw
+}

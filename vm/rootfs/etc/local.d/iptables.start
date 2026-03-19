@@ -1,0 +1,92 @@
+#!/bin/sh
+# Squid4Claw network hardening rules
+# Forces all HTTP/HTTPS from the internal network (eth1/10.255.255.0/24)
+# through the proxy and blocks all other outbound traffic.
+
+INTERNAL_IF=eth1
+EXTERNAL_IF=eth0
+INTERNAL_NET=10.255.255.0/24
+PROXY_IP=10.255.255.1
+PROXY_PORT=8080
+ADMIN_PORT=8443
+
+# ============================================================
+# Enable IP forwarding (needed for NAT of proxy's outbound)
+# ============================================================
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# ============================================================
+# Flush existing rules
+# ============================================================
+iptables -F
+iptables -t nat -F
+iptables -X
+
+# ============================================================
+# Default policies
+# ============================================================
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+# ============================================================
+# Loopback: allow all
+# ============================================================
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# ============================================================
+# Allow established/related connections
+# ============================================================
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# ============================================================
+# INPUT rules for the internal interface (eth1)
+# ============================================================
+
+# Allow DHCP (clients requesting addresses)
+iptables -A INPUT -i $INTERNAL_IF -p udp --dport 67 -j ACCEPT
+
+# Allow DNS (dnsmasq)
+iptables -A INPUT -i $INTERNAL_IF -p udp --dport 53 -j ACCEPT
+iptables -A INPUT -i $INTERNAL_IF -p tcp --dport 53 -j ACCEPT
+
+# Allow proxy connections from internal network
+iptables -A INPUT -i $INTERNAL_IF -s $INTERNAL_NET -p tcp --dport $PROXY_PORT -j ACCEPT
+
+# Allow admin UI connections from internal network
+iptables -A INPUT -i $INTERNAL_IF -s $INTERNAL_NET -p tcp --dport $ADMIN_PORT -j ACCEPT
+
+# Allow ICMP (ping) from internal network for diagnostics
+iptables -A INPUT -i $INTERNAL_IF -p icmp -j ACCEPT
+
+# Drop everything else from internal network
+iptables -A INPUT -i $INTERNAL_IF -j DROP
+
+# ============================================================
+# INPUT rules for the external interface (eth0)
+# ============================================================
+
+# Allow DHCP responses
+iptables -A INPUT -i $EXTERNAL_IF -p udp --sport 67 --dport 68 -j ACCEPT
+
+# Allow ICMP
+iptables -A INPUT -i $EXTERNAL_IF -p icmp -j ACCEPT
+
+# Drop everything else from external
+iptables -A INPUT -i $EXTERNAL_IF -j DROP
+
+# ============================================================
+# FORWARD rules: block ALL forwarding from internal network
+# Agents cannot route through this host to reach the internet.
+# They MUST use the proxy on port 8080.
+# ============================================================
+iptables -A FORWARD -i $INTERNAL_IF -j DROP
+
+# ============================================================
+# NAT: masquerade proxy's outbound connections via eth0
+# ============================================================
+iptables -t nat -A POSTROUTING -o $EXTERNAL_IF -j MASQUERADE
+
+echo "Squid4Claw iptables rules applied"
