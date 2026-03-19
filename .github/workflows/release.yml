@@ -54,9 +54,8 @@ jobs:
             --image-format qcow2 \
             --image-size 1G \
             --branch latest-stable \
-            --packages "iptables dnsmasq" \
+            --packages "$(cat vm/packages)" \
             --fs-skel-dir vm/rootfs \
-            --serial-console \
             --script-chroot \
             -- \
             "squid4claw-${VERSION}.qcow2" \

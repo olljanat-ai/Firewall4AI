@@ -51,8 +51,9 @@ EOF
 mkdir -p /var/lib/squid4claw
 
 # ============================================================
-# Serial console for headless access
+# Auto login to console
 # ============================================================
-sed -i 's/^#ttyS0/ttyS0/' /etc/inittab 2>/dev/null || true
+sed -i -e 's/tty1::respawn:\/sbin\/getty 38400 tty1/tty1::respawn:\/sbin\/agetty --autologin root tty1 linux/' /etc/inittab
 
 echo "Squid4Claw VM configuration complete"
+
