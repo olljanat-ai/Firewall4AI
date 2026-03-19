@@ -8,7 +8,7 @@ EXTERNAL_IF=eth0
 INTERNAL_NET=10.255.255.0/24
 PROXY_IP=10.255.255.1
 PROXY_PORT=8080
-ADMIN_PORT=8443
+ADMIN_PORT=443
 
 # ============================================================
 # Enable IP forwarding (needed for NAT of proxy's outbound)
@@ -42,6 +42,11 @@ iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 # ============================================================
+# INPUT rules for the external interface (eth0): allow all
+# ============================================================
+iptables -A INPUT -i eth0 -j ACCEPT
+
+# ============================================================
 # INPUT rules for the internal interface (eth1)
 # ============================================================
 
@@ -55,34 +60,18 @@ iptables -A INPUT -i $INTERNAL_IF -p tcp --dport 53 -j ACCEPT
 # Allow proxy connections from internal network
 iptables -A INPUT -i $INTERNAL_IF -s $INTERNAL_NET -p tcp --dport $PROXY_PORT -j ACCEPT
 
-# Allow admin UI connections from internal network
-iptables -A INPUT -i $INTERNAL_IF -s $INTERNAL_NET -p tcp --dport $ADMIN_PORT -j ACCEPT
-
 # Allow ICMP (ping) from internal network for diagnostics
 iptables -A INPUT -i $INTERNAL_IF -p icmp -j ACCEPT
 
-# Drop everything else from internal network
-iptables -A INPUT -i $INTERNAL_IF -j DROP
+# Reject everything else from internal network
+iptables -A INPUT -i $INTERNAL_IF -j REJECT
 
 # ============================================================
-# INPUT rules for the external interface (eth0)
-# ============================================================
-
-# Allow DHCP responses
-iptables -A INPUT -i $EXTERNAL_IF -p udp --sport 67 --dport 68 -j ACCEPT
-
-# Allow ICMP
-iptables -A INPUT -i $EXTERNAL_IF -p icmp -j ACCEPT
-
-# Drop everything else from external
-iptables -A INPUT -i $EXTERNAL_IF -j DROP
-
-# ============================================================
-# FORWARD rules: block ALL forwarding from internal network
+# FORWARD rules: reject ALL forwarding from internal network
 # Agents cannot route through this host to reach the internet.
 # They MUST use the proxy on port 8080.
 # ============================================================
-iptables -A FORWARD -i $INTERNAL_IF -j DROP
+iptables -A FORWARD -i $INTERNAL_IF -j REJECT
 
 # ============================================================
 # NAT: masquerade proxy's outbound connections via eth0

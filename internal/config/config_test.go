@@ -14,8 +14,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.ListenAddr != ":8080" {
 		t.Errorf("expected :8080, got %s", cfg.ListenAddr)
 	}
-	if cfg.AdminAddr != ":8443" {
-		t.Errorf("expected :8443, got %s", cfg.AdminAddr)
+	if cfg.AdminAddr != ":443" {
+		t.Errorf("expected :443, got %s", cfg.AdminAddr)
 	}
 	if cfg.MaxLogEntries != 10000 {
 		t.Errorf("expected 10000, got %d", cfg.MaxLogEntries)

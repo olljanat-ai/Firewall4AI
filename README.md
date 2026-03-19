@@ -21,12 +21,12 @@ Connections are **denied by default** and require admin approval before first us
 AI Agent --[HTTP]--> Proxy (:8080) --[approved]--> Target Service
 AI Agent --[HTTPS CONNECT]--> Proxy (:8080) --[TLS MITM]--> Target Service
                                 |
-                   Admin UI (:8443/HTTPS) <-- Human Admin
+                   Admin UI (:443/HTTPS) <-- Human Admin
 ```
 
 The proxy runs two servers:
 - **Proxy server** (default `:8080`) - Handles agent HTTP requests and HTTPS CONNECT with TLS MITM inspection
-- **Admin server** (default `:8443`) - Serves the admin UI and REST API over HTTPS (always TLS)
+- **Admin server** (default `:443`) - Serves the admin UI and REST API over HTTPS (always TLS)
 
 On first startup, the proxy:
 1. Generates a **CA certificate** (`data/ca.crt` + `data/ca.key`) used for signing per-host TLS certificates during MITM inspection
@@ -56,14 +56,14 @@ The VM is a minimal Alpine Linux appliance that runs Squid4Claw as the main serv
 **What's included:**
 - **DHCP server** on eth1 serving `10.255.255.10` - `10.255.255.254` to agents
 - **DNS server** (dnsmasq) forwarding to `1.1.1.1` and `1.0.0.1`
-- **iptables firewall** that blocks all direct internet access from the agent network -- agents can only reach the proxy (port 8080) and admin UI (port 8443)
+- **iptables firewall** that blocks all direct internet access from the agent network -- agents can only reach the proxy (port 8080) and admin UI (port 443)
 - **TLS MITM inspection** with auto-generated CA certificate
 
 **Setup:**
 1. Create a VM with 2 NICs: one bridged/NAT to the internet, one on an isolated internal network
 2. Boot the VM from the downloaded disk image
-3. Access the admin UI at `https://10.255.255.1:8443` from the agent network
-4. Download the CA cert at `https://10.255.255.1:8443/ca.crt` and install it on agent machines
+3. Access the admin UI at `https://10.255.255.1:443` from the agent network
+4. Download the CA cert at `https://10.255.255.1:443/ca.crt` and install it on agent machines
 5. Configure agents to use `http://10.255.255.1:8080` as their HTTP proxy
 
 Default root password: `squid4claw` (change after first login via serial console or SSH)
@@ -83,7 +83,7 @@ make build
 
 On first run, the CA certificate is generated at `./data/ca.crt`. You must install this CA on systems that will connect through the proxy (see [Trusting the CA Certificate](#trusting-the-ca-certificate)).
 
-The CA certificate is also available for download at `https://localhost:8443/ca.crt`.
+The CA certificate is also available for download at `https://localhost:443/ca.crt`.
 
 ## Configuration
 
@@ -92,7 +92,7 @@ Create a `config.json` file (all fields optional):
 ```json
 {
   "listen_addr": ":8080",
-  "admin_addr": ":8443",
+  "admin_addr": ":443",
   "data_dir": "./data",
   "tls_cert_file": "",
   "tls_key_file": "",
@@ -103,7 +103,7 @@ Create a `config.json` file (all fields optional):
 | Field | Default | Description |
 |-------|---------|-------------|
 | `listen_addr` | `:8080` | Proxy server listen address |
-| `admin_addr` | `:8443` | Admin UI/API listen address (always HTTPS) |
+| `admin_addr` | `:443` | Admin UI/API listen address (always HTTPS) |
 | `data_dir` | `./data` | Directory for persistent state and CA certificate |
 | `tls_cert_file` | (empty) | Custom TLS certificate for admin server (auto-generated if empty) |
 | `tls_key_file` | (empty) | Custom TLS key for admin server (auto-generated if empty) |
@@ -147,7 +147,7 @@ export SSL_CERT_FILE=data/ca.crt
 
 To force all HTTP/HTTPS traffic from the AI agent environment through Squid4Claw and block everything else, use the following iptables rules. This assumes:
 
-- Squid4Claw runs on the **same host** as the agents (proxy at `127.0.0.1:8080`, admin at `127.0.0.1:8443`)
+- Squid4Claw runs on the **same host** as the agents (proxy at `127.0.0.1:8080`, admin at `127.0.0.1:443`)
 - Squid4Claw runs as user `squid4claw` (so its own outbound traffic is not blocked)
 - The agent runs as user `agent`
 
@@ -160,7 +160,7 @@ To force all HTTP/HTTPS traffic from the AI agent environment through Squid4Claw
 PROXY_USER=squid4claw
 AGENT_USER=agent
 PROXY_PORT=8080
-ADMIN_PORT=8443
+ADMIN_PORT=443
 
 # --- Allow the proxy process itself to make outbound connections ---
 iptables -A OUTPUT -m owner --uid-owner $(id -u $PROXY_USER) -j ACCEPT
@@ -197,7 +197,7 @@ If Squid4Claw runs on a different machine (e.g., gateway), adjust the rules for 
 ```bash
 PROXY_IP=10.0.0.1
 PROXY_PORT=8080
-ADMIN_PORT=8443
+ADMIN_PORT=443
 
 # Allow connections to the proxy only
 iptables -A OUTPUT -p tcp -d $PROXY_IP --dport $PROXY_PORT -j ACCEPT
@@ -252,7 +252,7 @@ sudo -u agent curl -x http://127.0.0.1:8080 \
 Via the admin UI or API:
 
 ```bash
-curl -k -X POST https://localhost:8443/api/skills \
+curl -k -X POST https://localhost:443/api/skills \
   -H 'Content-Type: application/json' \
   -d '{"id": "web-scraper", "name": "Web Scraper Agent", "allowed_hosts": ["api.example.com"]}'
 ```

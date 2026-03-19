@@ -19,7 +19,7 @@ type Config struct {
 var (
 	defaultConfig = Config{
 		ListenAddr:    ":8080",
-		AdminAddr:     ":8443",
+		AdminAddr:     ":443",
 		DataDir:       "./data",
 		MaxLogEntries: 10000,
 	}
