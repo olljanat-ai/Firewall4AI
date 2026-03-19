@@ -24,20 +24,22 @@ const (
  
 // Proxy is the main proxy server.
 type Proxy struct {
-	Skills      *auth.SkillStore
-	Approvals   *approval.Manager
-	Credentials *credentials.Manager
-	Logger      *proxylog.Logger
-	Transport   http.RoundTripper
+	Skills          *auth.SkillStore
+	Approvals       *approval.Manager
+	Credentials     *credentials.Manager
+	Logger          *proxylog.Logger
+	Transport       http.RoundTripper
+	ApprovalTimeout time.Duration
 }
  
 // New creates a new Proxy with the given dependencies.
 func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credentials.Manager, logger *proxylog.Logger) *Proxy {
 	return &Proxy{
-		Skills:      skills,
-		Approvals:   approvals,
-		Credentials: creds,
-		Logger:      logger,
+		Skills:          skills,
+		Approvals:       approvals,
+		Credentials:     creds,
+		Logger:          logger,
+		ApprovalTimeout: approvalTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 			MaxIdleConns:          100,
@@ -92,7 +94,7 @@ func (p *Proxy) checkApproval(host string, skill *auth.Skill) approval.Status {
 	status := p.Approvals.Check(host, skill.ID)
 	if status == approval.StatusPending {
 		// Block and wait for admin decision.
-		status = p.Approvals.WaitForDecision(host, skill.ID, approvalTimeout)
+		status = p.Approvals.WaitForDecision(host, skill.ID, p.ApprovalTimeout)
 	}
 	return status
 }
