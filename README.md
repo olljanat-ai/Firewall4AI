@@ -1,5 +1,8 @@
 # Firewall4AI
 
+> [!CAUTION]
+> Be aware that this project is in early draft/beta state and things are constantly changing still.
+
 Transparent firewall for controlling where AI agents can connect from isolated environments.
 
 Agents need **no proxy configuration** - all HTTP/HTTPS traffic is intercepted transparently via iptables. Connections are **denied by default** and require admin approval before first use. Agents can optionally authenticate with skill-specific tokens (GUID format) for per-skill rulesets. The proxy performs **TLS MITM inspection** on HTTPS traffic, enabling credential injection so agents never need to know secrets directly.
