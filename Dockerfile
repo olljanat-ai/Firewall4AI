@@ -1,11 +1,3 @@
-# Build elemental CLI from source
-FROM golang:1.24 AS elemental-builder
-ARG ELEMENTAL_VERSION=v2.3.2
-RUN git clone --depth 1 --branch ${ELEMENTAL_VERSION} \
-    https://github.com/rancher/elemental-toolkit.git /src
-WORKDIR /src
-RUN CGO_ENABLED=0 go build -o /elemental .
-
 # Build firewall4ai binary
 FROM golang:1.23 AS app-builder
 COPY . /src
@@ -77,7 +69,7 @@ RUN curl -L https://mirrors.edge.kernel.org/pub/linux/utils/kbd/kbd-${KBD}.tar.x
 RUN ln -sf /usr/bin/grub-editenv /usr/bin/grub2-editenv
 
 # Add elemental CLI
-COPY --from=elemental-builder /elemental /usr/bin/elemental
+COPY /elemental /usr/bin/elemental
 
 # Add firewall4ai binary
 COPY --from=app-builder /firewall4ai /usr/bin/firewall4ai

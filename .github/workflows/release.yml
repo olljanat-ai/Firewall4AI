@@ -49,7 +49,7 @@ jobs:
           mkdir rootfs
           docker export export | tar -x -C rootfs
           docker rm export
-          sudo ./rootfs/usr/bin/elemental --debug build-iso --bootloader-in-rootfs --extra-cmdline "" dir:rootfs
+          sudo ./elemental --debug build-iso --bootloader-in-rootfs --extra-cmdline "" dir:rootfs
           sudo mv elemental.iso firewall4ai-${VERSION}.iso
 
       - name: Create release
