@@ -138,10 +138,6 @@ RUN elemental --debug init -f
 # Include bootargs.cfg after elemental init
 COPY config/bootargs.cfg /etc/elemental/
 
-# Store version
-ARG VERSION=dev
-RUN echo IMAGE_TAG=\"${VERSION}\" >> /etc/os-release
-
 # OEM configuration (persistence, layout)
 COPY config/oem/ /system/oem/
 
@@ -156,6 +152,10 @@ RUN mkdir -p /usr/lib/elemental/bootloader && \
 RUN rm -f /var/lib/dbus/machine-id \
     && ln -s /etc/machine-id /var/lib/dbus/machine-id \
     && rm -f /etc/machine-id
+
+# Store version
+ARG VERSION=dev
+RUN echo IMAGE_TAG=\"${VERSION}\" >> /etc/os-release
 
 # Build firewall4ai binary
 FROM golang:1.23 AS app-builder
