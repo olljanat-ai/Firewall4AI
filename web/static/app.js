@@ -15,6 +15,7 @@ let currentImages = [];
 let currentSkills = [];
 let currentCredentials = [];
 let currentCategories = [];
+let currentLogs = [];
 
 // --- Navigation ---
 function navigate(page) {
@@ -271,10 +272,7 @@ async function loadApprovals() {
       tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No URL rules</td></tr>';
       return;
     }
-    filtered.sort((a, b) => {
-      const order = { pending: 0, approved: 1, denied: 2 };
-      return (order[a.status] || 9) - (order[b.status] || 9);
-    });
+    filtered.sort((a, b) => a.host.localeCompare(b.host));
     filtered.forEach((a) => {
       const idx = currentApprovals.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
@@ -480,10 +478,7 @@ async function loadImages() {
       tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No image approval records</td></tr>';
       return;
     }
-    filtered.sort((a, b) => {
-      const order = { pending: 0, approved: 1, denied: 2 };
-      return (order[a.status] || 9) - (order[b.status] || 9);
-    });
+    filtered.sort((a, b) => a.host.localeCompare(b.host));
     filtered.forEach((a) => {
       const idx = currentImages.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
@@ -646,6 +641,7 @@ async function loadSkills() {
   try {
     const skills = await api('GET', '/api/skills');
     currentSkills = skills || [];
+    currentSkills.sort((a, b) => a.name.localeCompare(b.name));
     const tbody = document.getElementById('skills-tbody');
     tbody.innerHTML = '';
     if (currentSkills.length === 0) {
@@ -765,6 +761,7 @@ async function loadCredentials() {
   try {
     const creds = await api('GET', '/api/credentials');
     currentCredentials = creds || [];
+    currentCredentials.sort((a, b) => a.name.localeCompare(b.name));
     const tbody = document.getElementById('credentials-tbody');
     tbody.innerHTML = '';
     if (currentCredentials.length === 0) {
@@ -939,24 +936,85 @@ async function deleteCredential(id) {
 }
 
 // --- Logs ---
+
+function getCategoryForHost(host) {
+  for (const a of currentApprovals) {
+    if (!a.category) continue;
+    if (a.host === host) return a.category;
+    if (a.host.startsWith('*.') && host.endsWith(a.host.slice(1))) return a.category;
+  }
+  return '';
+}
+
+function getLogFilter() {
+  return {
+    skillID: document.getElementById('filter-log-skill')?.value || '',
+    method: document.getElementById('filter-log-method')?.value || '',
+    status: document.getElementById('filter-log-status')?.value || '',
+    category: document.getElementById('filter-log-category')?.value || '',
+  };
+}
+
+function matchesLogFilter(l, filter) {
+  if (filter.skillID && (l.skill_id || '') !== filter.skillID) return false;
+  if (filter.method && l.method !== filter.method) return false;
+  if (filter.status && l.status !== filter.status) return false;
+  if (filter.category && getCategoryForHost(l.host) !== filter.category) return false;
+  return true;
+}
+
+function applyLogFilters() {
+  renderLogs();
+}
+
+function clearLogFilters() {
+  ['skill', 'method', 'status', 'category'].forEach(f => {
+    const el = document.getElementById('filter-log-' + f);
+    if (el) el.value = '';
+  });
+  renderLogs();
+}
+
+function populateLogFilterDropdowns(logs) {
+  const skillIDs = [...new Set(logs.map(l => l.skill_id).filter(Boolean))];
+  const skillOpts = skillIDs.map(id => ({ value: id, label: skillNameByID(id) }));
+  skillOpts.sort((a, b) => a.label.localeCompare(b.label));
+  populateSelect('filter-log-skill', skillOpts, 'All skills');
+
+  const methods = [...new Set(logs.map(l => l.method).filter(Boolean))].sort();
+  populateSelect('filter-log-method', methods.map(m => ({ value: m, label: m })), 'All methods');
+
+  const cats = [...new Set(logs.map(l => getCategoryForHost(l.host)).filter(Boolean))].sort();
+  populateSelect('filter-log-category', cats.map(c => ({ value: c, label: c })), 'All categories');
+}
+
 async function loadLogs() {
   try {
-    const logs = await api('GET', '/api/logs?limit=200');
-    renderLogs(logs || []);
+    const [logs] = await Promise.all([
+      api('GET', '/api/logs?limit=200'),
+      refreshSkills(),
+      refreshCategories(),
+      (async () => { try { currentApprovals = await api('GET', '/api/approvals') || []; } catch (e) {} })(),
+    ]);
+    currentLogs = logs || [];
+    if (currentLogs.length > 0) lastLogID = currentLogs[0].id;
+    populateLogFilterDropdowns(currentLogs);
+    renderLogs();
   } catch (e) {
     console.error('Logs load error:', e);
   }
 }
 
-function renderLogs(logs) {
+function renderLogs() {
+  const filter = getLogFilter();
+  const filtered = currentLogs.filter(l => matchesLogFilter(l, filter));
   const tbody = document.getElementById('logs-tbody');
   tbody.innerHTML = '';
-  if (logs.length === 0) {
+  if (filtered.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No log entries yet</td></tr>';
     return;
   }
-  logs.forEach(l => {
-    if (l.id > lastLogID) lastLogID = l.id;
+  filtered.forEach(l => {
     tbody.innerHTML += `<tr>
       <td style="color:var(--text-dim);font-size:11px">${formatTime(l.timestamp)}</td>
       <td>${formatSkillID(l.skill_id)}</td>
@@ -995,22 +1053,10 @@ function startPolling() {
       if (document.getElementById('page-logs').classList.contains('active')) {
         const newLogs = await api('GET', '/api/logs?after=' + lastLogID);
         if (newLogs && newLogs.length > 0) {
-          const tbody = document.getElementById('logs-tbody');
-          const empty = tbody.querySelector('.empty-state');
-          if (empty) empty.parentElement.remove();
-          newLogs.forEach(l => {
-            if (l.id > lastLogID) lastLogID = l.id;
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td style="color:var(--text-dim);font-size:11px">${formatTime(l.timestamp)}</td>
-              <td>${formatSkillID(l.skill_id)}</td>
-              <td><span class="method-badge">${esc(l.method)}</span></td>
-              <td><strong>${esc(l.host)}</strong></td>
-              <td>${esc(l.path || '-')}</td>
-              <td><span class="badge-status ${l.status}">${l.status}</span></td>
-              <td style="font-size:12px;color:var(--text-dim)">${esc(l.detail || '')}</td>`;
-            tbody.insertBefore(tr, tbody.firstChild);
-          });
+          newLogs.forEach(l => { if (l.id > lastLogID) lastLogID = l.id; });
+          currentLogs = [...[...newLogs].reverse(), ...currentLogs];
+          populateLogFilterDropdowns(currentLogs);
+          renderLogs();
         }
       }
       // Refresh dashboard or images page if active
