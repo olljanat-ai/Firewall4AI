@@ -1140,7 +1140,7 @@ async function removeCategory(name) {
 async function loadVersion() {
   try {
     const data = await api('GET', '/api/version');
-    document.getElementById('version-display').textContent = 'v' + (data.version || 'unknown');
+    document.getElementById('version-display').textContent = (data.version || 'unknown');
   } catch (e) {
     // ignore
   }
