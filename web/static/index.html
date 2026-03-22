@@ -150,6 +150,25 @@
       <!-- Logs -->
       <div id="page-logs" class="page">
         <h2>Request Logs</h2>
+        <div class="filter-bar">
+          <select id="filter-log-skill" onchange="applyLogFilters()">
+            <option value="">All skills</option>
+          </select>
+          <select id="filter-log-method" onchange="applyLogFilters()">
+            <option value="">All methods</option>
+          </select>
+          <select id="filter-log-status" onchange="applyLogFilters()">
+            <option value="">All statuses</option>
+            <option value="allowed">Allowed</option>
+            <option value="denied">Denied</option>
+            <option value="pending">Pending</option>
+            <option value="error">Error</option>
+          </select>
+          <select id="filter-log-category" onchange="applyLogFilters()">
+            <option value="">All categories</option>
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="clearLogFilters()">Clear</button>
+        </div>
         <div class="card">
           <div class="log-container">
             <table>
