@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
@@ -25,6 +27,9 @@ type Handler struct {
 	Logger         *proxylog.Logger
 	SaveFunc       func() error // called after state mutations to persist
 	Version        string       // build version string
+
+	catMu      sync.RWMutex
+	categories []string
 }
 
 // RegisterRoutes sets up all API routes on the given mux.
@@ -61,6 +66,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Health
 	mux.HandleFunc("GET /api/health", h.health)
+
+	// Categories
+	mux.HandleFunc("GET /api/categories", h.listCategories)
+	mux.HandleFunc("POST /api/categories", h.addCategory)
+	mux.HandleFunc("DELETE /api/categories", h.deleteCategory)
 
 	// Version
 	mux.HandleFunc("GET /api/version", h.getVersion)
@@ -412,6 +422,84 @@ func (h *Handler) getLogStats(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// --- Categories ---
+
+// LoadCategories loads persisted categories at startup.
+func (h *Handler) LoadCategories(cats []string) {
+	h.catMu.Lock()
+	defer h.catMu.Unlock()
+	h.categories = append([]string{}, cats...)
+}
+
+// ListCategoriesSlice returns a copy of the categories for persistence.
+func (h *Handler) ListCategoriesSlice() []string {
+	h.catMu.RLock()
+	defer h.catMu.RUnlock()
+	out := make([]string, len(h.categories))
+	copy(out, h.categories)
+	return out
+}
+
+func (h *Handler) listCategories(w http.ResponseWriter, r *http.Request) {
+	h.catMu.RLock()
+	cats := make([]string, len(h.categories))
+	copy(cats, h.categories)
+	h.catMu.RUnlock()
+	writeJSON(w, http.StatusOK, cats)
+}
+
+func (h *Handler) addCategory(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	h.catMu.Lock()
+	for _, c := range h.categories {
+		if c == name {
+			h.catMu.Unlock()
+			http.Error(w, "category already exists", http.StatusConflict)
+			return
+		}
+	}
+	h.categories = append(h.categories, name)
+	sort.Strings(h.categories)
+	h.catMu.Unlock()
+	h.save()
+	writeJSON(w, http.StatusCreated, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) deleteCategory(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "name parameter required", http.StatusBadRequest)
+		return
+	}
+	h.catMu.Lock()
+	found := false
+	for i, c := range h.categories {
+		if c == name {
+			h.categories = append(h.categories[:i], h.categories[i+1:]...)
+			found = true
+			break
+		}
+	}
+	h.catMu.Unlock()
+	if !found {
+		http.Error(w, "category not found", http.StatusNotFound)
+		return
+	}
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
 // --- Version ---

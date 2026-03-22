@@ -36,6 +36,7 @@ type storeData struct {
 	Approvals      []approval.HostApproval  `json:"approvals"`
 	Creds          []credentials.Credential `json:"credentials"`
 	ImageApprovals []approval.HostApproval  `json:"image_approvals"`
+	Categories     []string                 `json:"categories"`
 }
 
 func main() {
@@ -81,6 +82,17 @@ func main() {
 	imageApprovals.LoadApprovals(state.ImageApprovals)
 	creds.LoadCredentials(state.Creds)
 
+	// Setup API handler early so we can load categories into it.
+	apiHandler := &api.Handler{
+		Skills:         skills,
+		Approvals:      approvals,
+		ImageApprovals: imageApprovals,
+		Credentials:    creds,
+		Logger:         logger,
+		Version:        Version,
+	}
+	apiHandler.LoadCategories(state.Categories)
+
 	// Save function persists current state.
 	saveFunc := func() error {
 		return dataStore.Update(func(d *storeData) {
@@ -88,8 +100,10 @@ func main() {
 			d.Approvals = approvals.Export()
 			d.ImageApprovals = imageApprovals.Export()
 			d.Creds = creds.List()
+			d.Categories = apiHandler.ListCategoriesSlice()
 		})
 	}
+	apiHandler.SaveFunc = saveFunc
 
 	// Setup proxy server with CA for MITM and registry awareness.
 	p := proxy.New(skills, approvals, creds, logger)
@@ -108,15 +122,6 @@ func main() {
 
 	// Setup admin API + UI server.
 	adminMux := http.NewServeMux()
-	apiHandler := &api.Handler{
-		Skills:         skills,
-		Approvals:      approvals,
-		ImageApprovals: imageApprovals,
-		Credentials:    creds,
-		Logger:         logger,
-		SaveFunc:       saveFunc,
-		Version:        Version,
-	}
 	apiHandler.RegisterRoutes(adminMux)
 
 	// Serve CA certificate for download.

@@ -55,9 +55,15 @@
           <button class="btn btn-primary" onclick="showAddRule()">+ Add Rule</button>
         </div>
         <div class="filter-bar">
-          <input type="text" id="filter-url-category" placeholder="Category" onchange="loadApprovals()">
-          <input type="text" id="filter-url-skill" placeholder="Skill ID" onchange="loadApprovals()">
-          <input type="text" id="filter-url-ip" placeholder="Source IP" onchange="loadApprovals()">
+          <select id="filter-url-category" onchange="loadApprovals()">
+            <option value="">All categories</option>
+          </select>
+          <select id="filter-url-skill" onchange="loadApprovals()">
+            <option value="">All skills</option>
+          </select>
+          <select id="filter-url-ip" onchange="loadApprovals()">
+            <option value="">All source IPs</option>
+          </select>
           <select id="filter-url-status" onchange="loadApprovals()">
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
@@ -83,9 +89,15 @@
           <button class="btn btn-primary" onclick="showAddImageRule()">+ Add Image Rule</button>
         </div>
         <div class="filter-bar">
-          <input type="text" id="filter-image-category" placeholder="Category" onchange="loadImages()">
-          <input type="text" id="filter-image-skill" placeholder="Skill ID" onchange="loadImages()">
-          <input type="text" id="filter-image-ip" placeholder="Source IP" onchange="loadImages()">
+          <select id="filter-image-category" onchange="loadImages()">
+            <option value="">All categories</option>
+          </select>
+          <select id="filter-image-skill" onchange="loadImages()">
+            <option value="">All skills</option>
+          </select>
+          <select id="filter-image-ip" onchange="loadImages()">
+            <option value="">All source IPs</option>
+          </select>
           <select id="filter-image-status" onchange="loadImages()">
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
@@ -154,6 +166,20 @@
       <!-- Settings -->
       <div id="page-settings" class="page">
         <h2>Settings</h2>
+        <div class="card">
+          <h3>Categories</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Manage Categories</div>
+              <div class="setting-desc">Categories are used to organize URL and image approval rules.</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" id="new-category-name" placeholder="New category name" style="width:200px">
+              <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
+            </div>
+          </div>
+          <div id="categories-list" style="padding-top:8px"></div>
+        </div>
         <div class="card">
           <h3>SSH Access</h3>
           <div class="setting-row">
@@ -234,7 +260,9 @@
       </div>
       <div class="form-group">
         <label>Category (optional)</label>
-        <input type="text" id="rule-category" placeholder="e.g., development, production, testing">
+        <select id="rule-category">
+          <option value="">No category</option>
+        </select>
       </div>
       <div class="form-group">
         <label>Note (optional)</label>
@@ -386,7 +414,9 @@
       </div>
       <div class="form-group">
         <label>Category (optional)</label>
-        <input type="text" id="image-rule-category" placeholder="e.g., base-images, tools, applications">
+        <select id="image-rule-category">
+          <option value="">No category</option>
+        </select>
       </div>
       <div class="form-group">
         <label>Note (optional)</label>
