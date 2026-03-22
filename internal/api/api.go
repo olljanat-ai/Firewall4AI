@@ -128,7 +128,11 @@ func (h *Handler) deleteApproval(w http.ResponseWriter, r *http.Request) {
 // --- Skills ---
 
 func (h *Handler) listSkills(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, h.Skills.ListSkills())
+	skills := h.Skills.ListSkills()
+	for i := range skills {
+		skills[i].Token = "********"
+	}
+	writeJSON(w, http.StatusOK, skills)
 }
 
 type createSkillRequest struct {
@@ -172,11 +176,20 @@ func (h *Handler) updateSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	// Always preserve the existing token (never exposed via API).
+	existing, ok := h.Skills.GetSkill(skill.ID)
+	if !ok {
+		http.Error(w, fmt.Sprintf("skill %q not found", skill.ID), http.StatusNotFound)
+		return
+	}
+	skill.Token = existing.Token
 	if err := h.Skills.UpdateSkill(skill); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	h.save()
+	// Return masked token.
+	skill.Token = "********"
 	writeJSON(w, http.StatusOK, skill)
 }
 
@@ -237,6 +250,27 @@ func (h *Handler) updateCredential(w http.ResponseWriter, r *http.Request) {
 	if err := readJSON(r, &cred); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+	// Preserve existing secret values when empty (secrets are never exposed via API).
+	if existing, ok := h.Credentials.Get(cred.ID); ok {
+		switch cred.InjectionType {
+		case credentials.InjectHeader:
+			if cred.HeaderValue == "" {
+				cred.HeaderValue = existing.HeaderValue
+			}
+		case credentials.InjectBasic:
+			if cred.Password == "" {
+				cred.Password = existing.Password
+			}
+		case credentials.InjectBearer:
+			if cred.Token == "" {
+				cred.Token = existing.Token
+			}
+		case credentials.InjectQuery:
+			if cred.ParamValue == "" {
+				cred.ParamValue = existing.ParamValue
+			}
+		}
 	}
 	if err := h.Credentials.Update(cred); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)

@@ -60,6 +60,18 @@ func (s *SkillStore) AddSkill(skill Skill) error {
 	return nil
 }
  
+// GetSkill returns a skill by ID.
+func (s *SkillStore) GetSkill(id string) (*Skill, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	skill, ok := s.byID[id]
+	if !ok {
+		return nil, false
+	}
+	cp := *skill
+	return &cp, true
+}
+
 // UpdateSkill updates an existing skill.
 func (s *SkillStore) UpdateSkill(skill Skill) error {
 	s.mu.Lock()

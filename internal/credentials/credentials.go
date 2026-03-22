@@ -54,6 +54,18 @@ func (m *Manager) Add(c Credential) {
 	m.creds[c.ID] = &c
 }
  
+// Get returns a credential by ID.
+func (m *Manager) Get(id string) (*Credential, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.creds[id]
+	if !ok {
+		return nil, false
+	}
+	cp := *c
+	return &cp, true
+}
+
 // Update replaces a credential by ID.
 func (m *Manager) Update(c Credential) error {
 	m.mu.Lock()
