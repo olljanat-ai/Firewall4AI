@@ -547,13 +547,13 @@ func (h *Handler) systemUpgrade(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.Image == "" {
-		http.Error(w, "image is required", http.StatusBadRequest)
-		return
+	image := strings.TrimSpace(req.Image)
+	if image == "" {
+		image := "ghcr.io/olljanat-ai/firewall4ai:latest"
 	}
 	// Run upgrade in background since it will reboot.
 	go func() {
-		exec.Command("elemental", "upgrade", "--reboot", "--system", "oci:"+req.Image).Run()
+		exec.Command("elemental", "upgrade", "--reboot", "--system", "oci:"+image).Run()
 	}()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "upgrade started"})
 }
