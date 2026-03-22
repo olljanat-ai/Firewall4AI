@@ -66,7 +66,7 @@ func TestSkills_CRUD(t *testing.T) {
 		t.Error("created skill should have a token")
 	}
 
-	// List.
+	// List (tokens should be masked).
 	w = doRequest(mux, "GET", "/api/skills", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("list: expected 200, got %d", w.Code)
@@ -76,9 +76,13 @@ func TestSkills_CRUD(t *testing.T) {
 	if len(skills) != 1 {
 		t.Fatalf("expected 1 skill, got %d", len(skills))
 	}
+	if skills[0].Token != "********" {
+		t.Error("token should be masked in list response")
+	}
 
-	// Update.
+	// Update (token preserved even though masked in request).
 	skill.Name = "Updated"
+	skill.Token = "********"
 	w = doRequest(mux, "PUT", "/api/skills", skill)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: expected 200, got %d: %s", w.Code, w.Body.String())

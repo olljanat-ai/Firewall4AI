@@ -3,6 +3,18 @@ const API = '';
 let pollInterval = null;
 let lastLogID = 0;
 
+// Edit state trackers
+let editingRule = null;       // null = adding, { host, pathPrefix, skillID, sourceIP } = editing
+let editingImageRule = null;  // null = adding, { host, skillID, sourceIP } = editing
+let editingSkillID = null;    // null = creating, string = editing
+let editingCredID = null;     // null = creating, string = editing
+
+// Cached data for edit lookups
+let currentApprovals = [];
+let currentImages = [];
+let currentSkills = [];
+let currentCredentials = [];
+
 // --- Navigation ---
 function navigate(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -125,11 +137,12 @@ async function decideDash(apiPath, host, skillID, sourceIP, pathPrefix, status) 
   }
 }
 
-// --- Approvals ---
+// --- URL Rules (Approvals) ---
 async function loadApprovals() {
   try {
     const approvals = await api('GET', '/api/approvals');
-    const pending = (approvals || []).filter(a => a.status === 'pending');
+    currentApprovals = approvals || [];
+    const pending = currentApprovals.filter(a => a.status === 'pending');
     const badge = document.getElementById('approval-badge');
     if (pending.length > 0) {
       badge.textContent = pending.length;
@@ -139,19 +152,20 @@ async function loadApprovals() {
     }
     const tbody = document.getElementById('approvals-tbody');
     tbody.innerHTML = '';
-    if (!approvals || approvals.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No approval records</td></tr>';
+    if (currentApprovals.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No URL rules</td></tr>';
       return;
     }
-    approvals.sort((a, b) => {
+    currentApprovals.sort((a, b) => {
       const order = { pending: 0, approved: 1, denied: 2 };
       return (order[a.status] || 9) - (order[b.status] || 9);
     });
-    approvals.forEach(a => {
+    currentApprovals.forEach((a, idx) => {
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
       const pathDisplay = formatPathPrefix(a.path_prefix);
       const pp = a.path_prefix || '';
+      const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditRule(${idx})" title="Edit rule">Edit</button>`;
       const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteApproval('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}')" title="Delete rule">Delete</button>`;
       let actions = '';
       if (a.status === 'pending') {
@@ -162,14 +176,14 @@ async function loadApprovals() {
         actions = `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
            ${vmBtn} ${globalBtn}
            <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
-           ${deleteBtn}`;
+           ${editBtn} ${deleteBtn}`;
       } else {
         const promoteBtn = a.source_ip && !a.skill_id
           ? `<button class="btn btn-outline btn-sm" onclick="promoteToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${esc(pp)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
         actions = `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
            <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
            ${promoteBtn}
-           ${deleteBtn}`;
+           ${editBtn} ${deleteBtn}`;
       }
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
@@ -182,14 +196,13 @@ async function loadApprovals() {
       </tr>`;
     });
   } catch (e) {
-    console.error('Approvals load error:', e);
+    console.error('URL rules load error:', e);
   }
 }
 
 async function decide(host, skillID, sourceIP, pathPrefix, status) {
   try {
     await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, status });
-    // Refresh current page
     const activePage = document.querySelector('.page.active');
     if (activePage) {
       const pageId = activePage.id.replace('page-', '');
@@ -228,28 +241,58 @@ async function promoteToGlobal(host, sourceIP, pathPrefix, status) {
   }
 }
 
-// --- Add Rule (proactive approval) ---
+// --- URL Rule Modal ---
 function showAddRule() {
-  document.getElementById('modal-rule').classList.add('active');
-  updateRuleFields();
-}
-function hideAddRule() {
-  document.getElementById('modal-rule').classList.remove('active');
+  editingRule = null;
+  document.getElementById('modal-rule-title').textContent = 'Add URL Rule';
+  document.getElementById('modal-rule-submit').textContent = 'Add Rule';
   document.getElementById('rule-host').value = '';
   document.getElementById('rule-path-prefix').value = '';
   document.getElementById('rule-level').value = 'global';
   document.getElementById('rule-source-ip').value = '';
+  document.getElementById('rule-skill-id').value = '';
   document.getElementById('rule-status').value = 'approved';
   document.getElementById('rule-note').value = '';
   updateRuleFields();
+  document.getElementById('modal-rule').classList.add('active');
+}
+
+function showEditRule(idx) {
+  const a = currentApprovals[idx];
+  if (!a) return;
+  editingRule = { host: a.host, pathPrefix: a.path_prefix || '', skillID: a.skill_id || '', sourceIP: a.source_ip || '' };
+  document.getElementById('modal-rule-title').textContent = 'Edit URL Rule';
+  document.getElementById('modal-rule-submit').textContent = 'Save';
+  document.getElementById('rule-host').value = a.host;
+  document.getElementById('rule-path-prefix').value = a.path_prefix || '';
+  if (a.skill_id) {
+    document.getElementById('rule-level').value = 'skill';
+    document.getElementById('rule-skill-id').value = a.skill_id;
+    document.getElementById('rule-source-ip').value = a.source_ip || '';
+  } else if (a.source_ip) {
+    document.getElementById('rule-level').value = 'vm';
+    document.getElementById('rule-source-ip').value = a.source_ip;
+  } else {
+    document.getElementById('rule-level').value = 'global';
+  }
+  document.getElementById('rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  document.getElementById('rule-note').value = a.note || '';
+  updateRuleFields();
+  document.getElementById('modal-rule').classList.add('active');
+}
+
+function hideAddRule() {
+  document.getElementById('modal-rule').classList.remove('active');
+  editingRule = null;
 }
 
 function updateRuleFields() {
   const level = document.getElementById('rule-level').value;
-  document.getElementById('rule-vm-fields').style.display = level === 'vm' ? 'block' : 'none';
+  document.getElementById('rule-vm-fields').style.display = (level === 'vm' || level === 'skill') ? 'block' : 'none';
+  document.getElementById('rule-skill-fields').style.display = level === 'skill' ? 'block' : 'none';
 }
 
-async function addRule() {
+async function submitRule() {
   const host = document.getElementById('rule-host').value.trim();
   if (!host) { alert('Host pattern is required'); return; }
   const pathPrefix = document.getElementById('rule-path-prefix').value.trim();
@@ -257,12 +300,32 @@ async function addRule() {
   const status = document.getElementById('rule-status').value;
   const note = document.getElementById('rule-note').value.trim();
   let sourceIP = '';
-  if (level === 'vm') {
+  let skillID = '';
+  if (level === 'vm' || level === 'skill') {
     sourceIP = document.getElementById('rule-source-ip').value.trim();
-    if (!sourceIP) { alert('Source IP is required for VM-specific rules'); return; }
+  }
+  if (level === 'skill') {
+    skillID = document.getElementById('rule-skill-id').value.trim();
+    if (!skillID) { alert('Skill ID is required for skill-specific rules'); return; }
+  }
+  if (level === 'vm' && !sourceIP) {
+    alert('Source IP is required for VM-specific rules'); return;
   }
   try {
-    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: sourceIP, path_prefix: pathPrefix, status, note });
+    // If editing and key fields changed, delete the old rule first.
+    if (editingRule) {
+      const keyChanged = editingRule.host !== host ||
+        editingRule.pathPrefix !== pathPrefix ||
+        editingRule.skillID !== skillID ||
+        editingRule.sourceIP !== sourceIP;
+      if (keyChanged) {
+        await api('DELETE', '/api/approvals', {
+          host: editingRule.host, skill_id: editingRule.skillID,
+          source_ip: editingRule.sourceIP, path_prefix: editingRule.pathPrefix,
+        });
+      }
+    }
+    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, status, note });
     hideAddRule();
     loadApprovals();
   } catch (e) {
@@ -274,7 +337,8 @@ async function addRule() {
 async function loadImages() {
   try {
     const images = await api('GET', '/api/images');
-    const pending = (images || []).filter(a => a.status === 'pending');
+    currentImages = images || [];
+    const pending = currentImages.filter(a => a.status === 'pending');
     const badge = document.getElementById('image-badge');
     if (pending.length > 0) {
       badge.textContent = pending.length;
@@ -284,17 +348,18 @@ async function loadImages() {
     }
     const tbody = document.getElementById('images-tbody');
     tbody.innerHTML = '';
-    if (!images || images.length === 0) {
+    if (currentImages.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No image approval records</td></tr>';
       return;
     }
-    images.sort((a, b) => {
+    currentImages.sort((a, b) => {
       const order = { pending: 0, approved: 1, denied: 2 };
       return (order[a.status] || 9) - (order[b.status] || 9);
     });
-    images.forEach(a => {
+    currentImages.forEach((a, idx) => {
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
+      const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditImageRule(${idx})" title="Edit rule">Edit</button>`;
       const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
       let actions = '';
       if (a.status === 'pending') {
@@ -305,14 +370,14 @@ async function loadImages() {
         actions = `<button class="btn btn-success btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
            ${vmBtn} ${globalBtn}
            <button class="btn btn-danger btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
-           ${deleteBtn}`;
+           ${editBtn} ${deleteBtn}`;
       } else {
         const promoteBtn = a.source_ip && !a.skill_id
           ? `<button class="btn btn-outline btn-sm" onclick="promoteImageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
         actions = `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
            <button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
            ${promoteBtn}
-           ${deleteBtn}`;
+           ${editBtn} ${deleteBtn}`;
       }
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
@@ -369,19 +434,42 @@ async function promoteImageToGlobal(host, sourceIP, status) {
   }
 }
 
-// --- Add Image Rule ---
+// --- Image Rule Modal ---
 function showAddImageRule() {
-  document.getElementById('modal-image-rule').classList.add('active');
-  updateImageRuleFields();
-}
-function hideAddImageRule() {
-  document.getElementById('modal-image-rule').classList.remove('active');
+  editingImageRule = null;
+  document.getElementById('modal-image-title').textContent = 'Add Image Approval Rule';
+  document.getElementById('modal-image-submit').textContent = 'Add Rule';
   document.getElementById('image-rule-host').value = '';
   document.getElementById('image-rule-level').value = 'global';
   document.getElementById('image-rule-source-ip').value = '';
   document.getElementById('image-rule-status').value = 'approved';
   document.getElementById('image-rule-note').value = '';
   updateImageRuleFields();
+  document.getElementById('modal-image-rule').classList.add('active');
+}
+
+function showEditImageRule(idx) {
+  const a = currentImages[idx];
+  if (!a) return;
+  editingImageRule = { host: a.host, skillID: a.skill_id || '', sourceIP: a.source_ip || '' };
+  document.getElementById('modal-image-title').textContent = 'Edit Image Approval Rule';
+  document.getElementById('modal-image-submit').textContent = 'Save';
+  document.getElementById('image-rule-host').value = a.host;
+  if (a.source_ip) {
+    document.getElementById('image-rule-level').value = 'vm';
+    document.getElementById('image-rule-source-ip').value = a.source_ip;
+  } else {
+    document.getElementById('image-rule-level').value = 'global';
+  }
+  document.getElementById('image-rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  document.getElementById('image-rule-note').value = a.note || '';
+  updateImageRuleFields();
+  document.getElementById('modal-image-rule').classList.add('active');
+}
+
+function hideImageRuleModal() {
+  document.getElementById('modal-image-rule').classList.remove('active');
+  editingImageRule = null;
 }
 
 function updateImageRuleFields() {
@@ -389,7 +477,7 @@ function updateImageRuleFields() {
   document.getElementById('image-rule-vm-fields').style.display = level === 'vm' ? 'block' : 'none';
 }
 
-async function addImageRule() {
+async function submitImageRule() {
   const host = document.getElementById('image-rule-host').value.trim();
   if (!host) { alert('Image pattern is required'); return; }
   const level = document.getElementById('image-rule-level').value;
@@ -401,8 +489,18 @@ async function addImageRule() {
     if (!sourceIP) { alert('Source IP is required for VM-specific rules'); return; }
   }
   try {
+    if (editingImageRule) {
+      const keyChanged = editingImageRule.host !== host ||
+        editingImageRule.sourceIP !== sourceIP;
+      if (keyChanged) {
+        await api('DELETE', '/api/images', {
+          host: editingImageRule.host, skill_id: editingImageRule.skillID,
+          source_ip: editingImageRule.sourceIP,
+        });
+      }
+    }
     await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: sourceIP, status, note });
-    hideAddImageRule();
+    hideImageRuleModal();
     loadImages();
   } catch (e) {
     alert('Error: ' + e.message);
@@ -413,21 +511,22 @@ async function addImageRule() {
 async function loadSkills() {
   try {
     const skills = await api('GET', '/api/skills');
+    currentSkills = skills || [];
     const tbody = document.getElementById('skills-tbody');
     tbody.innerHTML = '';
-    if (!skills || skills.length === 0) {
+    if (currentSkills.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No skills configured. Create one to get started.</td></tr>';
       return;
     }
-    skills.forEach(s => {
+    currentSkills.forEach((s, idx) => {
       tbody.innerHTML += `<tr>
         <td><strong>${esc(s.id)}</strong></td>
         <td>${esc(s.name)}</td>
-        <td><div class="token-display" onclick="copyToken(this)" title="Click to copy">${esc(s.token)}</div></td>
         <td>${(s.allowed_hosts || []).map(h => `<span class="badge-status approved">${esc(h)}</span>`).join(' ') || '<span class="badge-status denied">none</span>'}</td>
+        <td><span class="badge-status ${s.active ? 'approved' : 'denied'}">${s.active ? 'active' : 'inactive'}</span></td>
         <td>
-          <span class="badge-status ${s.active ? 'approved' : 'denied'}">${s.active ? 'active' : 'inactive'}</span>
-          <button class="btn btn-danger btn-sm" onclick="deleteSkill('${esc(s.id)}')" style="margin-left:8px">Delete</button>
+          <button class="btn btn-outline btn-sm" onclick="showEditSkill(${idx})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteSkill('${esc(s.id)}')">Delete</button>
         </td>
       </tr>`;
     });
@@ -437,10 +536,45 @@ async function loadSkills() {
 }
 
 function showCreateSkill() {
+  editingSkillID = null;
+  document.getElementById('modal-skill-title').textContent = 'Create Skill';
+  document.getElementById('modal-skill-submit').textContent = 'Create';
+  document.getElementById('skill-id').value = '';
+  document.getElementById('skill-id').readOnly = false;
+  document.getElementById('skill-id-group').querySelector('label').textContent = 'Skill ID (optional, auto-generated if empty)';
+  document.getElementById('skill-name').value = '';
+  document.getElementById('skill-hosts').value = '';
+  document.getElementById('skill-active-group').style.display = 'none';
   document.getElementById('modal-skill').classList.add('active');
 }
-function hideCreateSkill() {
+
+function showEditSkill(idx) {
+  const s = currentSkills[idx];
+  if (!s) return;
+  editingSkillID = s.id;
+  document.getElementById('modal-skill-title').textContent = 'Edit Skill';
+  document.getElementById('modal-skill-submit').textContent = 'Save';
+  document.getElementById('skill-id').value = s.id;
+  document.getElementById('skill-id').readOnly = true;
+  document.getElementById('skill-id-group').querySelector('label').textContent = 'Skill ID (read-only)';
+  document.getElementById('skill-name').value = s.name;
+  document.getElementById('skill-hosts').value = (s.allowed_hosts || []).join('\n');
+  document.getElementById('skill-active-group').style.display = 'block';
+  document.getElementById('skill-active').value = s.active ? 'true' : 'false';
+  document.getElementById('modal-skill').classList.add('active');
+}
+
+function hideSkillModal() {
   document.getElementById('modal-skill').classList.remove('active');
+  editingSkillID = null;
+}
+
+async function submitSkill() {
+  if (editingSkillID) {
+    await updateSkill();
+  } else {
+    await createSkill();
+  }
 }
 
 async function createSkill() {
@@ -452,12 +586,24 @@ async function createSkill() {
     const body = { name, allowed_hosts: hosts };
     if (id) body.id = id;
     const result = await api('POST', '/api/skills', body);
-    hideCreateSkill();
-    document.getElementById('skill-id').value = '';
-    document.getElementById('skill-name').value = '';
-    document.getElementById('skill-hosts').value = '';
+    hideSkillModal();
     loadSkills();
     alert('Skill created!\n\nID: ' + result.id + '\nToken: ' + result.token);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function updateSkill() {
+  const id = editingSkillID;
+  const name = document.getElementById('skill-name').value.trim();
+  const hosts = document.getElementById('skill-hosts').value.trim().split(/[\n,]+/).map(h => h.trim()).filter(Boolean);
+  const active = document.getElementById('skill-active').value === 'true';
+  if (!name) { alert('Name is required'); return; }
+  try {
+    await api('PUT', '/api/skills', { id, name, allowed_hosts: hosts, active, token: '' });
+    hideSkillModal();
+    loadSkills();
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -484,20 +630,24 @@ function copyToken(el) {
 async function loadCredentials() {
   try {
     const creds = await api('GET', '/api/credentials');
+    currentCredentials = creds || [];
     const tbody = document.getElementById('credentials-tbody');
     tbody.innerHTML = '';
-    if (!creds || creds.length === 0) {
+    if (currentCredentials.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No credentials configured.</td></tr>';
       return;
     }
-    creds.forEach(c => {
+    currentCredentials.forEach((c, idx) => {
       tbody.innerHTML += `<tr>
         <td><strong>${esc(c.name)}</strong></td>
         <td>${esc(c.host_pattern)}</td>
         <td>${formatSkillID(c.skill_id)}</td>
         <td><span class="badge-status approved">${esc(c.injection_type)}</span></td>
         <td><span class="badge-status ${c.active ? 'approved' : 'denied'}">${c.active ? 'active' : 'inactive'}</span></td>
-        <td><button class="btn btn-danger btn-sm" onclick="deleteCredential('${esc(c.id)}')">Delete</button></td>
+        <td>
+          <button class="btn btn-outline btn-sm" onclick="showEditCred(${idx})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCredential('${esc(c.id)}')">Delete</button>
+        </td>
       </tr>`;
     });
   } catch (e) {
@@ -506,11 +656,62 @@ async function loadCredentials() {
 }
 
 function showCreateCred() {
-  document.getElementById('modal-cred').classList.add('active');
+  editingCredID = null;
+  document.getElementById('modal-cred-title').textContent = 'Add Credential';
+  document.getElementById('modal-cred-submit').textContent = 'Add';
+  document.getElementById('cred-name').value = '';
+  document.getElementById('cred-host').value = '';
+  document.getElementById('cred-skill').value = '';
+  document.getElementById('cred-type').value = 'header';
+  document.getElementById('cred-header-name').value = '';
+  document.getElementById('cred-header-value').value = '';
+  document.getElementById('cred-header-value').placeholder = 'secret value';
+  document.getElementById('cred-username').value = '';
+  document.getElementById('cred-password').value = '';
+  document.getElementById('cred-password').placeholder = '';
+  document.getElementById('cred-bearer-token').value = '';
+  document.getElementById('cred-bearer-token').placeholder = '';
+  document.getElementById('cred-param-name').value = '';
+  document.getElementById('cred-param-value').value = '';
+  document.getElementById('cred-param-value').placeholder = '';
+  document.getElementById('cred-active-group').style.display = 'none';
   updateCredFields();
+  document.getElementById('modal-cred').classList.add('active');
 }
-function hideCreateCred() {
+
+function showEditCred(idx) {
+  const c = currentCredentials[idx];
+  if (!c) return;
+  editingCredID = c.id;
+  document.getElementById('modal-cred-title').textContent = 'Edit Credential';
+  document.getElementById('modal-cred-submit').textContent = 'Save';
+  document.getElementById('cred-name').value = c.name;
+  document.getElementById('cred-host').value = c.host_pattern;
+  document.getElementById('cred-skill').value = c.skill_id || '';
+  document.getElementById('cred-type').value = c.injection_type;
+  // Non-secret fields
+  document.getElementById('cred-header-name').value = c.header_name || '';
+  document.getElementById('cred-username').value = c.username || '';
+  document.getElementById('cred-param-name').value = c.param_name || '';
+  // Secret fields: leave empty, show placeholder
+  document.getElementById('cred-header-value').value = '';
+  document.getElementById('cred-header-value').placeholder = 'leave empty to keep current value';
+  document.getElementById('cred-password').value = '';
+  document.getElementById('cred-password').placeholder = 'leave empty to keep current value';
+  document.getElementById('cred-bearer-token').value = '';
+  document.getElementById('cred-bearer-token').placeholder = 'leave empty to keep current value';
+  document.getElementById('cred-param-value').value = '';
+  document.getElementById('cred-param-value').placeholder = 'leave empty to keep current value';
+  // Show active toggle
+  document.getElementById('cred-active-group').style.display = 'block';
+  document.getElementById('cred-active').value = c.active ? 'true' : 'false';
+  updateCredFields();
+  document.getElementById('modal-cred').classList.add('active');
+}
+
+function hideCredModal() {
   document.getElementById('modal-cred').classList.remove('active');
+  editingCredID = null;
 }
 
 function updateCredFields() {
@@ -519,6 +720,14 @@ function updateCredFields() {
   document.getElementById('cred-basic-fields').style.display = type === 'basic_auth' ? 'block' : 'none';
   document.getElementById('cred-bearer-fields').style.display = type === 'bearer' ? 'block' : 'none';
   document.getElementById('cred-query-fields').style.display = type === 'query_param' ? 'block' : 'none';
+}
+
+async function submitCredential() {
+  if (editingCredID) {
+    await updateCredential();
+  } else {
+    await createCredential();
+  }
 }
 
 async function createCredential() {
@@ -545,7 +754,40 @@ async function createCredential() {
   }
   try {
     await api('POST', '/api/credentials', cred);
-    hideCreateCred();
+    hideCredModal();
+    loadCredentials();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function updateCredential() {
+  const type = document.getElementById('cred-type').value;
+  const cred = {
+    id: editingCredID,
+    name: document.getElementById('cred-name').value.trim(),
+    host_pattern: document.getElementById('cred-host').value.trim(),
+    skill_id: document.getElementById('cred-skill').value.trim(),
+    injection_type: type,
+    active: document.getElementById('cred-active').value === 'true',
+  };
+  if (!cred.name || !cred.host_pattern) { alert('Name and host pattern are required'); return; }
+  // Only send secret fields if user entered a new value (empty = keep current on backend).
+  if (type === 'header') {
+    cred.header_name = document.getElementById('cred-header-name').value.trim();
+    cred.header_value = document.getElementById('cred-header-value').value;
+  } else if (type === 'basic_auth') {
+    cred.username = document.getElementById('cred-username').value.trim();
+    cred.password = document.getElementById('cred-password').value;
+  } else if (type === 'bearer') {
+    cred.token = document.getElementById('cred-bearer-token').value;
+  } else if (type === 'query_param') {
+    cred.param_name = document.getElementById('cred-param-name').value.trim();
+    cred.param_value = document.getElementById('cred-param-value').value;
+  }
+  try {
+    await api('PUT', '/api/credentials', cred);
+    hideCredModal();
     loadCredentials();
   } catch (e) {
     alert('Error: ' + e.message);
