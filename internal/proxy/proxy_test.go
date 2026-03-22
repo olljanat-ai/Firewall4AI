@@ -144,7 +144,7 @@ func TestProxy_PreApprovedHost(t *testing.T) {
 func TestProxy_ApprovedHost(t *testing.T) {
 	p, skills, approvals := setupProxy(t)
 	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
-	approvals.Decide("target.example.com", "s1", "", approval.StatusApproved, "ok")
+	approvals.Decide("target.example.com", "s1", "", "", approval.StatusApproved, "ok")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -166,7 +166,7 @@ func TestProxy_GlobalApproval(t *testing.T) {
 	p, _, approvals := setupProxy(t)
 
 	// Globally approve a host (empty skillID, empty sourceIP).
-	approvals.Decide("global.example.com", "", "", approval.StatusApproved, "global")
+	approvals.Decide("global.example.com", "", "", "", approval.StatusApproved, "global")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -189,7 +189,7 @@ func TestProxy_GlobalApproval_WithSkill(t *testing.T) {
 	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
 
 	// Globally approve a host.
-	approvals.Decide("global.example.com", "", "", approval.StatusApproved, "global")
+	approvals.Decide("global.example.com", "", "", "", approval.StatusApproved, "global")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -212,7 +212,7 @@ func TestProxy_VMSpecificApproval(t *testing.T) {
 	p, _, approvals := setupProxy(t)
 
 	// Approve for a specific VM IP.
-	approvals.Decide("vm.example.com", "", "10.255.255.10", approval.StatusApproved, "vm ok")
+	approvals.Decide("vm.example.com", "", "10.255.255.10", "", approval.StatusApproved, "vm ok")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -235,7 +235,7 @@ func TestProxy_WildcardGlobalApproval(t *testing.T) {
 	p, _, approvals := setupProxy(t)
 
 	// Approve wildcard globally.
-	approvals.Decide("*.example.com", "", "", approval.StatusApproved, "wildcard")
+	approvals.Decide("*.example.com", "", "", "", approval.StatusApproved, "wildcard")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -506,3 +506,67 @@ func TestGetSkillID(t *testing.T) {
 		t.Errorf("getSkillID(skill) = %q, want %q", got, "test-id")
 	}
 }
+
+// --- Path prefix proxy tests ---
+
+func TestProxy_PathPrefixApproval_Allowed(t *testing.T) {
+	p, _, approvals := setupProxy(t)
+
+	// Approve only a specific path prefix.
+	approvals.Decide("github.com", "", "", "/olljanat-ai/", StatusApproved, "repo access")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	req := httptest.NewRequest("GET", backend.URL+"/olljanat-ai/Firewall4AI/pull/1", nil)
+	req.Host = "github.com"
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for path-prefix-approved request, got %d", w.Code)
+	}
+}
+
+func TestProxy_PathPrefixApproval_Denied(t *testing.T) {
+	p, _, approvals := setupProxy(t)
+
+	// Approve only a specific path prefix.
+	approvals.Decide("github.com", "", "", "/olljanat-ai/", StatusApproved, "repo access")
+
+	req := httptest.NewRequest("GET", "http://github.com/evil-org/malware", nil)
+	req.Host = "github.com"
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	// Non-matching path should time out and be denied.
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for non-matching path, got %d", w.Code)
+	}
+}
+
+func TestProxy_HostApproval_CoversAllPaths(t *testing.T) {
+	p, _, approvals := setupProxy(t)
+
+	// Host-only approval (no path prefix) covers all paths.
+	approvals.Decide("example.com", "", "", "", StatusApproved, "all paths")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	req := httptest.NewRequest("GET", backend.URL+"/any/path/here", nil)
+	req.Host = "example.com"
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for host-approved request with any path, got %d", w.Code)
+	}
+}
+
+// Alias for use in test file.
+var StatusApproved = approval.StatusApproved

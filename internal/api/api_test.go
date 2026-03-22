@@ -109,7 +109,7 @@ func TestApprovals_Workflow(t *testing.T) {
 	h, mux := setupHandler(t)
 
 	// Register a pending host.
-	h.Approvals.Check("example.com", "skill-1", "")
+	h.Approvals.Check("example.com", "skill-1", "", "")
 
 	// List pending.
 	w := doRequest(mux, "GET", "/api/approvals/pending", nil)
@@ -151,7 +151,7 @@ func TestApprovals_VMSpecific(t *testing.T) {
 	h, mux := setupHandler(t)
 
 	// Register a pending host from a specific VM.
-	h.Approvals.Check("api.com", "", "10.255.255.10")
+	h.Approvals.Check("api.com", "", "10.255.255.10", "")
 
 	// Approve for that VM via API.
 	w := doRequest(mux, "POST", "/api/approvals/decide", map[string]any{
@@ -162,7 +162,7 @@ func TestApprovals_VMSpecific(t *testing.T) {
 	}
 
 	// Verify the approval.
-	status, exists := h.Approvals.CheckExisting("api.com", "", "10.255.255.10")
+	status, exists := h.Approvals.CheckExisting("api.com", "", "10.255.255.10", "")
 	if !exists || status != approval.StatusApproved {
 		t.Errorf("expected VM-specific approved, got %s (exists=%v)", status, exists)
 	}
@@ -172,7 +172,7 @@ func TestApprovals_Delete(t *testing.T) {
 	h, mux := setupHandler(t)
 
 	// Create an approval.
-	h.Approvals.Decide("delete-me.com", "", "", approval.StatusApproved, "to delete")
+	h.Approvals.Decide("delete-me.com", "", "", "", approval.StatusApproved, "to delete")
 
 	// Delete via API.
 	w := doRequest(mux, "DELETE", "/api/approvals", map[string]any{
@@ -183,9 +183,47 @@ func TestApprovals_Delete(t *testing.T) {
 	}
 
 	// Verify it's gone.
-	_, exists := h.Approvals.CheckExisting("delete-me.com", "", "")
+	_, exists := h.Approvals.CheckExisting("delete-me.com", "", "", "")
 	if exists {
 		t.Error("expected approval to be deleted")
+	}
+}
+
+func TestApprovals_PathPrefix(t *testing.T) {
+	_, mux := setupHandler(t)
+
+	// Create a path-prefix approval via API.
+	w := doRequest(mux, "POST", "/api/approvals/decide", map[string]any{
+		"host": "github.com", "path_prefix": "/olljanat-ai/", "status": "approved", "note": "repo",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("decide path: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// List all should include path_prefix.
+	w = doRequest(mux, "GET", "/api/approvals", nil)
+	var all []approval.HostApproval
+	json.NewDecoder(w.Body).Decode(&all)
+	if len(all) != 1 {
+		t.Fatalf("expected 1 approval, got %d", len(all))
+	}
+	if all[0].PathPrefix != "/olljanat-ai/" {
+		t.Errorf("expected path_prefix /olljanat-ai/, got %q", all[0].PathPrefix)
+	}
+
+	// Delete with path_prefix.
+	w = doRequest(mux, "DELETE", "/api/approvals", map[string]any{
+		"host": "github.com", "path_prefix": "/olljanat-ai/",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Should be gone.
+	w = doRequest(mux, "GET", "/api/approvals", nil)
+	json.NewDecoder(w.Body).Decode(&all)
+	if len(all) != 0 {
+		t.Errorf("expected 0 approvals after delete, got %d", len(all))
 	}
 }
 

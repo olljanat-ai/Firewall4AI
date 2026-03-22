@@ -124,14 +124,14 @@ func (m *Manager) CheckExistingWithWildcards(host, skillID, sourceIP string) (St
 // It considers both wildcard host patterns and path prefix matching.
 // An approval with empty PathPrefix covers all paths. An approval with
 // a PathPrefix only covers paths starting with that prefix.
+// When multiple approvals match, the most specific (longest PathPrefix) wins.
 func (m *Manager) CheckExistingWithPath(host, path, skillID, sourceIP string) (Status, bool) {
-	// Try exact match with no path prefix first (fast path — covers all paths).
-	if status, ok := m.CheckExisting(host, skillID, sourceIP, ""); ok {
-		return status, true
-	}
-	// Scan all approvals for matching host+path combinations.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	var bestMatch *HostApproval
+	bestLen := -1
+
 	for _, a := range m.approvals {
 		if a.SkillID != skillID || a.SourceIP != sourceIP {
 			continue
@@ -139,9 +139,18 @@ func (m *Manager) CheckExistingWithPath(host, path, skillID, sourceIP string) (S
 		if !MatchHost(a.Host, host) {
 			continue
 		}
-		if MatchPath(a.PathPrefix, path) {
-			return a.Status, true
+		if !MatchPath(a.PathPrefix, path) {
+			continue
 		}
+		// Longer PathPrefix = more specific match wins.
+		if len(a.PathPrefix) > bestLen {
+			bestMatch = a
+			bestLen = len(a.PathPrefix)
+		}
+	}
+
+	if bestMatch != nil {
+		return bestMatch.Status, true
 	}
 	return "", false
 }
