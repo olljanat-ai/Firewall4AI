@@ -215,12 +215,12 @@ func adminTLS(cfg config.Config, ca *certgen.CA) (*tls.Config, error) {
 		}, nil
 	}
 
-	// Auto-generate a self-signed cert for admin UI.
-	cert, err := certgen.GenerateAdminCert()
+	// Load or generate a persistent self-signed cert for admin UI.
+	cert, err := certgen.LoadOrGenerateAdminCert(cfg.DataDir)
 	if err != nil {
-		return nil, fmt.Errorf("generate admin cert: %w", err)
+		return nil, fmt.Errorf("load/generate admin cert: %w", err)
 	}
-	log.Printf("Admin UI using auto-generated self-signed TLS certificate")
+	log.Printf("Admin UI TLS certificate: %s", filepath.Join(cfg.DataDir, "admin.crt"))
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,

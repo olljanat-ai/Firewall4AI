@@ -160,9 +160,9 @@ func TestTLSConfigForMITM(t *testing.T) {
 }
 
 func TestGenerateAdminCert(t *testing.T) {
-	cert, err := GenerateAdminCert()
+	cert, err := LoadOrGenerateAdminCert(t.TempDir())
 	if err != nil {
-		t.Fatalf("GenerateAdminCert() error: %v", err)
+		t.Fatalf("LoadOrGenerateAdminCert() error: %v", err)
 	}
 
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])

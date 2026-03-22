@@ -201,17 +201,50 @@ func (ca *CA) generateHostCertLocked(host string) (*tls.Certificate, error) {
 	return tlsCert, nil
 }
 
-// GenerateAdminCert creates a self-signed TLS certificate for the admin UI.
-// It includes localhost SANs for local access.
-func GenerateAdminCert() (tls.Certificate, error) {
+// LoadOrGenerateAdminCert loads a persisted admin UI certificate from dataDir,
+// or generates a new one and saves it. The cert is valid for 10 years.
+func LoadOrGenerateAdminCert(dataDir string) (tls.Certificate, error) {
+	certPath := filepath.Join(dataDir, "admin.crt")
+	keyPath := filepath.Join(dataDir, "admin.key")
+
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return tls.Certificate{}, fmt.Errorf("create data dir: %w", err)
+	}
+
+	certPEM, certErr := os.ReadFile(certPath)
+	keyPEM, keyErr := os.ReadFile(keyPath)
+	if certErr == nil && keyErr == nil {
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err == nil {
+			return cert, nil
+		}
+		// Fall through to regenerate if parsing fails.
+	}
+
+	cert, certPEM, keyPEM, err := generateAdminCert()
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		return tls.Certificate{}, fmt.Errorf("write admin.crt: %w", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return tls.Certificate{}, fmt.Errorf("write admin.key: %w", err)
+	}
+
+	return cert, nil
+}
+
+func generateAdminCert() (tls.Certificate, []byte, []byte, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate admin key: %w", err)
+		return tls.Certificate{}, nil, nil, fmt.Errorf("generate admin key: %w", err)
 	}
 
 	serial, err := randomSerial()
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, nil, err
 	}
 
 	template := &x509.Certificate{
@@ -221,7 +254,7 @@ func GenerateAdminCert() (tls.Certificate, error) {
 			Organization: []string{"Firewall4AI"},
 		},
 		NotBefore: time.Now().Add(-1 * time.Hour),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
+		NotAfter:  time.Now().Add(10 * 365 * 24 * time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageServerAuth,
@@ -232,13 +265,20 @@ func GenerateAdminCert() (tls.Certificate, error) {
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("create admin cert: %w", err)
+		return tls.Certificate{}, nil, nil, fmt.Errorf("create admin cert: %w", err)
 	}
 
-	return tls.Certificate{
+	keyPEM, err := marshalECPrivateKey(key)
+	if err != nil {
+		return tls.Certificate{}, nil, nil, err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	tlsCert := tls.Certificate{
 		Certificate: [][]byte{certDER},
 		PrivateKey:  key,
-	}, nil
+	}
+	return tlsCert, certPEM, keyPEM, nil
 }
 
 // TLSConfigForMITM returns a tls.Config that dynamically generates certificates
