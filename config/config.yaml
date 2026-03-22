@@ -1,0 +1,8 @@
+install:
+  grub-entry-name: Firewall4AI
+  partitions:
+    state:
+      size: 4096
+
+upgrade:
+  system: oci:ghcr.io/olljanat-ai/firewall4ai:latest

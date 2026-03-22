@@ -1,0 +1,9 @@
+[Match]
+Name=eth0
+
+[Network]
+DHCP=yes
+
+[DHCPv4]
+# Don't let DHCP override our static DNS configuration
+UseDNS=no

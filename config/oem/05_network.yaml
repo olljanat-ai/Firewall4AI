@@ -1,0 +1,39 @@
+name: "Network and Layout Settings"
+stages:
+  initramfs:
+    - name: "Configure system"
+      files:
+        - path: /etc/ssh/sshd_config.d/root_login.conf
+          content: |
+            PermitRootLogin yes
+          permissions: 0644
+          owner: 0
+          group: 0
+        # Make shutdown faster
+        - path: /etc/systemd/system.conf
+          content: |
+            [Manager]
+            DefaultTimeoutStopSec=5s
+            DumpCore=no
+          permissions: 0644
+          owner: 0
+          group: 0
+      commands:
+        - ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf || true
+
+  # Immutable layout configuration
+  rootfs.after:
+    - name: "Immutable Layout configuration"
+      environment_file: /run/cos/cos-layout.env
+      environment:
+        VOLUMES: "LABEL=COS_OEM:/oem LABEL=COS_PERSISTENT:/usr/local"
+        OVERLAY: "tmpfs:25%"
+        RW_PATHS: "/etc /var"
+        PERSISTENT_STATE_PATHS: >-
+          /etc/ssh
+          /home
+          /opt
+          /root
+          /var/lib/firewall4ai
+          /var/log
+        PERSISTENT_STATE_BIND: "true"

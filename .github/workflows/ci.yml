@@ -28,7 +28,5 @@ jobs:
       - name: Build
         run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/firewall4ai/
 
-      - name: Validate VM scripts
-        run: |
-          sh -n vm/build.sh
-          sh -n vm/configure.sh
+      - name: Validate scripts
+        run: bash -n scripts/firewall4ai-iptables.sh

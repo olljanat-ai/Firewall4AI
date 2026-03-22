@@ -13,15 +13,26 @@ make build
 make all
 ```
 
-## Building VM Images Locally
-To build VM images locally (requires root on Alpine Linux or a CI environment):
+## Building ISO Locally
+To build the ISO locally (requires Docker):
 
 ```bash
-cd vm
-sudo VERSION=v1.0.0 ./build.sh
+# Build the OS container image
+docker build . --build-arg VERSION=dev -t firewall4ai:dev
+
+# Export and create ISO
+docker create --name export firewall4ai:dev
+mkdir rootfs && docker export export | tar -x -C rootfs && docker rm export
+sudo ./rootfs/usr/bin/elemental --debug build-iso --bootloader-in-rootfs --extra-cmdline "" dir:rootfs
 ```
 
-This produces `dist/firewall4ai-v1.0.0.{qcow2,vmdk,vhdx}`.
+This produces `elemental.iso` which can be used to install Firewall4AI on bare metal or VMs.
+
+## Upgrading an Existing Installation
+After a new version is released:
+```bash
+elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version>
+```
 
 ## Release
 Releases are automated via GitHub Actions. To create a release:
@@ -30,4 +41,4 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-This builds a Linux amd64 binary and VM appliance images (qcow2, vmdk, vhdx), then creates a GitHub release with auto-generated release notes.
+This builds the Debian 13 OS image with Elemental Toolkit, pushes it to GHCR, creates a bootable ISO, and publishes a GitHub release.

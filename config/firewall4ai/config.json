@@ -1,0 +1,7 @@
+{
+  "listen_addr": ":8080",
+  "admin_addr": ":443",
+  "transparent_tls_addr": ":8443",
+  "data_dir": "/var/lib/firewall4ai",
+  "max_log_entries": 10000
+}

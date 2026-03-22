@@ -1,0 +1,12 @@
+[Unit]
+Description=Firewall4AI iptables rules
+After=network.target
+Before=firewall4ai.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/firewall4ai-iptables.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Firewall4AI AI proxy
+After=network.target dnsmasq.service firewall4ai-iptables.service
+Requires=firewall4ai-iptables.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/lib/firewall4ai
+ExecStart=/usr/bin/firewall4ai -config /etc/firewall4ai/config.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

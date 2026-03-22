@@ -7,80 +7,58 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.23"
 
-      - name: Run tests
-        run: go test -race -timeout 60s ./...
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
 
-      - name: Build Linux amd64
-        run: |
-          VERSION=${GITHUB_REF_NAME}
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-            -ldflags "-s -w -X main.Version=${VERSION}" \
-            -o firewall4ai-linux-amd64 \
-            ./cmd/firewall4ai/
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
-      - name: Build VM images
-        run: |
-          VERSION=${GITHUB_REF_NAME}
-
-          # Install dependencies for alpine-make-vm-image
-          sudo apt-get update
-          sudo apt-get install -y qemu-utils e2fsprogs dosfstools
-
-          # Download alpine-make-vm-image
-          wget -q https://raw.githubusercontent.com/alpinelinux/alpine-make-vm-image/v0.13.3/alpine-make-vm-image
-          chmod +x alpine-make-vm-image
-
-          # Build the binary for the VM
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-            -ldflags "-s -w -X main.Version=${VERSION}" \
-            -o vm/firewall4ai \
-            ./cmd/firewall4ai/
-
-          # Build qcow2 image
-          sudo ./alpine-make-vm-image \
-            --image-format qcow2 \
-            --image-size 1G \
-            --branch latest-stable \
-            --packages "$(cat vm/packages)" \
-            --fs-skel-dir vm/rootfs \
-            --script-chroot \
-            -- \
-            "firewall4ai-${VERSION}.qcow2" \
-            vm/configure.sh
-
-          # Convert to VMware vmdk
-          qemu-img convert -f qcow2 -O vmdk \
-            -o adapter_type=lsilogic,subformat=streamOptimized \
-            "firewall4ai-${VERSION}.qcow2" "firewall4ai-${VERSION}.vmdk"
-
-          # Convert to Hyper-V vhdx
-          qemu-img convert -f qcow2 -O vhdx \
-            -o subformat=dynamic \
-            "firewall4ai-${VERSION}.qcow2" "firewall4ai-${VERSION}.vhdx"
-
-          # Cleanup build artifact
-          rm -f vm/firewall4ai
-
-          ls -lh firewall4ai-${VERSION}.*
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      - name: Build and push
+        uses: docker/build-push-action@v7
         with:
-          generate_release_notes: true
-          files: |
-            firewall4ai-*.qcow2
-            firewall4ai-*.vmdk
-            firewall4ai-*.vhdx
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/firewall4ai:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/firewall4ai:latest
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # - name: Install tools
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y dosfstools mtools squashfs-tools xorriso
+
+      # - name: Create ISO
+      #   run: |
+      #     VERSION=${GITHUB_REF_NAME}
+      #     docker create --name export ghcr.io/${{ github.repository_owner }}/firewall4ai:latest
+      #     mkdir rootfs
+      #     docker export export | tar -x -C rootfs
+      #     docker rm export
+      #     sudo ./elemental --debug build-iso --bootloader-in-rootfs --extra-cmdline "" dir:rootfs
+      #     sudo mv elemental.iso firewall4ai-${VERSION}.iso
+
+      # - name: Create release
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     generate_release_notes: true
+      #     files: |
+      #       firewall4ai-*.iso

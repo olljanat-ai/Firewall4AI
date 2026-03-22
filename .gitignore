@@ -1,7 +1,9 @@
 bin/
 dist/
 data/
+rootfs/
 *.exe
+*.iso
 *.qcow2
 *.vmdk
 *.vhdx
