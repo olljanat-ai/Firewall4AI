@@ -676,26 +676,35 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 	name, ref, pathType, isV2 := registry.ParsePath(urlPath)
 
 	if isV2 && pathType == "manifests" {
-		// Manifest request: image-level approval.
+		// Manifest request: check repo-level first (allows all tags/digests
+		// once any image in the repo is approved), then fall back to
+		// per-image approval which registers a pending entry for admin.
 		imageRef := registry.ParseImageRef(reg.Name, name, ref)
-		status := p.checkImageApproval(imageRef, skill, sourceIP)
-		if status != approval.StatusApproved {
-			p.Logger.Add(proxylog.Entry{
-				SkillID: sid,
-				Method:  req.Method,
-				Host:    host,
-				Path:    urlPath,
-				Status:  string(status),
-				Detail:  "image not approved: " + imageRef,
-			})
-			resp := &http.Response{
-				StatusCode: http.StatusForbidden,
-				ProtoMajor: 1,
-				ProtoMinor: 1,
-				Header:     make(http.Header),
+		repo := reg.Name + "/" + name
+		if reg.Name == "docker.io" && !strings.Contains(name, "/") {
+			repo = reg.Name + "/library/" + name
+		}
+		approved := registry.CheckRepoApproval(p.ImageApprovals, repo)
+		if !approved {
+			status := p.checkImageApproval(imageRef, skill, sourceIP)
+			if status != approval.StatusApproved {
+				p.Logger.Add(proxylog.Entry{
+					SkillID: sid,
+					Method:  req.Method,
+					Host:    host,
+					Path:    urlPath,
+					Status:  string(status),
+					Detail:  "image not approved: " + imageRef,
+				})
+				resp := &http.Response{
+					StatusCode: http.StatusForbidden,
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+					Header:     make(http.Header),
+				}
+				resp.Write(clientConn)
+				return
 			}
-			resp.Write(clientConn)
-			return
 		}
 		p.Logger.Add(proxylog.Entry{
 			SkillID:  sid,
