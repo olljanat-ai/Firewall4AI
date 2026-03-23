@@ -135,7 +135,7 @@ func decodeCaps(s string) string {
 // Scoped: /@scope/<package> or /@scope%2f<package>
 func parseNPMPath(urlPath string) (string, bool) {
 	if len(urlPath) < 2 {
-		return "", false
+		return "", true // root path — metadata
 	}
 	path := urlPath[1:] // strip leading /
 
