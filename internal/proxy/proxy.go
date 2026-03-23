@@ -4,6 +4,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -25,6 +26,8 @@ const (
 	approvalTimeout = 5 * time.Minute
 	// AuthHeader is used by AI agents to provide their skill token.
 	AuthHeader = "X-Firewall4AI-Token"
+	// maxFullLogBody is the maximum body size captured in full logging mode.
+	maxFullLogBody = 64 * 1024 // 64 KB
 )
 
 // Proxy is the main proxy server.
@@ -230,6 +233,47 @@ func (p *Proxy) checkImageApproval(imageRef string, skill *auth.Skill, sourceIP 
 	return p.ImageApprovals.WaitForDecision(imageRef, sid, pendingIP, "", p.ApprovalTimeout)
 }
 
+// captureRequestBody reads the request body (up to maxFullLogBody) and replaces it
+// with a new reader so the request can still be forwarded.
+func captureRequestBody(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxFullLogBody+1))
+	r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil {
+		return ""
+	}
+	if len(body) > maxFullLogBody {
+		return string(body[:maxFullLogBody]) + "... (truncated)"
+	}
+	return string(body)
+}
+
+// captureResponseBody reads the response body (up to maxFullLogBody).
+func captureResponseBody(resp *http.Response) string {
+	if resp.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFullLogBody+1))
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil {
+		return ""
+	}
+	if len(body) > maxFullLogBody {
+		return string(body[:maxFullLogBody]) + "... (truncated)"
+	}
+	return string(body)
+}
+
+// getLoggingMode returns the logging mode for the request's host/path.
+func (p *Proxy) getLoggingMode(host, path string, skill *auth.Skill, sourceIP string) approval.LoggingMode {
+	sid := getSkillID(skill)
+	return p.Approvals.GetLoggingMode(host, path, sid, sourceIP)
+}
+
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	host := extractHost(r)
@@ -267,6 +311,17 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check logging mode before injecting credentials (capture pre-injection headers).
+	logMode := p.getLoggingMode(host, r.URL.Path, skill, sourceIP)
+	var fullDetail *proxylog.FullDetail
+	if logMode == approval.LoggingModeFull {
+		reqBody := captureRequestBody(r)
+		fullDetail = &proxylog.FullDetail{
+			RequestHeaders: r.Header.Clone(),
+			RequestBody:    reqBody,
+		}
+	}
+
 	// Inject credentials.
 	p.Credentials.InjectForRequest(r, sid)
 
@@ -282,27 +337,37 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := p.Transport.RoundTrip(r)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   r.Method,
-			Host:     host,
-			Path:     r.URL.Path,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
+			SkillID:    sid,
+			Method:     r.Method,
+			Host:       host,
+			Path:       r.URL.Path,
+			Status:     "error",
+			Detail:     err.Error(),
+			Duration:   time.Since(start).Milliseconds(),
+			HasFullLog: fullDetail != nil,
+			FullDetail: fullDetail,
 		})
 		http.Error(w, "Proxy error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
+	if fullDetail != nil {
+		fullDetail.ResponseHeaders = resp.Header.Clone()
+		fullDetail.ResponseStatus = resp.StatusCode
+		fullDetail.ResponseBody = captureResponseBody(resp)
+	}
+
 	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   r.Method,
-		Host:     host,
-		Path:     r.URL.Path,
-		Status:   "allowed",
-		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration: time.Since(start).Milliseconds(),
+		SkillID:    sid,
+		Method:     r.Method,
+		Host:       host,
+		Path:       r.URL.Path,
+		Status:     "allowed",
+		Detail:     fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
+		Duration:   time.Since(start).Milliseconds(),
+		HasFullLog: fullDetail != nil,
+		FullDetail: fullDetail,
 	})
 
 	// Copy response headers.
@@ -490,6 +555,17 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 		return
 	}
 
+	// Check logging mode.
+	logMode := p.getLoggingMode(host, req.URL.Path, skill, sourceIP)
+	var fullDetail *proxylog.FullDetail
+	if logMode == approval.LoggingModeFull {
+		reqBody := captureRequestBody(req)
+		fullDetail = &proxylog.FullDetail{
+			RequestHeaders: req.Header.Clone(),
+			RequestBody:    reqBody,
+		}
+	}
+
 	// Set the URL for forwarding.
 	req.URL.Scheme = "https"
 	req.URL.Host = targetAddr
@@ -504,13 +580,15 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	resp, err := p.Transport.RoundTrip(req)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     req.URL.Path,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
+			SkillID:    sid,
+			Method:     req.Method,
+			Host:       host,
+			Path:       req.URL.Path,
+			Status:     "error",
+			Detail:     err.Error(),
+			Duration:   time.Since(start).Milliseconds(),
+			HasFullLog: fullDetail != nil,
+			FullDetail: fullDetail,
 		})
 		// Send a 502 response to the client.
 		resp502 := &http.Response{
@@ -524,14 +602,22 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	}
 	defer resp.Body.Close()
 
+	if fullDetail != nil {
+		fullDetail.ResponseHeaders = resp.Header.Clone()
+		fullDetail.ResponseStatus = resp.StatusCode
+		fullDetail.ResponseBody = captureResponseBody(resp)
+	}
+
 	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   req.Method,
-		Host:     host,
-		Path:     req.URL.Path,
-		Status:   "allowed",
-		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration: time.Since(start).Milliseconds(),
+		SkillID:    sid,
+		Method:     req.Method,
+		Host:       host,
+		Path:       req.URL.Path,
+		Status:     "allowed",
+		Detail:     fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
+		Duration:   time.Since(start).Milliseconds(),
+		HasFullLog: fullDetail != nil,
+		FullDetail: fullDetail,
 	})
 
 	// Write response back to client.
@@ -695,6 +781,17 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 		return
 	}
 
+	// Check logging mode.
+	logMode := p.getLoggingMode(host, req.URL.Path, skill, sourceIP)
+	var fullDetail *proxylog.FullDetail
+	if logMode == approval.LoggingModeFull {
+		reqBody := captureRequestBody(req)
+		fullDetail = &proxylog.FullDetail{
+			RequestHeaders: req.Header.Clone(),
+			RequestBody:    reqBody,
+		}
+	}
+
 	// Set URL for forwarding to the real backend.
 	req.URL.Scheme = "https"
 	req.URL.Host = host + ":443"
@@ -706,13 +803,15 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 	resp, err := p.Transport.RoundTrip(req)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     req.URL.Path,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
+			SkillID:    sid,
+			Method:     req.Method,
+			Host:       host,
+			Path:       req.URL.Path,
+			Status:     "error",
+			Detail:     err.Error(),
+			Duration:   time.Since(start).Milliseconds(),
+			HasFullLog: fullDetail != nil,
+			FullDetail: fullDetail,
 		})
 		resp502 := &http.Response{
 			StatusCode: http.StatusBadGateway,
@@ -725,14 +824,22 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 	}
 	defer resp.Body.Close()
 
+	if fullDetail != nil {
+		fullDetail.ResponseHeaders = resp.Header.Clone()
+		fullDetail.ResponseStatus = resp.StatusCode
+		fullDetail.ResponseBody = captureResponseBody(resp)
+	}
+
 	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   req.Method,
-		Host:     host,
-		Path:     req.URL.Path,
-		Status:   "allowed",
-		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration: time.Since(start).Milliseconds(),
+		SkillID:    sid,
+		Method:     req.Method,
+		Host:       host,
+		Path:       req.URL.Path,
+		Status:     "allowed",
+		Detail:     fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
+		Duration:   time.Since(start).Milliseconds(),
+		HasFullLog: fullDetail != nil,
+		FullDetail: fullDetail,
 	})
 
 	resp.Write(clientConn)

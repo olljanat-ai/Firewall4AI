@@ -7,17 +7,29 @@ import (
 	"time"
 )
  
+// FullDetail stores the complete request and response data captured
+// when an approval rule has logging mode set to "full".
+type FullDetail struct {
+	RequestHeaders  map[string][]string `json:"request_headers,omitempty"`
+	RequestBody     string              `json:"request_body,omitempty"`
+	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
+	ResponseBody    string              `json:"response_body,omitempty"`
+	ResponseStatus  int                 `json:"response_status,omitempty"`
+}
+
 // Entry represents a single proxy log entry.
 type Entry struct {
-	ID        int       `json:"id"`
-	Timestamp time.Time `json:"timestamp"`
-	SkillID   string    `json:"skill_id"`
-	Method    string    `json:"method"`
-	Host      string    `json:"host"`
-	Path      string    `json:"path"`
-	Status    string    `json:"status"` // "allowed", "denied", "pending", "error"
-	Detail    string    `json:"detail"`
-	Duration  int64     `json:"duration_ms"`
+	ID          int         `json:"id"`
+	Timestamp   time.Time   `json:"timestamp"`
+	SkillID     string      `json:"skill_id"`
+	Method      string      `json:"method"`
+	Host        string      `json:"host"`
+	Path        string      `json:"path"`
+	Status      string      `json:"status"` // "allowed", "denied", "pending", "error"
+	Detail      string      `json:"detail"`
+	Duration    int64       `json:"duration_ms"`
+	HasFullLog  bool        `json:"has_full_log,omitempty"`
+	FullDetail  *FullDetail `json:"-"` // excluded from list responses, served via detail endpoint
 }
  
 // Logger stores log entries in memory with a configurable max size.
@@ -89,6 +101,18 @@ func (l *Logger) Since(afterID int) []Entry {
 	return result
 }
  
+// GetByID returns a single entry by ID including full detail data.
+func (l *Logger) GetByID(id int) (Entry, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	for _, e := range l.entries {
+		if e.ID == id {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
 // Stats returns summary statistics.
 func (l *Logger) Stats() map[string]int {
 	l.mu.RLock()

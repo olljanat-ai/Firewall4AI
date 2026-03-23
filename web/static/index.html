@@ -73,9 +73,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Host</th><th>Path Prefix</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Host</th><th>Path Prefix</th><th>Category</th><th>Logging</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
             <tbody id="approvals-tbody">
-              <tr><td colspan="8" class="empty-state">No URL rules</td></tr>
+              <tr><td colspan="9" class="empty-state">No URL rules</td></tr>
             </tbody>
           </table>
         </div>
@@ -172,9 +172,9 @@
         <div class="card">
           <div class="log-container">
             <table>
-              <thead><tr><th>Time</th><th>Skill</th><th>Method</th><th>Host</th><th>Path</th><th>Status</th><th>Detail</th></tr></thead>
+              <thead><tr><th>Time</th><th>Skill</th><th>Method</th><th>Host</th><th>Path</th><th>Status</th><th>Detail</th><th></th></tr></thead>
               <tbody id="logs-tbody">
-                <tr><td colspan="7" class="empty-state">No log entries yet</td></tr>
+                <tr><td colspan="8" class="empty-state">No log entries yet</td></tr>
             </tbody>
             </table>
           </div>
@@ -280,6 +280,13 @@
         <label>Category (optional)</label>
         <select id="rule-category">
           <option value="">No category</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Logging Mode</label>
+        <select id="rule-logging-mode">
+          <option value="normal">Normal</option>
+          <option value="full">Full (capture request/response headers and body)</option>
         </select>
       </div>
       <div class="form-group">
@@ -443,6 +450,17 @@
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideImageRuleModal()">Cancel</button>
         <button class="btn btn-primary" id="modal-image-submit" onclick="submitImageRule()">Add Rule</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log Detail Modal -->
+  <div id="modal-log-detail" class="modal-overlay">
+    <div class="modal" style="max-width:700px;max-height:80vh;overflow-y:auto">
+      <h3>Request Details</h3>
+      <div id="log-detail-content"></div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideLogDetail()">Close</button>
       </div>
     </div>
   </div>

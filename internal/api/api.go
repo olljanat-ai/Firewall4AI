@@ -63,6 +63,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Logs
 	mux.HandleFunc("GET /api/logs", h.getLogs)
 	mux.HandleFunc("GET /api/logs/stats", h.getLogStats)
+	mux.HandleFunc("GET /api/logs/detail", h.getLogDetail)
 
 	// Health
 	mux.HandleFunc("GET /api/health", h.health)
@@ -104,13 +105,14 @@ func (h *Handler) listPending(w http.ResponseWriter, r *http.Request) {
 }
 
 type decisionRequest struct {
-	Host       string          `json:"host"`
-	SkillID    string          `json:"skill_id"`
-	SourceIP   string          `json:"source_ip"`
-	PathPrefix string          `json:"path_prefix"`
-	Category   string          `json:"category"`
-	Status     approval.Status `json:"status"`
-	Note       string          `json:"note"`
+	Host        string              `json:"host"`
+	SkillID     string              `json:"skill_id"`
+	SourceIP    string              `json:"source_ip"`
+	PathPrefix  string              `json:"path_prefix"`
+	Category    string              `json:"category"`
+	LoggingMode approval.LoggingMode `json:"logging_mode"`
+	Status      approval.Status     `json:"status"`
+	Note        string              `json:"note"`
 }
 
 func (h *Handler) decideApproval(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +128,9 @@ func (h *Handler) decideApproval(w http.ResponseWriter, r *http.Request) {
 	h.Approvals.Decide(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, req.Status, req.Note)
 	if req.Category != "" {
 		h.Approvals.SetCategory(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, req.Category)
+	}
+	if req.LoggingMode != "" {
+		h.Approvals.SetLoggingMode(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, req.LoggingMode)
 	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
@@ -416,6 +421,55 @@ func (h *Handler) getLogs(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) getLogStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.Logger.Stats())
+}
+
+func (h *Handler) getLogDetail(w http.ResponseWriter, r *http.Request) {
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		http.Error(w, "id parameter required", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	entry, ok := h.Logger.GetByID(id)
+	if !ok {
+		http.Error(w, "log entry not found", http.StatusNotFound)
+		return
+	}
+	if entry.FullDetail == nil {
+		http.Error(w, "no full detail available for this entry", http.StatusNotFound)
+		return
+	}
+	// Return the full entry including detail.
+	type detailResponse struct {
+		ID              int                 `json:"id"`
+		Method          string              `json:"method"`
+		Host            string              `json:"host"`
+		Path            string              `json:"path"`
+		Status          string              `json:"status"`
+		Detail          string              `json:"detail"`
+		RequestHeaders  map[string][]string `json:"request_headers"`
+		RequestBody     string              `json:"request_body"`
+		ResponseHeaders map[string][]string `json:"response_headers"`
+		ResponseBody    string              `json:"response_body"`
+		ResponseStatus  int                 `json:"response_status"`
+	}
+	writeJSON(w, http.StatusOK, detailResponse{
+		ID:              entry.ID,
+		Method:          entry.Method,
+		Host:            entry.Host,
+		Path:            entry.Path,
+		Status:          entry.Status,
+		Detail:          entry.Detail,
+		RequestHeaders:  entry.FullDetail.RequestHeaders,
+		RequestBody:     entry.FullDetail.RequestBody,
+		ResponseHeaders: entry.FullDetail.ResponseHeaders,
+		ResponseBody:    entry.FullDetail.ResponseBody,
+		ResponseStatus:  entry.FullDetail.ResponseStatus,
+	})
 }
 
 // --- Health ---

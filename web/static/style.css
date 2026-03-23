@@ -305,6 +305,22 @@ tr:hover td { background: var(--surface2); }
 }
 .setting-control input:focus { border-color: var(--accent); }
 
+/* Log detail pre-formatted blocks */
+.detail-pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+  color: var(--text);
+  margin: 0;
+}
+
 /* Category badge */
 .category-badge {
   display: inline-block;

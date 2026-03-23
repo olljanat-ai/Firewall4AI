@@ -269,7 +269,7 @@ async function loadApprovals() {
     const tbody = document.getElementById('approvals-tbody');
     tbody.innerHTML = '';
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No URL rules</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No URL rules</td></tr>';
       return;
     }
     filtered.sort((a, b) => a.host.localeCompare(b.host));
@@ -300,10 +300,14 @@ async function loadApprovals() {
            ${promoteBtn}
            ${editBtn} ${deleteBtn}`;
       }
+      const logModeDisplay = a.logging_mode === 'full'
+        ? '<span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent)">Full</span>'
+        : '<span class="badge-status" style="opacity:0.4">Normal</span>';
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
         <td>${pathDisplay}</td>
         <td>${categoryDisplay}</td>
+        <td>${logModeDisplay}</td>
         <td>${skillDisplay}</td>
         <td>${sourceDisplay}</td>
         <td><span class="badge-status ${a.status}">${a.status}</span></td>
@@ -369,6 +373,7 @@ function showAddRule() {
   document.getElementById('rule-skill-id').value = '';
   document.getElementById('rule-status').value = 'approved';
   populateCategorySelect('rule-category', '');
+  document.getElementById('rule-logging-mode').value = 'normal';
   document.getElementById('rule-note').value = '';
   updateRuleFields();
   document.getElementById('modal-rule').classList.add('active');
@@ -394,6 +399,7 @@ function showEditRule(idx) {
   }
   document.getElementById('rule-status').value = a.status === 'pending' ? 'approved' : a.status;
   populateCategorySelect('rule-category', a.category || '');
+  document.getElementById('rule-logging-mode').value = a.logging_mode || 'normal';
   document.getElementById('rule-note').value = a.note || '';
   updateRuleFields();
   document.getElementById('modal-rule').classList.add('active');
@@ -417,6 +423,7 @@ async function submitRule() {
   const level = document.getElementById('rule-level').value;
   const status = document.getElementById('rule-status').value;
   const category = document.getElementById('rule-category').value.trim();
+  const loggingMode = document.getElementById('rule-logging-mode').value;
   const note = document.getElementById('rule-note').value.trim();
   let sourceIP = '';
   let skillID = '';
@@ -444,7 +451,7 @@ async function submitRule() {
         });
       }
     }
-    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, category, status, note });
+    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, category, logging_mode: loggingMode, status, note });
     hideAddRule();
     loadApprovals();
   } catch (e) {
@@ -1011,10 +1018,13 @@ function renderLogs() {
   const tbody = document.getElementById('logs-tbody');
   tbody.innerHTML = '';
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No log entries yet</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No log entries yet</td></tr>';
     return;
   }
   filtered.forEach(l => {
+    const detailBtn = l.has_full_log
+      ? `<button class="btn btn-outline btn-sm" onclick="showLogDetail(${l.id})">Details</button>`
+      : '';
     tbody.innerHTML += `<tr>
       <td style="color:var(--text-dim);font-size:11px">${formatTime(l.timestamp)}</td>
       <td>${formatSkillID(l.skill_id)}</td>
@@ -1023,8 +1033,44 @@ function renderLogs() {
       <td>${esc(l.path || '-')}</td>
       <td><span class="badge-status ${l.status}">${l.status}</span></td>
       <td style="font-size:12px;color:var(--text-dim)">${esc(l.detail || '')}</td>
+      <td>${detailBtn}</td>
     </tr>`;
   });
+}
+
+// --- Log Detail ---
+async function showLogDetail(logId) {
+  try {
+    const detail = await api('GET', '/api/logs/detail?id=' + logId);
+    const content = document.getElementById('log-detail-content');
+    content.innerHTML = `
+      <div style="margin-bottom:12px">
+        <span class="method-badge">${esc(detail.method)}</span>
+        <strong>${esc(detail.host)}</strong>${esc(detail.path || '')}
+        <span class="badge-status ${detail.status}">${detail.status}</span>
+      </div>
+      <h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Request Headers</h4>
+      <pre class="detail-pre">${formatHeaders(detail.request_headers)}</pre>
+      ${detail.request_body ? `<h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Request Body</h4><pre class="detail-pre">${esc(detail.request_body)}</pre>` : ''}
+      <h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Response ${detail.response_status ? detail.response_status : ''} Headers</h4>
+      <pre class="detail-pre">${formatHeaders(detail.response_headers)}</pre>
+      ${detail.response_body ? `<h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Response Body</h4><pre class="detail-pre">${esc(detail.response_body)}</pre>` : ''}
+    `;
+    document.getElementById('modal-log-detail').classList.add('active');
+  } catch (e) {
+    alert('Error loading details: ' + e.message);
+  }
+}
+
+function hideLogDetail() {
+  document.getElementById('modal-log-detail').classList.remove('active');
+}
+
+function formatHeaders(headers) {
+  if (!headers || Object.keys(headers).length === 0) return '<span style="color:var(--text-dim)">(none)</span>';
+  return Object.entries(headers).map(([k, vals]) =>
+    vals.map(v => esc(k) + ': ' + esc(v)).join('\n')
+  ).join('\n');
 }
 
 // --- Polling ---

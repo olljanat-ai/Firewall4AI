@@ -26,16 +26,25 @@ const (
 //
 // PathPrefix optionally restricts the approval to URLs matching the prefix.
 // An empty PathPrefix means all paths are covered (backward compatible).
+// LoggingMode controls the level of request/response detail captured in logs.
+type LoggingMode string
+
+const (
+	LoggingModeNormal LoggingMode = "normal"
+	LoggingModeFull   LoggingMode = "full"
+)
+
 type HostApproval struct {
-	Host       string    `json:"host"`
-	SkillID    string    `json:"skill_id"`
-	SourceIP   string    `json:"source_ip"`
-	PathPrefix string    `json:"path_prefix,omitempty"`
-	Category   string    `json:"category,omitempty"`
-	Status     Status    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	Note       string    `json:"note"`
+	Host        string      `json:"host"`
+	SkillID     string      `json:"skill_id"`
+	SourceIP    string      `json:"source_ip"`
+	PathPrefix  string      `json:"path_prefix,omitempty"`
+	Category    string      `json:"category,omitempty"`
+	LoggingMode LoggingMode `json:"logging_mode,omitempty"`
+	Status      Status      `json:"status"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+	Note        string      `json:"note"`
 }
 
 // key returns the unique key for a host+skill+sourceIP+pathPrefix combination.
@@ -410,6 +419,62 @@ func (m *Manager) CheckExistingWithMatcher(host, skillID, sourceIP string, match
 		}
 	}
 	return "", false
+}
+
+// GetLoggingMode returns the logging mode for the best matching approval.
+// It checks global, VM-specific, and skill-specific levels broadest-first,
+// using the same path-matching logic as CheckExistingWithPath.
+// Returns LoggingModeNormal if no matching approval is found or if the
+// matched approval has no explicit logging mode set.
+func (m *Manager) GetLoggingMode(host, path, skillID, sourceIP string) LoggingMode {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Check levels broadest-first: global -> VM -> skill.
+	levels := []struct{ sid, sip string }{
+		{"", ""},
+	}
+	if sourceIP != "" {
+		levels = append(levels, struct{ sid, sip string }{"", sourceIP})
+	}
+	if skillID != "" {
+		levels = append(levels, struct{ sid, sip string }{skillID, ""})
+	}
+
+	for _, lvl := range levels {
+		var bestMatch *HostApproval
+		bestLen := -1
+		for _, a := range m.approvals {
+			if a.SkillID != lvl.sid || a.SourceIP != lvl.sip {
+				continue
+			}
+			if !MatchHost(a.Host, host) {
+				continue
+			}
+			if !MatchPath(a.PathPrefix, path) {
+				continue
+			}
+			if len(a.PathPrefix) > bestLen {
+				bestMatch = a
+				bestLen = len(a.PathPrefix)
+			}
+		}
+		if bestMatch != nil && bestMatch.LoggingMode == LoggingModeFull {
+			return LoggingModeFull
+		}
+	}
+	return LoggingModeNormal
+}
+
+// SetLoggingMode updates the logging mode for an existing approval.
+func (m *Manager) SetLoggingMode(host, skillID, sourceIP, pathPrefix string, mode LoggingMode) {
+	k := key(host, skillID, sourceIP, pathPrefix)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if a, ok := m.approvals[k]; ok {
+		a.LoggingMode = mode
+		a.UpdatedAt = time.Now()
+	}
 }
 
 // SetCategory updates the category for an existing approval.
