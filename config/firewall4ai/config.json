@@ -13,5 +13,12 @@
     {"name": "nvcr.io", "hosts": ["nvcr.io"]},
     {"name": "oci-registry-proxy.azurecr.io", "hosts": ["oci-registry-proxy.azurecr.io"]},
     {"name": "ghcr.io/elemental-stable", "hosts": ["ghcr.io/elemental-stable"]}
+  ],
+  "package_repos": [
+    {"name": "Debian", "type": "debian", "hosts": ["deb.debian.org", "security.debian.org", "ftp.debian.org", "httpredir.debian.org", "cdn-fastly.deb.debian.org"]},
+    {"name": "Go Modules", "type": "golang", "hosts": ["proxy.golang.org", "sum.golang.org", "storage.googleapis.com"]},
+    {"name": "npm", "type": "npm", "hosts": ["registry.npmjs.org"]},
+    {"name": "PyPI", "type": "pypi", "hosts": ["pypi.org", "files.pythonhosted.org"]},
+    {"name": "NuGet", "type": "nuget", "hosts": ["api.nuget.org", "azuresearch-usnc.nuget.org", "az635243.vo.msecnd.net"]}
   ]
 }

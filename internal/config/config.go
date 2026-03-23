@@ -14,16 +14,26 @@ type RegistryConfig struct {
 	Hosts []string `json:"hosts"` // all hostnames: registry, auth, CDN endpoints
 }
 
+// PackageRepoConfig describes a package repository whose traffic is intercepted
+// by the transparent proxy for package-level approval. Type identifies the
+// package manager (debian, golang, npm, pypi, nuget).
+type PackageRepoConfig struct {
+	Name  string   `json:"name"`  // e.g., "proxy.golang.org" — display name
+	Type  string   `json:"type"`  // package manager type: debian, golang, npm, pypi, nuget
+	Hosts []string `json:"hosts"` // all hostnames associated with this repo
+}
+
 // Config holds the main application configuration.
 type Config struct {
-	ListenAddr         string           `json:"listen_addr"`
-	AdminAddr          string           `json:"admin_addr"`
-	TransparentTLSAddr string           `json:"transparent_tls_addr"`
-	DataDir            string           `json:"data_dir"`
-	TLSCertFile        string           `json:"tls_cert_file"`
-	TLSKeyFile         string           `json:"tls_key_file"`
-	MaxLogEntries      int              `json:"max_log_entries"`
-	Registries         []RegistryConfig `json:"registries"`
+	ListenAddr         string              `json:"listen_addr"`
+	AdminAddr          string              `json:"admin_addr"`
+	TransparentTLSAddr string              `json:"transparent_tls_addr"`
+	DataDir            string              `json:"data_dir"`
+	TLSCertFile        string              `json:"tls_cert_file"`
+	TLSKeyFile         string              `json:"tls_key_file"`
+	MaxLogEntries      int                 `json:"max_log_entries"`
+	Registries         []RegistryConfig    `json:"registries"`
+	PackageRepos       []PackageRepoConfig `json:"package_repos"`
 }
 
 var (
