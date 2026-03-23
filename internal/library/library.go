@@ -1,7 +1,9 @@
 // Package library provides utility functions for detecting and handling
 // package manager requests within the transparent proxy. It handles
-// package name extraction from URL paths for OS packages (Debian, Alpine,
-// Ubuntu) and code libraries (Go, npm, PyPI, NuGet, Rust, PowerShell).
+// package name extraction from URL paths for OS packages and code libraries.
+//
+// New package types are added by registering a parser via RegisterParser.
+// The type string must match the "type" field in config.json entries.
 package library
 
 import (
@@ -12,19 +14,37 @@ import (
 )
 
 // PackageType identifies the type of package manager.
+// Values come from the "type" field in config.json (e.g. "debian", "golang").
 type PackageType string
 
-const (
-	PackageDebian     PackageType = "debian"
-	PackageAlpine     PackageType = "alpine"
-	PackageUbuntu     PackageType = "ubuntu"
-	PackageGo         PackageType = "golang"
-	PackageNPM        PackageType = "npm"
-	PackagePyPI       PackageType = "pypi"
-	PackageNuGet      PackageType = "nuget"
-	PackageRust       PackageType = "rust"
-	PackagePowerShell PackageType = "powershell"
-)
+// ParserFunc extracts a package name from a URL path.
+// Returns (name, ok) where empty name with ok=true means metadata (auto-approve).
+type ParserFunc func(urlPath string) (name string, ok bool)
+
+// parsers maps config type strings to their URL path parsers.
+var parsers = map[PackageType]ParserFunc{}
+
+// typeLabels maps config type strings to human-readable labels.
+var typeLabels = map[PackageType]string{}
+
+// RegisterParser registers a URL path parser for the given package type.
+// The label is the human-readable name shown in the UI (e.g. "Debian", "Go").
+func RegisterParser(t PackageType, label string, parser ParserFunc) {
+	parsers[t] = parser
+	typeLabels[t] = label
+}
+
+func init() {
+	RegisterParser("debian", "Debian", parseDebianPath)
+	RegisterParser("ubuntu", "Ubuntu", parseDebianPath)
+	RegisterParser("alpine", "Alpine", parseAlpinePath)
+	RegisterParser("golang", "Go", parseGoPath)
+	RegisterParser("npm", "npm", parseNPMPath)
+	RegisterParser("pypi", "PyPI", parsePyPIPath)
+	RegisterParser("nuget", "NuGet", parseNuGetPath)
+	RegisterParser("rust", "Rust", parseRustPath)
+	RegisterParser("powershell", "PowerShell", parsePowerShellPath)
+}
 
 // RepoForHost returns the package repository config if the host belongs to
 // a configured package repository, or nil if it's not a known repo host.
@@ -40,34 +60,11 @@ func RepoForHost(host string, repos []config.PackageRepoConfig) *config.PackageR
 }
 
 // ParsePackageName extracts a package name from the URL path based on the
-// repository type. Returns (packageName, packageType, ok).
-//
-// Supported patterns:
-//   - Debian: /debian/pool/main/c/curl/curl_7.88.1-10+deb12u5_amd64.deb -> "curl"
-//     Also: /debian/dists/bookworm/main/binary-amd64/Packages* -> "" (metadata, auto-approve)
-//   - Go: /github.com/foo/bar/@v/v1.0.0.zip -> "github.com/foo/bar"
-//   - npm: /express or /@scope/package -> "express" or "@scope/package"
-//   - PyPI: /simple/requests/ -> "requests"
-//     Also: /packages/... -> "" (file download, needs repo-level check)
-//   - NuGet: /v3-flatcontainer/newtonsoft.json/13.0.1/newtonsoft.json.13.0.1.nupkg -> "newtonsoft.json"
+// repository type. Returns (name, ok). If no parser is registered for the
+// type, returns ("", false).
 func ParsePackageName(urlPath string, repoType PackageType) (name string, ok bool) {
-	switch repoType {
-	case PackageDebian, PackageUbuntu:
-		return parseDebianPath(urlPath)
-	case PackageAlpine:
-		return parseAlpinePath(urlPath)
-	case PackageGo:
-		return parseGoPath(urlPath)
-	case PackageNPM:
-		return parseNPMPath(urlPath)
-	case PackagePyPI:
-		return parsePyPIPath(urlPath)
-	case PackageNuGet:
-		return parseNuGetPath(urlPath)
-	case PackageRust:
-		return parseRustPath(urlPath)
-	case PackagePowerShell:
-		return parsePowerShellPath(urlPath)
+	if parser, found := parsers[repoType]; found {
+		return parser(urlPath)
 	}
 	return "", false
 }
@@ -425,18 +422,7 @@ func MatchPackageRef(pattern, pkg string) bool {
 
 // TypeLabel returns a human-readable label for the package type.
 func TypeLabel(t PackageType) string {
-	labels := map[PackageType]string{
-		PackageDebian:     "Debian",
-		PackageAlpine:     "Alpine",
-		PackageUbuntu:     "Ubuntu",
-		PackageGo:         "Go",
-		PackageNPM:        "npm",
-		PackagePyPI:       "PyPI",
-		PackageNuGet:      "NuGet",
-		PackageRust:       "Rust",
-		PackagePowerShell: "PowerShell",
-	}
-	if l, ok := labels[t]; ok {
+	if l, ok := typeLabels[t]; ok {
 		return l
 	}
 	return string(t)

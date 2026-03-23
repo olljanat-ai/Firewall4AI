@@ -62,7 +62,7 @@ func TestParsePackageName_Debian(t *testing.T) {
 		{"/debian/dists/bookworm/InRelease", "", true},
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackageDebian)
+		name, ok := ParsePackageName(tt.path, "debian")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, debian) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
@@ -86,7 +86,7 @@ func TestParsePackageName_Go(t *testing.T) {
 		{"/", "", false},
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackageGo)
+		name, ok := ParsePackageName(tt.path, "golang")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, golang) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
@@ -110,7 +110,7 @@ func TestParsePackageName_NPM(t *testing.T) {
 		{"/", "", true},
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackageNPM)
+		name, ok := ParsePackageName(tt.path, "npm")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, npm) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
@@ -134,7 +134,7 @@ func TestParsePackageName_PyPI(t *testing.T) {
 		{"/packages/ab/cd/ef01/requests-2.31.0-py3-none-any.whl", "requests", true},
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackagePyPI)
+		name, ok := ParsePackageName(tt.path, "pypi")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, pypi) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
@@ -154,7 +154,7 @@ func TestParsePackageName_NuGet(t *testing.T) {
 		{"/v3/index.json", "", true}, // service index
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackageNuGet)
+		name, ok := ParsePackageName(tt.path, "nuget")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, nuget) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
@@ -238,7 +238,7 @@ func TestParsePackageName_Alpine(t *testing.T) {
 		{"/v3.19/main/x86_64/", "", true},                 // index
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackageAlpine)
+		name, ok := ParsePackageName(tt.path, "alpine")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, alpine) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
@@ -258,7 +258,7 @@ func TestParsePackageName_Ubuntu(t *testing.T) {
 		{"/ubuntu/dists/jammy/InRelease", "", true},                     // metadata
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackageUbuntu)
+		name, ok := ParsePackageName(tt.path, "ubuntu")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, ubuntu) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
@@ -278,7 +278,7 @@ func TestParsePackageName_Rust(t *testing.T) {
 		{"/", "", true}, // root
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackageRust)
+		name, ok := ParsePackageName(tt.path, "rust")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, rust) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
@@ -298,11 +298,31 @@ func TestParsePackageName_PowerShell(t *testing.T) {
 		{"/api/v2/", "", true}, // index
 	}
 	for _, tt := range tests {
-		name, ok := ParsePackageName(tt.path, PackagePowerShell)
+		name, ok := ParsePackageName(tt.path, "powershell")
 		if ok != tt.ok || name != tt.name {
 			t.Errorf("ParsePackageName(%q, powershell) = (%q, %v), want (%q, %v)",
 				tt.path, name, ok, tt.name, tt.ok)
 		}
+	}
+}
+
+func TestParsePackageName_UnknownType(t *testing.T) {
+	_, ok := ParsePackageName("/some/path", "unknown")
+	if ok {
+		t.Error("expected false for unregistered type")
+	}
+}
+
+func TestTypeLabel(t *testing.T) {
+	if got := TypeLabel("debian"); got != "Debian" {
+		t.Errorf("TypeLabel(debian) = %q, want Debian", got)
+	}
+	if got := TypeLabel("golang"); got != "Go" {
+		t.Errorf("TypeLabel(golang) = %q, want Go", got)
+	}
+	// Unknown type returns the raw string.
+	if got := TypeLabel("custom"); got != "custom" {
+		t.Errorf("TypeLabel(custom) = %q, want custom", got)
 	}
 }
 
