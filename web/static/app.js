@@ -6,12 +6,16 @@ let lastLogID = 0;
 // Edit state trackers
 let editingRule = null;       // null = adding, { host, pathPrefix, skillID, sourceIP } = editing
 let editingImageRule = null;  // null = adding, { host, skillID, sourceIP } = editing
+let editingPackageRule = null; // null = adding, { host, skillID, sourceIP } = editing
+let editingLibraryRule = null; // null = adding, { host, skillID, sourceIP } = editing
 let editingSkillID = null;    // null = creating, string = editing
 let editingCredID = null;     // null = creating, string = editing
 
 // Cached data for edit lookups
 let currentApprovals = [];
 let currentImages = [];
+let currentPackages = [];
+let currentLibraries = [];
 let currentSkills = [];
 let currentCredentials = [];
 let currentCategories = [];
@@ -26,6 +30,8 @@ function navigate(page) {
   if (page === 'dashboard') loadDashboard();
   if (page === 'approvals') loadApprovals();
   if (page === 'images') loadImages();
+  if (page === 'packages') loadPackages();
+  if (page === 'libraries') loadLibraries();
   if (page === 'skills') loadSkills();
   if (page === 'credentials') loadCredentials();
   if (page === 'logs') loadLogs();
@@ -71,38 +77,32 @@ function formatPathPrefix(pathPrefix) {
 // --- Dashboard ---
 async function loadDashboard() {
   try {
-    const [stats, pending, pendingImages] = await Promise.all([
+    const [stats, pending, pendingImages, pendingPkgs, pendingLibs] = await Promise.all([
       api('GET', '/api/logs/stats'),
       api('GET', '/api/approvals/pending'),
       api('GET', '/api/images/pending'),
+      api('GET', '/api/packages/pending'),
+      api('GET', '/api/libraries/pending'),
       refreshSkills(),
     ]);
     document.getElementById('stat-total').textContent = stats.total || 0;
     document.getElementById('stat-allowed').textContent = stats.allowed || 0;
     document.getElementById('stat-denied').textContent = stats.denied || 0;
     document.getElementById('stat-pending').textContent = stats.pending || 0;
-    document.getElementById('pending-count').textContent = (pending.length || 0) + (pendingImages.length || 0);
+    document.getElementById('pending-count').textContent = (pending.length || 0) + (pendingImages.length || 0) + (pendingPkgs.length || 0) + (pendingLibs.length || 0);
     // Update sidebar badges
-    const badge = document.getElementById('approval-badge');
-    if (pending.length > 0) {
-      badge.textContent = pending.length;
-      badge.style.display = 'inline';
-    } else {
-      badge.style.display = 'none';
-    }
-    const imageBadge = document.getElementById('image-badge');
-    if (pendingImages.length > 0) {
-      imageBadge.textContent = pendingImages.length;
-      imageBadge.style.display = 'inline';
-    } else {
-      imageBadge.style.display = 'none';
-    }
-    // Recent pending (hosts + images combined)
+    updateBadge('approval-badge', pending);
+    updateBadge('image-badge', pendingImages);
+    updateBadge('package-badge', pendingPkgs);
+    updateBadge('library-badge', pendingLibs);
+    // Recent pending (all types combined)
     const tbody = document.getElementById('dash-pending-tbody');
     tbody.innerHTML = '';
     const allPending = [
       ...(pending || []).map(a => ({ ...a, _type: 'host' })),
       ...(pendingImages || []).map(a => ({ ...a, _type: 'image' })),
+      ...(pendingPkgs || []).map(a => ({ ...a, _type: 'package' })),
+      ...(pendingLibs || []).map(a => ({ ...a, _type: 'library' })),
     ];
     if (allPending.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No pending approvals</td></tr>';
@@ -111,8 +111,10 @@ async function loadDashboard() {
         const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
         const pathDisplay = a._type === 'host' ? formatPathPrefix(a.path_prefix) : '';
-        const apiPath = a._type === 'image' ? '/api/images/decide' : '/api/approvals/decide';
-        const typeLabel = a._type === 'image' ? '<span class="badge-status pending">image</span> ' : '';
+        const apiPathMap = { host: '/api/approvals/decide', image: '/api/images/decide', package: '/api/packages/decide', library: '/api/libraries/decide' };
+        const apiPath = apiPathMap[a._type] || '/api/approvals/decide';
+        const typeLabelMap = { image: 'image', package: 'package', library: 'library' };
+        const typeLabel = typeLabelMap[a._type] ? '<span class="badge-status pending">' + typeLabelMap[a._type] + '</span> ' : '';
         const pp = a.path_prefix || '';
         const approveBtn = `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>`;
         const vmBtn = a.source_ip ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','${esc(a.source_ip)}','${esc(pp)}','approved')" title="Approve for this VM">Approve VM</button>` : '';
@@ -146,6 +148,17 @@ async function decideDash(apiPath, host, skillID, sourceIP, pathPrefix, status) 
   }
 }
 
+function updateBadge(id, items) {
+  const badge = document.getElementById(id);
+  if (!badge) return;
+  if (items && items.length > 0) {
+    badge.textContent = items.length;
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
 // --- Filtering ---
 function getFilter(prefix) {
   return {
@@ -161,7 +174,42 @@ function matchesFilter(item, filter) {
   if (filter.skillID && (item.skill_id || '') !== filter.skillID) return false;
   if (filter.ip && (item.source_ip || '') !== filter.ip) return false;
   if (filter.status && item.status !== filter.status) return false;
+  if (filter.type && getLibraryType(item.host) !== filter.type) return false;
   return true;
+}
+
+// Extract library type from the host field (format: "type:name").
+function getLibraryType(host) {
+  if (!host) return '';
+  const idx = host.indexOf(':');
+  if (idx < 0) return '';
+  return host.substring(0, idx);
+}
+
+// Extract library name from the host field (format: "type:name").
+function getLibraryName(host) {
+  if (!host) return host;
+  const idx = host.indexOf(':');
+  if (idx < 0) return host;
+  return host.substring(idx + 1);
+}
+
+// Format library type as a badge.
+function formatLibraryType(host) {
+  const t = getLibraryType(host);
+  const labels = { golang: 'Go', npm: 'npm', pypi: 'PyPI', nuget: 'NuGet', debian: 'Debian' };
+  return '<span class="badge-status approved">' + esc(labels[t] || t) + '</span>';
+}
+
+// Get the library filter including type.
+function getLibraryFilter() {
+  return {
+    type: document.getElementById('filter-library-type')?.value || '',
+    category: document.getElementById('filter-library-category')?.value || '',
+    skillID: document.getElementById('filter-library-skill')?.value || '',
+    ip: document.getElementById('filter-library-ip')?.value || '',
+    status: document.getElementById('filter-library-status')?.value || '',
+  };
 }
 
 function clearFilters(prefix) {
@@ -175,6 +223,8 @@ function clearFilters(prefix) {
   if (status) status.value = '';
   if (prefix === 'url') loadApprovals();
   if (prefix === 'image') loadImages();
+  if (prefix === 'package') loadPackages();
+  if (prefix === 'library') loadLibraries();
 }
 
 function formatCategory(category) {
@@ -643,6 +693,331 @@ async function submitImageRule() {
   }
 }
 
+// --- OS Packages ---
+async function loadPackages() {
+  try {
+    const [packages] = await Promise.all([
+      api('GET', '/api/packages'),
+      refreshCategories(),
+      refreshSkills(),
+    ]);
+    currentPackages = packages || [];
+    populateFilterDropdowns('package', currentPackages);
+    const pending = currentPackages.filter(a => a.status === 'pending');
+    updateBadge('package-badge', pending);
+    const filter = getFilter('package');
+    const filtered = currentPackages.filter(a => matchesFilter(a, filter));
+    const tbody = document.getElementById('packages-tbody');
+    tbody.innerHTML = '';
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No OS package approval records</td></tr>';
+      return;
+    }
+    filtered.sort((a, b) => getLibraryName(a.host).localeCompare(getLibraryName(b.host)));
+    filtered.forEach((a) => {
+      const idx = currentPackages.indexOf(a);
+      const skillDisplay = formatSkillID(a.skill_id);
+      const sourceDisplay = formatSourceIP(a.source_ip);
+      const categoryDisplay = formatCategory(a.category);
+      const typeDisplay = formatLibraryType(a.host);
+      const nameDisplay = esc(getLibraryName(a.host));
+      const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditPackageRule(${idx})" title="Edit rule">Edit</button>`;
+      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deletePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+      let actions = '';
+      if (a.status === 'pending') {
+        const vmBtn = a.source_ip
+          ? `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+        const globalBtn = (a.skill_id || a.source_ip)
+          ? `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
+        actions = `<button class="btn btn-success btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           ${vmBtn} ${globalBtn}
+           <button class="btn btn-danger btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           ${editBtn} ${deleteBtn}`;
+      } else {
+        const promoteBtn = a.source_ip && !a.skill_id
+          ? `<button class="btn btn-outline btn-sm" onclick="promotePackageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+        actions = `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           <button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           ${promoteBtn}
+           ${editBtn} ${deleteBtn}`;
+      }
+      tbody.innerHTML += `<tr>
+        <td><strong>${nameDisplay}</strong></td>
+        <td>${typeDisplay}</td>
+        <td>${categoryDisplay}</td>
+        <td>${skillDisplay}</td>
+        <td>${sourceDisplay}</td>
+        <td><span class="badge-status ${a.status}">${a.status}</span></td>
+        <td>${timeAgo(a.updated_at)}</td>
+        <td>${actions}</td>
+      </tr>`;
+    });
+  } catch (e) {
+    console.error('Packages load error:', e);
+  }
+}
+
+async function decidePackage(host, skillID, sourceIP, status) {
+  try {
+    await api('POST', '/api/packages/decide', { host, skill_id: skillID, source_ip: sourceIP, status });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) navigate(activePage.id.replace('page-', ''));
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function deletePackage(host, skillID, sourceIP) {
+  if (!confirm(`Delete package rule for "${getLibraryName(host)}"?`)) return;
+  try {
+    await api('DELETE', '/api/packages', { host, skill_id: skillID, source_ip: sourceIP });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) navigate(activePage.id.replace('page-', ''));
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function promotePackageToGlobal(host, sourceIP, status) {
+  if (!confirm(`Promote "${getLibraryName(host)}" from VM ${sourceIP} to a global rule?`)) return;
+  try {
+    await api('POST', '/api/packages/decide', { host, skill_id: '', source_ip: '', status });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) navigate(activePage.id.replace('page-', ''));
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// --- Package Rule Modal ---
+function showAddPackageRule() {
+  editingPackageRule = null;
+  document.getElementById('modal-package-title').textContent = 'Add OS Package Rule';
+  document.getElementById('modal-package-submit').textContent = 'Add Rule';
+  document.getElementById('package-rule-host').value = '';
+  document.getElementById('package-rule-level').value = 'global';
+  document.getElementById('package-rule-source-ip').value = '';
+  document.getElementById('package-rule-status').value = 'approved';
+  populateCategorySelect('package-rule-category', '');
+  document.getElementById('package-rule-note').value = '';
+  updatePackageRuleFields();
+  document.getElementById('modal-package-rule').classList.add('active');
+}
+
+function showEditPackageRule(idx) {
+  const a = currentPackages[idx];
+  if (!a) return;
+  editingPackageRule = { host: a.host, skillID: a.skill_id || '', sourceIP: a.source_ip || '' };
+  document.getElementById('modal-package-title').textContent = 'Edit OS Package Rule';
+  document.getElementById('modal-package-submit').textContent = 'Save';
+  document.getElementById('package-rule-host').value = getLibraryName(a.host);
+  if (a.source_ip) {
+    document.getElementById('package-rule-level').value = 'vm';
+    document.getElementById('package-rule-source-ip').value = a.source_ip;
+  } else {
+    document.getElementById('package-rule-level').value = 'global';
+  }
+  document.getElementById('package-rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  populateCategorySelect('package-rule-category', a.category || '');
+  document.getElementById('package-rule-note').value = a.note || '';
+  updatePackageRuleFields();
+  document.getElementById('modal-package-rule').classList.add('active');
+}
+
+function hidePackageRuleModal() {
+  document.getElementById('modal-package-rule').classList.remove('active');
+  editingPackageRule = null;
+}
+
+function updatePackageRuleFields() {
+  const level = document.getElementById('package-rule-level').value;
+  document.getElementById('package-rule-vm-fields').style.display = level === 'vm' ? 'block' : 'none';
+}
+
+async function submitPackageRule() {
+  const name = document.getElementById('package-rule-host').value.trim();
+  if (!name) { alert('Package name is required'); return; }
+  const host = 'debian:' + name;
+  const level = document.getElementById('package-rule-level').value;
+  const status = document.getElementById('package-rule-status').value;
+  const category = document.getElementById('package-rule-category').value.trim();
+  const note = document.getElementById('package-rule-note').value.trim();
+  let sourceIP = '';
+  if (level === 'vm') {
+    sourceIP = document.getElementById('package-rule-source-ip').value.trim();
+    if (!sourceIP) { alert('Source IP is required for VM-specific rules'); return; }
+  }
+  try {
+    if (editingPackageRule) {
+      const keyChanged = editingPackageRule.host !== host || editingPackageRule.sourceIP !== sourceIP;
+      if (keyChanged) {
+        await api('DELETE', '/api/packages', { host: editingPackageRule.host, skill_id: editingPackageRule.skillID, source_ip: editingPackageRule.sourceIP });
+      }
+    }
+    await api('POST', '/api/packages/decide', { host, skill_id: '', source_ip: sourceIP, category, status, note });
+    hidePackageRuleModal();
+    loadPackages();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// --- Code Libraries ---
+async function loadLibraries() {
+  try {
+    const [libraries] = await Promise.all([
+      api('GET', '/api/libraries'),
+      refreshCategories(),
+      refreshSkills(),
+    ]);
+    currentLibraries = libraries || [];
+    populateFilterDropdowns('library', currentLibraries);
+    const pending = currentLibraries.filter(a => a.status === 'pending');
+    updateBadge('library-badge', pending);
+    const filter = getLibraryFilter();
+    const filtered = currentLibraries.filter(a => matchesFilter(a, filter));
+    const tbody = document.getElementById('libraries-tbody');
+    tbody.innerHTML = '';
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No code library approval records</td></tr>';
+      return;
+    }
+    filtered.sort((a, b) => getLibraryName(a.host).localeCompare(getLibraryName(b.host)));
+    filtered.forEach((a) => {
+      const idx = currentLibraries.indexOf(a);
+      const skillDisplay = formatSkillID(a.skill_id);
+      const sourceDisplay = formatSourceIP(a.source_ip);
+      const categoryDisplay = formatCategory(a.category);
+      const typeDisplay = formatLibraryType(a.host);
+      const nameDisplay = esc(getLibraryName(a.host));
+      const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditLibraryRule(${idx})" title="Edit rule">Edit</button>`;
+      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+      let actions = '';
+      if (a.status === 'pending') {
+        const vmBtn = a.source_ip
+          ? `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+        const globalBtn = (a.skill_id || a.source_ip)
+          ? `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
+        actions = `<button class="btn btn-success btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           ${vmBtn} ${globalBtn}
+           <button class="btn btn-danger btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           ${editBtn} ${deleteBtn}`;
+      } else {
+        const promoteBtn = a.source_ip && !a.skill_id
+          ? `<button class="btn btn-outline btn-sm" onclick="promoteLibraryToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+        actions = `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           <button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           ${promoteBtn}
+           ${editBtn} ${deleteBtn}`;
+      }
+      tbody.innerHTML += `<tr>
+        <td><strong>${nameDisplay}</strong></td>
+        <td>${typeDisplay}</td>
+        <td>${categoryDisplay}</td>
+        <td>${skillDisplay}</td>
+        <td>${sourceDisplay}</td>
+        <td><span class="badge-status ${a.status}">${a.status}</span></td>
+        <td>${timeAgo(a.updated_at)}</td>
+        <td>${actions}</td>
+      </tr>`;
+    });
+  } catch (e) {
+    console.error('Libraries load error:', e);
+  }
+}
+
+async function decideLibrary(host, skillID, sourceIP, status) {
+  try {
+    await api('POST', '/api/libraries/decide', { host, skill_id: skillID, source_ip: sourceIP, status });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) navigate(activePage.id.replace('page-', ''));
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function deleteLibrary(host, skillID, sourceIP) {
+  if (!confirm(`Delete library rule for "${getLibraryName(host)}"?`)) return;
+  try {
+    await api('DELETE', '/api/libraries', { host, skill_id: skillID, source_ip: sourceIP });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) navigate(activePage.id.replace('page-', ''));
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function promoteLibraryToGlobal(host, sourceIP, status) {
+  if (!confirm(`Promote "${getLibraryName(host)}" from VM ${sourceIP} to a global rule?`)) return;
+  try {
+    await api('POST', '/api/libraries/decide', { host, skill_id: '', source_ip: '', status });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) navigate(activePage.id.replace('page-', ''));
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// --- Library Rule Modal ---
+function showAddLibraryRule() {
+  editingLibraryRule = null;
+  document.getElementById('modal-library-title').textContent = 'Add Code Library Rule';
+  document.getElementById('modal-library-submit').textContent = 'Add Rule';
+  document.getElementById('library-rule-type').value = 'golang';
+  document.getElementById('library-rule-name').value = '';
+  document.getElementById('library-rule-level').value = 'global';
+  document.getElementById('library-rule-source-ip').value = '';
+  document.getElementById('library-rule-status').value = 'approved';
+  populateCategorySelect('library-rule-category', '');
+  document.getElementById('library-rule-note').value = '';
+  updateLibraryRuleFields();
+  document.getElementById('modal-library-rule').classList.add('active');
+}
+
+function showEditLibraryRule(idx) {
+  const a = currentLibraries[idx];
+  if (!a) return;
+  editingLibraryRule = { host: a.host, skillID: a.skill_id || '', sourceIP: a.source_ip || '' };
+  document.getElementById('modal-library-title').textContent = 'Edit Code Library Rule';
+  document.getElementById('modal-library-submit').textContent = 'Save';
+  document.getElementById('library-rule-type').value = getLibraryType(a.host);
+  document.getElementById('library-rule-name').value = getLibraryName(a.host);
+  if (a.source_ip) {
+    document.getElementById('library-rule-level').value = 'vm';
+    document.getElementById('library-rule-source-ip').value = a.source_ip;
+  } else {
+    document.getElementById('library-rule-level').value = 'global';
+  }
+  document.getElementById('library-rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  populateCategorySelect('library-rule-category', a.category || '');
+  document.getElementById('library-rule-note').value = a.note || '';
+  updateLibraryRuleFields();
+  document.getElementById('modal-library-rule').classList.add('active');
+}
+
+function hideLibraryRuleModal() {
+  document.getElementById('modal-library-rule').classList.remove('active');
+  editingLibraryRule = null;
+}
+
+function updateLibraryRuleFields() {
+  const level = document.getElementById('library-rule-level').value;
+  document.getElementById('library-rule-vm-fields').style.display = level === 'vm' ? 'block' : 'none';
+}
+
+async function submitLibraryRule() {
+  const type = document.getElementById('library-rule-type').value;
+  const name = document.getElementById('library-rule-name').value.trim();
+  if (!name) { alert('Library name is required'); return; }
+  const host = type + ':' + name;
+  const level = document.getElementById('library-rule-level').value;
+  const status = document.getElementById('library-rule-status').value;
+  const category = document.getElementById('library-rule-category').value.trim();
+  const note = document.getElementById('library-rule-note').value.trim();
+  let sourceIP = '';
+  if (level === 'vm') {
+    sourceIP = document.getElementById('library-rule-source-ip').value.trim();
+    if (!sourceIP) { alert('Source IP is required for VM-specific rules'); return; }
+  }
+  try {
+    if (editingLibraryRule) {
+      const keyChanged = editingLibraryRule.host !== host || editingLibraryRule.sourceIP !== sourceIP;
+      if (keyChanged) {
+        await api('DELETE', '/api/libraries', { host: editingLibraryRule.host, skill_id: editingLibraryRule.skillID, source_ip: editingLibraryRule.sourceIP });
+      }
+    }
+    await api('POST', '/api/libraries/decide', { host, skill_id: '', source_ip: sourceIP, category, status, note });
+    hideLibraryRuleModal();
+    loadLibraries();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
 // --- Skills ---
 async function loadSkills() {
   try {
@@ -1077,24 +1452,16 @@ function formatHeaders(headers) {
 function startPolling() {
   pollInterval = setInterval(async () => {
     try {
-      const [pending, pendingImages] = await Promise.all([
+      const [pending, pendingImages, pendingPkgs, pendingLibs] = await Promise.all([
         api('GET', '/api/approvals/pending'),
         api('GET', '/api/images/pending'),
+        api('GET', '/api/packages/pending'),
+        api('GET', '/api/libraries/pending'),
       ]);
-      const badge = document.getElementById('approval-badge');
-      if (pending && pending.length > 0) {
-        badge.textContent = pending.length;
-        badge.style.display = 'inline';
-      } else {
-        badge.style.display = 'none';
-      }
-      const imageBadge = document.getElementById('image-badge');
-      if (pendingImages && pendingImages.length > 0) {
-        imageBadge.textContent = pendingImages.length;
-        imageBadge.style.display = 'inline';
-      } else {
-        imageBadge.style.display = 'none';
-      }
+      updateBadge('approval-badge', pending);
+      updateBadge('image-badge', pendingImages);
+      updateBadge('package-badge', pendingPkgs);
+      updateBadge('library-badge', pendingLibs);
       // Poll new logs
       if (document.getElementById('page-logs').classList.contains('active')) {
         const newLogs = await api('GET', '/api/logs?after=' + lastLogID);
@@ -1111,6 +1478,12 @@ function startPolling() {
       }
       if (document.getElementById('page-images').classList.contains('active')) {
         loadImages();
+      }
+      if (document.getElementById('page-packages').classList.contains('active')) {
+        loadPackages();
+      }
+      if (document.getElementById('page-libraries').classList.contains('active')) {
+        loadLibraries();
       }
     } catch (e) {
       // Silently ignore poll errors
