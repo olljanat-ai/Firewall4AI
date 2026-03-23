@@ -5,6 +5,8 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -251,21 +253,43 @@ func captureRequestBody(r *http.Request) string {
 	return string(body)
 }
 
-// captureResponseBody reads the response body (up to maxFullLogBody).
+// captureResponseBody reads the response body (up to maxFullLogBody),
+// decompressing it if the response carries a Content-Encoding header.
 func captureResponseBody(resp *http.Response) string {
 	if resp.Body == nil {
 		return ""
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFullLogBody+1))
+	// Read the raw (possibly compressed) bytes first, then restore the body
+	// so that the caller can still forward it to the client.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxFullLogBody+1))
 	resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.Body = io.NopCloser(bytes.NewReader(raw))
 	if err != nil {
 		return ""
 	}
-	if len(body) > maxFullLogBody {
-		return string(body[:maxFullLogBody]) + "... (truncated)"
+
+	// Decompress for display if needed.
+	decoded := raw
+	switch strings.ToLower(resp.Header.Get("Content-Encoding")) {
+	case "gzip":
+		if r, gerr := gzip.NewReader(bytes.NewReader(raw)); gerr == nil {
+			if plain, rerr := io.ReadAll(io.LimitReader(r, maxFullLogBody+1)); rerr == nil {
+				r.Close()
+				decoded = plain
+			}
+		}
+	case "deflate":
+		r := flate.NewReader(bytes.NewReader(raw))
+		if plain, rerr := io.ReadAll(io.LimitReader(r, maxFullLogBody+1)); rerr == nil {
+			r.Close()
+			decoded = plain
+		}
 	}
-	return string(body)
+
+	if len(decoded) > maxFullLogBody {
+		return string(decoded[:maxFullLogBody]) + "... (truncated)"
+	}
+	return string(decoded)
 }
 
 // getLoggingMode returns the logging mode for the request's host/path.
