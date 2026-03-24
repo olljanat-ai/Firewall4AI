@@ -326,6 +326,16 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Remove our custom header before forwarding.
 	r.Header.Del(AuthHeader)
 
+	// Check if this is a package repository request.
+	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
+		p.handlePackageRepoHTTPRequest(w, r, host, sourceIP, skill, repo, true, start)
+		return
+	}
+	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
+		p.handlePackageRepoHTTPRequest(w, r, host, sourceIP, skill, repo, false, start)
+		return
+	}
+
 	status := p.checkApproval(host, r.URL.Path, skill, sourceIP)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
@@ -1002,6 +1012,114 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 }
 
 // handlePackageRepoTLSRequest handles a request to a known package repository host.
+// handlePackageRepoHTTPRequest handles plain HTTP requests to package repositories.
+// It mirrors handlePackageRepoTLSRequest but uses http.ResponseWriter instead of raw net.Conn.
+func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
+	sid := getSkillID(skill)
+	urlPath := req.URL.Path
+	repoType := library.PackageType(repo.Type)
+
+	pkgName, ok := library.ParsePackageName(urlPath, repoType)
+	if !ok {
+		// Unrecognized path — auto-approve as repo infra.
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   "package repo infra (" + repo.Name + ")",
+			Duration: time.Since(start).Milliseconds(),
+		})
+	} else if pkgName == "" {
+		// Metadata request (index, dist, etc.) — auto-approve.
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   "package metadata (" + repo.Name + ")",
+			Duration: time.Since(start).Milliseconds(),
+		})
+	} else {
+		// Package-specific request — check approval.
+		mgr := p.LibraryApprovals
+		if isOSPkg {
+			mgr = p.PackageApprovals
+		}
+
+		if !library.CheckPackageApproval(mgr, pkgName) {
+			status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
+			if status != approval.StatusApproved {
+				p.Logger.Add(proxylog.Entry{
+					SkillID: sid,
+					Method:  req.Method,
+					Host:    host,
+					Path:    urlPath,
+					Status:  string(status),
+					Detail:  "package not approved: " + string(repoType) + ":" + pkgName,
+				})
+				http.Error(w, fmt.Sprintf("Package %s:%s is %s. Awaiting admin approval.", repoType, pkgName, status), http.StatusForbidden)
+				return
+			}
+		}
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   string(repoType) + ":" + pkgName,
+			Duration: time.Since(start).Milliseconds(),
+		})
+	}
+
+	// Forward the request.
+	req.RequestURI = ""
+	if req.URL.Scheme == "" {
+		req.URL.Scheme = "http"
+	}
+	if req.URL.Host == "" {
+		req.URL.Host = host
+	}
+
+	resp, err := p.Transport.RoundTrip(req)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "error",
+			Detail:   err.Error(),
+			Duration: time.Since(start).Milliseconds(),
+		})
+		http.Error(w, "Proxy error: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	p.Logger.Add(proxylog.Entry{
+		SkillID:  sid,
+		Method:   req.Method,
+		Host:     host,
+		Path:     urlPath,
+		Status:   "allowed",
+		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
+		Duration: time.Since(start).Milliseconds(),
+	})
+
+	// Copy response.
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
 // Package-specific requests trigger package-level approval; metadata requests are
 // auto-approved since the repo host is configured explicitly.
 func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
