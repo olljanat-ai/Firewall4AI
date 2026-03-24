@@ -25,6 +25,6 @@
     {"name": "PyPI", "type": "pypi", "hosts": ["pypi.org", "files.pythonhosted.org"]},
     {"name": "NuGet", "type": "nuget", "hosts": ["api.nuget.org", "azuresearch-usnc.nuget.org", "az635243.vo.msecnd.net"]},
     {"name": "Rust Crates", "type": "rust", "hosts": ["crates.io", "index.crates.io", "static.crates.io"]},
-    {"name": "PowerShell Gallery", "type": "powershell", "hosts": ["www.powershellgallery.com", "psg-prod-eastus.azureedge.net", "az818661.vo.msecnd.net"]}
+    {"name": "PowerShell Gallery", "type": "powershell", "hosts": ["www.powershellgallery.com", "cdn.powershellgallery.com", "psg-prod-eastus.azureedge.net", "az818661.vo.msecnd.net"]}
   ]
 }
