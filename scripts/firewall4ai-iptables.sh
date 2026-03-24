@@ -58,6 +58,9 @@ iptables -A INPUT -i $INTERNAL_IF -p udp --dport 67 -j ACCEPT
 iptables -A INPUT -i $INTERNAL_IF -p udp --dport 53 -j ACCEPT
 iptables -A INPUT -i $INTERNAL_IF -p tcp --dport 53 -j ACCEPT
 
+# Allow agent info API
+iptables -A INPUT -i $INTERNAL_IF -p tcp --dport 80 -j ACCEPT
+
 # Allow proxy connections from internal network (explicit proxy mode)
 iptables -A INPUT -i $INTERNAL_IF -s $INTERNAL_NET -p tcp --dport $PROXY_PORT -j ACCEPT
 
