@@ -28,9 +28,11 @@ type Handler struct {
 	LibraryApprovals *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
 	Credentials      *credentials.Manager
 	Logger           *proxylog.Logger
-	SaveFunc            func() error    // called after state mutations to persist
-	SetLearningModeFunc func(bool)      // called to update learning mode on the proxy
-	Version             string          // build version string
+	SaveFunc               func() error    // called after state mutations to persist
+	SetLearningModeFunc    func(bool)      // called to update learning mode on the proxy
+	SetDisabledLanguagesFunc func([]string) // called to update disabled languages
+	SetDisabledDistrosFunc   func([]string) // called to update disabled distros
+	Version                string          // build version string
 
 	catMu      sync.RWMutex
 	categories []string
@@ -99,6 +101,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/ssh", h.setSSHStatus)
 	mux.HandleFunc("GET /api/settings/learning-mode", h.getLearningMode)
 	mux.HandleFunc("POST /api/settings/learning-mode", h.setLearningMode)
+	mux.HandleFunc("GET /api/settings/languages", h.getDisabledLanguages)
+	mux.HandleFunc("POST /api/settings/languages", h.setDisabledLanguages)
+	mux.HandleFunc("GET /api/settings/distros", h.getDisabledDistros)
+	mux.HandleFunc("POST /api/settings/distros", h.setDisabledDistros)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
 }
@@ -770,6 +776,50 @@ func (h *Handler) setLearningMode(w http.ResponseWriter, r *http.Request) {
 	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]bool{"enabled": req.Enabled})
+}
+
+// --- Language/Distro Settings ---
+
+func (h *Handler) getDisabledLanguages(w http.ResponseWriter, r *http.Request) {
+	cfg := config.Get()
+	writeJSON(w, http.StatusOK, map[string][]string{"disabled": cfg.DisabledLanguages})
+}
+
+func (h *Handler) setDisabledLanguages(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Disabled []string `json:"disabled"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	config.SetDisabledLanguages(req.Disabled)
+	if h.SetDisabledLanguagesFunc != nil {
+		h.SetDisabledLanguagesFunc(req.Disabled)
+	}
+	h.save()
+	writeJSON(w, http.StatusOK, map[string][]string{"disabled": req.Disabled})
+}
+
+func (h *Handler) getDisabledDistros(w http.ResponseWriter, r *http.Request) {
+	cfg := config.Get()
+	writeJSON(w, http.StatusOK, map[string][]string{"disabled": cfg.DisabledDistros})
+}
+
+func (h *Handler) setDisabledDistros(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Disabled []string `json:"disabled"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	config.SetDisabledDistros(req.Disabled)
+	if h.SetDisabledDistrosFunc != nil {
+		h.SetDisabledDistrosFunc(req.Disabled)
+	}
+	h.save()
+	writeJSON(w, http.StatusOK, map[string][]string{"disabled": req.Disabled})
 }
 
 func (h *Handler) save() {

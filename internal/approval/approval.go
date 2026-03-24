@@ -13,9 +13,10 @@ import (
 type Status string
 
 const (
-	StatusPending  Status = "pending"
-	StatusApproved Status = "approved"
-	StatusDenied   Status = "denied"
+	StatusPending        Status = "pending"
+	StatusApproved       Status = "approved"
+	StatusDenied         Status = "denied"
+	StatusPendingTimeout Status = "pending_timeout" // timed out waiting for admin decision
 )
 
 // HostApproval tracks the approval state for a host at a specific level.
@@ -252,7 +253,7 @@ func (m *Manager) WaitForDecision(host, skillID, sourceIP, pathPrefix string, ti
 	case status := <-ch:
 		return status
 	case <-timer.C:
-		return StatusDenied // timeout = deny
+		return StatusPendingTimeout // timeout = still waiting for admin
 	}
 }
 

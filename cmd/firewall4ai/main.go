@@ -32,14 +32,16 @@ var Version = "dev"
 
 // storeData holds the persisted state.
 type storeData struct {
-	Skills           []auth.Skill             `json:"skills"`
-	Approvals        []approval.HostApproval  `json:"approvals"`
-	Creds            []credentials.Credential `json:"credentials"`
-	ImageApprovals   []approval.HostApproval  `json:"image_approvals"`
-	PackageApprovals []approval.HostApproval  `json:"package_approvals"`
-	LibraryApprovals []approval.HostApproval  `json:"library_approvals"`
-	Categories       []string                 `json:"categories"`
-	LearningMode     bool                     `json:"learning_mode"`
+	Skills             []auth.Skill             `json:"skills"`
+	Approvals          []approval.HostApproval  `json:"approvals"`
+	Creds              []credentials.Credential `json:"credentials"`
+	ImageApprovals     []approval.HostApproval  `json:"image_approvals"`
+	PackageApprovals   []approval.HostApproval  `json:"package_approvals"`
+	LibraryApprovals   []approval.HostApproval  `json:"library_approvals"`
+	Categories         []string                 `json:"categories"`
+	LearningMode       bool                     `json:"learning_mode"`
+	DisabledLanguages  []string                 `json:"disabled_languages"`
+	DisabledDistros    []string                 `json:"disabled_distros"`
 }
 
 func main() {
@@ -94,6 +96,14 @@ func main() {
 		config.SetLearningMode(true)
 	}
 
+	// Restore disabled languages/distros from persisted state.
+	if len(state.DisabledLanguages) > 0 {
+		config.SetDisabledLanguages(state.DisabledLanguages)
+	}
+	if len(state.DisabledDistros) > 0 {
+		config.SetDisabledDistros(state.DisabledDistros)
+	}
+
 	// Setup API handler early so we can load categories into it.
 	apiHandler := &api.Handler{
 		Skills:           skills,
@@ -110,6 +120,7 @@ func main() {
 	// Save function persists current state.
 	saveFunc := func() error {
 		return dataStore.Update(func(d *storeData) {
+			cfg := config.Get()
 			d.Skills = skills.ListSkills()
 			d.Approvals = approvals.Export()
 			d.ImageApprovals = imageApprovals.Export()
@@ -117,7 +128,9 @@ func main() {
 			d.LibraryApprovals = libraryApprovals.Export()
 			d.Creds = creds.List()
 			d.Categories = apiHandler.ListCategoriesSlice()
-			d.LearningMode = config.Get().LearningMode
+			d.LearningMode = cfg.LearningMode
+			d.DisabledLanguages = cfg.DisabledLanguages
+			d.DisabledDistros = cfg.DisabledDistros
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
@@ -142,6 +155,12 @@ func main() {
 		} else {
 			log.Printf("Learning mode DISABLED — returning to default-deny")
 		}
+	}
+	apiHandler.SetDisabledLanguagesFunc = func(disabled []string) {
+		log.Printf("Disabled languages updated: %v", disabled)
+	}
+	apiHandler.SetDisabledDistrosFunc = func(disabled []string) {
+		log.Printf("Disabled distros updated: %v", disabled)
 	}
 	for _, reg := range cfg.Registries {
 		log.Printf("Container registry %s: intercepting hosts %v", reg.Name, reg.Hosts)
@@ -191,6 +210,23 @@ func main() {
 		WriteTimeout: 60 * time.Second,
 	}
 
+	// Setup agent API server (available on agent network).
+	agentMux := http.NewServeMux()
+	agentHandler := &api.AgentHandler{
+		Approvals:        approvals,
+		ImageApprovals:   imageApprovals,
+		PackageApprovals: packageApprovals,
+		LibraryApprovals: libraryApprovals,
+		CACertPEM:        ca.CertPEM,
+	}
+	agentHandler.RegisterAgentRoutes(agentMux)
+	agentServer := &http.Server{
+		Addr:         cfg.AgentAPIAddr,
+		Handler:      agentMux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
 	// Start proxy server.
 	go func() {
 		log.Printf("Proxy server listening on %s (HTTP proxy + transparent HTTP)", cfg.ListenAddr)
@@ -218,6 +254,15 @@ func main() {
 		}
 	}()
 
+	// Start agent API server (plain HTTP on agent network).
+	go func() {
+		log.Printf("Agent API listening on http://%s", cfg.AgentAPIAddr)
+		if err := agentServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			// Non-fatal: agent API may fail to bind if eth1 is not available.
+			log.Printf("Agent API server error (non-fatal): %v", err)
+		}
+	}()
+
 	// Graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -235,6 +280,7 @@ func main() {
 	transparentListener.Close()
 	proxyServer.Shutdown(ctx)
 	adminServer.Shutdown(ctx)
+	agentServer.Shutdown(ctx)
 	log.Println("Stopped.")
 }
 

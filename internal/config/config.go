@@ -27,6 +27,7 @@ type PackageRepoConfig struct {
 type Config struct {
 	ListenAddr         string              `json:"listen_addr"`
 	AdminAddr          string              `json:"admin_addr"`
+	AgentAPIAddr       string              `json:"agent_api_addr"`
 	TransparentTLSAddr string              `json:"transparent_tls_addr"`
 	DataDir            string              `json:"data_dir"`
 	TLSCertFile        string              `json:"tls_cert_file"`
@@ -36,6 +37,8 @@ type Config struct {
 	OSPackages         []PackageRepoConfig `json:"os_packages"`
 	CodeLibraries      []PackageRepoConfig `json:"code_libraries"`
 	LearningMode       bool                `json:"learning_mode"`
+	DisabledLanguages  []string            `json:"-"` // runtime only, persisted in state.json
+	DisabledDistros    []string            `json:"-"` // runtime only, persisted in state.json
 }
 
 // SetLearningMode updates the learning mode setting at runtime.
@@ -45,10 +48,49 @@ func SetLearningMode(enabled bool) {
 	current.LearningMode = enabled
 }
 
+// SetDisabledLanguages updates the disabled code library types at runtime.
+func SetDisabledLanguages(disabled []string) {
+	mu.Lock()
+	defer mu.Unlock()
+	current.DisabledLanguages = append([]string{}, disabled...)
+}
+
+// SetDisabledDistros updates the disabled OS distro types at runtime.
+func SetDisabledDistros(disabled []string) {
+	mu.Lock()
+	defer mu.Unlock()
+	current.DisabledDistros = append([]string{}, disabled...)
+}
+
+// IsLanguageDisabled returns true if the given code library type is disabled.
+func IsLanguageDisabled(langType string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, d := range current.DisabledLanguages {
+		if d == langType {
+			return true
+		}
+	}
+	return false
+}
+
+// IsDistroDisabled returns true if the given OS distro type is disabled.
+func IsDistroDisabled(distroType string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, d := range current.DisabledDistros {
+		if d == distroType {
+			return true
+		}
+	}
+	return false
+}
+
 var (
 	defaultConfig = Config{
 		ListenAddr:         ":8080",
 		AdminAddr:          ":443",
+		AgentAPIAddr:       "10.255.255.1:80",
 		TransparentTLSAddr: ":8443",
 		DataDir:            "./data",
 		MaxLogEntries:      10000,

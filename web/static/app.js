@@ -1615,6 +1615,102 @@ async function loadSettings() {
   } catch (e) {
     console.error('Learning mode load error:', e);
   }
+  loadLanguageSettings();
+  loadDistroSettings();
+}
+
+// Known language types and their display names
+const LANGUAGE_TYPES = [
+  { type: 'golang', name: 'Go Modules' },
+  { type: 'npm', name: 'npm (Node.js)' },
+  { type: 'pypi', name: 'PyPI (Python)' },
+  { type: 'nuget', name: 'NuGet (.NET)' },
+  { type: 'rust', name: 'Rust Crates' },
+  { type: 'powershell', name: 'PowerShell Gallery' }
+];
+
+const DISTRO_TYPES = [
+  { type: 'debian', name: 'Debian' },
+  { type: 'ubuntu', name: 'Ubuntu' },
+  { type: 'alpine', name: 'Alpine' }
+];
+
+async function loadLanguageSettings() {
+  try {
+    const data = await api('GET', '/api/settings/languages');
+    const disabled = data.disabled || [];
+    const container = document.getElementById('languages-list');
+    if (!container) return;
+    container.innerHTML = LANGUAGE_TYPES.map(lang => {
+      const enabled = !disabled.includes(lang.type);
+      return `<div class="setting-row" style="padding:4px 0">
+        <div class="setting-info"><div class="setting-label">${lang.name}</div></div>
+        <div class="setting-control">
+          <span class="badge-status ${enabled ? 'approved' : 'denied'}">${enabled ? 'enabled' : 'disabled'}</span>
+          <button class="btn btn-outline btn-sm" onclick="toggleLanguage('${lang.type}',${enabled})">${enabled ? 'Disable' : 'Enable'}</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.error('Language settings load error:', e);
+  }
+}
+
+async function toggleLanguage(langType, currentlyEnabled) {
+  const action = currentlyEnabled ? 'Disable' : 'Enable';
+  if (!confirm(`${action} ${langType} packages?`)) return;
+  try {
+    const data = await api('GET', '/api/settings/languages');
+    let disabled = data.disabled || [];
+    if (currentlyEnabled) {
+      disabled.push(langType);
+    } else {
+      disabled = disabled.filter(d => d !== langType);
+    }
+    await api('POST', '/api/settings/languages', { disabled });
+    loadLanguageSettings();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function loadDistroSettings() {
+  try {
+    const data = await api('GET', '/api/settings/distros');
+    const disabled = data.disabled || [];
+    const container = document.getElementById('distros-list');
+    if (!container) return;
+    container.innerHTML = DISTRO_TYPES.map(distro => {
+      const enabled = !disabled.includes(distro.type);
+      return `<div class="setting-row" style="padding:4px 0">
+        <div class="setting-info"><div class="setting-label">${distro.name}</div></div>
+        <div class="setting-control">
+          <span class="badge-status ${enabled ? 'approved' : 'denied'}">${enabled ? 'enabled' : 'disabled'}</span>
+          <button class="btn btn-outline btn-sm" onclick="toggleDistro('${distro.type}',${enabled})">${enabled ? 'Disable' : 'Enable'}</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.error('Distro settings load error:', e);
+  }
+}
+
+async function toggleDistro(distroType, currentlyEnabled) {
+  const action = currentlyEnabled ? 'Disable' : 'Enable';
+  if (!confirm(`${action} ${distroType} packages?`)) return;
+  try {
+    const data = await api('GET', '/api/settings/distros');
+    let disabled = data.disabled || [];
+    if (currentlyEnabled) {
+      disabled.push(distroType);
+    } else {
+      disabled = disabled.filter(d => d !== distroType);
+    }
+    await api('POST', '/api/settings/distros', { disabled });
+    loadDistroSettings();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
 }
 
 async function toggleLearningMode() {

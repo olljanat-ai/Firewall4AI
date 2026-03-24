@@ -69,6 +69,48 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 	}
 }
 
+// statusToHTTPCode maps an approval status to the appropriate HTTP status code.
+// StatusDenied -> 403 Forbidden, StatusPendingTimeout -> 407 Proxy Authentication Required.
+func statusToHTTPCode(status approval.Status) int {
+	if status == approval.StatusPendingTimeout {
+		return http.StatusProxyAuthRequired // 407
+	}
+	return http.StatusForbidden // 403
+}
+
+// denialMessage returns a clear plain text error message for denied/pending requests.
+func denialMessage(status approval.Status, resource string) string {
+	if status == approval.StatusPendingTimeout {
+		return fmt.Sprintf("Firewall4AI: Access to %s is waiting for admin approval. Your request has been registered and an administrator needs to approve it. Please retry later.", resource)
+	}
+	return fmt.Sprintf("Firewall4AI: Access to %s is denied by firewall policy. Contact your administrator to request access.", resource)
+}
+
+// writeErrorResponse writes a plain text error response to an http.ResponseWriter.
+func writeErrorResponse(w http.ResponseWriter, status approval.Status, resource string) {
+	code := statusToHTTPCode(status)
+	msg := denialMessage(status, resource)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(code)
+	fmt.Fprintln(w, msg)
+}
+
+// writeErrorResponseConn writes a plain text error HTTP response to a raw net.Conn.
+func writeErrorResponseConn(conn net.Conn, status approval.Status, resource string) {
+	code := statusToHTTPCode(status)
+	msg := denialMessage(status, resource)
+	resp := &http.Response{
+		StatusCode: code,
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(msg + "\n")),
+	}
+	resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	resp.ContentLength = int64(len(msg) + 1)
+	resp.Write(conn)
+}
+
 // ServeHTTP handles both HTTP requests and HTTPS CONNECT tunnels.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
@@ -351,6 +393,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	status := p.checkApproval(host, r.URL.Path, skill, sourceIP)
 	if status != approval.StatusApproved {
+		resource := host + r.URL.Path
 		p.Logger.Add(proxylog.Entry{
 			SkillID: sid,
 			Method:  r.Method,
@@ -359,7 +402,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			Status:  string(status),
 			Detail:  "host not approved",
 		})
-		http.Error(w, fmt.Sprintf("Access to %s is %s. Awaiting admin approval.", host, status), http.StatusForbidden)
+		writeErrorResponse(w, status, resource)
 		return
 	}
 
@@ -470,7 +513,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 			Status:  string(status),
 			Detail:  "host not approved",
 		})
-		http.Error(w, fmt.Sprintf("CONNECT to %s is %s. Awaiting admin approval.", host, status), http.StatusForbidden)
+		writeErrorResponse(w, status, host)
 		return
 	}
 
@@ -599,6 +642,7 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	// Check path-level approval for this specific request.
 	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
 	if status != approval.StatusApproved {
+		resource := host + req.URL.Path
 		p.Logger.Add(proxylog.Entry{
 			SkillID: sid,
 			Method:  req.Method,
@@ -607,13 +651,7 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 			Status:  string(status),
 			Detail:  "path not approved",
 		})
-		resp := &http.Response{
-			StatusCode: http.StatusForbidden,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-		}
-		resp.Write(clientConn)
+		writeErrorResponseConn(clientConn, status, resource)
 		return
 	}
 
@@ -804,12 +842,16 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 			Status: "denied",
 			Detail: "auth failed: " + err.Error(),
 		})
+		msg := "Firewall4AI: Proxy authentication failed: " + err.Error()
 		resp := &http.Response{
 			StatusCode: http.StatusProxyAuthRequired,
 			ProtoMajor: 1,
 			ProtoMinor: 1,
 			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(msg + "\n")),
 		}
+		resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
+		resp.ContentLength = int64(len(msg) + 1)
 		resp.Write(clientConn)
 		return
 	}
@@ -835,6 +877,7 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 
 	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
 	if status != approval.StatusApproved {
+		resource := host + req.URL.Path
 		p.Logger.Add(proxylog.Entry{
 			SkillID: sid,
 			Method:  req.Method,
@@ -843,13 +886,7 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 			Status:  string(status),
 			Detail:  "host not approved",
 		})
-		resp := &http.Response{
-			StatusCode: http.StatusForbidden,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-		}
-		resp.Write(clientConn)
+		writeErrorResponseConn(clientConn, status, resource)
 		return
 	}
 
@@ -945,13 +982,7 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 					Status:  "denied",
 					Detail:  "repository not approved: " + repo,
 				})
-				resp := &http.Response{
-					StatusCode: http.StatusForbidden,
-					ProtoMajor: 1,
-					ProtoMinor: 1,
-					Header:     make(http.Header),
-				}
-				resp.Write(clientConn)
+				writeErrorResponseConn(clientConn, approval.StatusDenied, "container image "+repo)
 				return
 			}
 			// Manifest (or blob in learning mode): register pending and wait.
@@ -965,13 +996,7 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 					Status:  string(status),
 					Detail:  "image not approved: " + repo,
 				})
-				resp := &http.Response{
-					StatusCode: http.StatusForbidden,
-					ProtoMajor: 1,
-					ProtoMinor: 1,
-					Header:     make(http.Header),
-				}
-				resp.Write(clientConn)
+				writeErrorResponseConn(clientConn, status, "container image "+repo)
 				return
 			}
 		}
@@ -1035,6 +1060,28 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 	urlPath := req.URL.Path
 	repoType := library.PackageType(repo.Type)
 
+	// Check if this language/distro type is disabled entirely.
+	disabled := false
+	if isOSPkg {
+		disabled = config.IsDistroDisabled(repo.Type)
+	} else {
+		disabled = config.IsLanguageDisabled(repo.Type)
+	}
+	if disabled {
+		label := library.TypeLabel(repoType)
+		resource := label + " packages"
+		p.Logger.Add(proxylog.Entry{
+			SkillID: sid,
+			Method:  req.Method,
+			Host:    host,
+			Path:    urlPath,
+			Status:  "denied",
+			Detail:  label + " is disabled by policy",
+		})
+		writeErrorResponse(w, approval.StatusDenied, resource)
+		return
+	}
+
 	pkgName, ok := library.ParsePackageName(urlPath, repoType)
 	if !ok {
 		// Unrecognized path — auto-approve as repo infra.
@@ -1073,6 +1120,7 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 		} else {
 			status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
 			if status != approval.StatusApproved {
+				resource := string(repoType) + " package " + pkgName
 				p.Logger.Add(proxylog.Entry{
 					SkillID: sid,
 					Method:  req.Method,
@@ -1081,7 +1129,7 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 					Status:  string(status),
 					Detail:  "package not approved: " + string(repoType) + ":" + pkgName,
 				})
-				http.Error(w, fmt.Sprintf("Package %s:%s is %s. Awaiting admin approval.", repoType, pkgName, status), http.StatusForbidden)
+				writeErrorResponse(w, status, resource)
 				return
 			}
 		}
@@ -1148,6 +1196,28 @@ func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Reque
 	urlPath := req.URL.Path
 	repoType := library.PackageType(repo.Type)
 
+	// Check if this language/distro type is disabled entirely.
+	disabled := false
+	if isOSPkg {
+		disabled = config.IsDistroDisabled(repo.Type)
+	} else {
+		disabled = config.IsLanguageDisabled(repo.Type)
+	}
+	if disabled {
+		label := library.TypeLabel(repoType)
+		resource := label + " packages"
+		p.Logger.Add(proxylog.Entry{
+			SkillID: sid,
+			Method:  req.Method,
+			Host:    host,
+			Path:    urlPath,
+			Status:  "denied",
+			Detail:  label + " is disabled by policy",
+		})
+		writeErrorResponseConn(clientConn, approval.StatusDenied, resource)
+		return
+	}
+
 	pkgName, ok := library.ParsePackageName(urlPath, repoType)
 	if !ok {
 		// Unrecognized path — auto-approve as repo infra.
@@ -1186,6 +1256,7 @@ func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Reque
 		} else {
 			status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
 			if status != approval.StatusApproved {
+				resource := string(repoType) + " package " + pkgName
 				p.Logger.Add(proxylog.Entry{
 					SkillID: sid,
 					Method:  req.Method,
@@ -1194,13 +1265,7 @@ func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Reque
 					Status:  string(status),
 					Detail:  "package not approved: " + string(repoType) + ":" + pkgName,
 				})
-				resp := &http.Response{
-					StatusCode: http.StatusForbidden,
-					ProtoMajor: 1,
-					ProtoMinor: 1,
-					Header:     make(http.Header),
-				}
-				resp.Write(clientConn)
+				writeErrorResponseConn(clientConn, status, resource)
 				return
 			}
 		}

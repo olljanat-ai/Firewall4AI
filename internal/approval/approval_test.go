@@ -65,8 +65,8 @@ func TestManager_WaitForDecisionTimeout(t *testing.T) {
 	m.Check("slow.com", "skill-1", "", "")
 
 	status := m.WaitForDecision("slow.com", "skill-1", "", "", 50*time.Millisecond)
-	if status != StatusDenied {
-		t.Errorf("expected denied on timeout, got %s", status)
+	if status != StatusPendingTimeout {
+		t.Errorf("expected pending_timeout on timeout, got %s", status)
 	}
 }
 

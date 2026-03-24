@@ -5,7 +5,7 @@ Firewall4AI is a transparent firewall/proxy that controls AI agent internet acce
 
 ## Architecture
 - **Single Go binary**, zero external dependencies (stdlib only)
-- **Three listeners**: HTTP proxy (:8080), transparent TLS (:8443), admin UI (:443)
+- **Four listeners**: HTTP proxy (:8080), transparent TLS (:8443), admin UI (:443), agent API (10.255.255.1:80)
 - **iptables REDIRECT**: Port 80 -> :8080, port 443 -> :8443 for transparent interception
 - **TLS MITM**: Auto-generated CA signs per-host certificates; agents must trust the CA
 - **Default-deny**: All connections blocked until admin approves
@@ -20,7 +20,7 @@ Firewall4AI is a transparent firewall/proxy that controls AI agent internet acce
 ```
 cmd/firewall4ai/     - Application entry point (main.go)
 internal/
-  api/               - REST API handlers for admin UI
+  api/               - REST API handlers for admin UI and agent API (agentapi.go)
   approval/          - Default-deny approval system with three levels (global/VM/skill)
   auth/              - Skill tokens (GUID format) and authentication
   certgen/           - CA and per-host TLS certificate generation
@@ -68,8 +68,11 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 - **URL path prefix**: Approvals can optionally restrict access to specific URL path prefixes (e.g., `github.com` with `path_prefix="/olljanat-ai/"` allows only that org's repos). Empty `PathPrefix` means all paths (backward compatible). When multiple approvals match, the most specific (longest PathPrefix) wins. For CONNECT+MITM, any path-specific approval implies host-level tunnel access; per-request path checks enforce restrictions inside the tunnel.
 - **Anonymous access**: Agents can make requests without skill tokens. These go through the global/VM approval system. Invalid tokens are rejected; missing tokens are anonymous.
 - **GUID tokens**: Skill tokens use UUID v4 format (e.g., `a1b2c3d4-e5f6-4789-abcd-ef0123456789`). Skill IDs can be user-provided or auto-generated GUIDs.
-- **State persistence**: All state (skills, approvals, credentials, image approvals) stored in a single `state.json` file, loaded at startup, saved on mutations and shutdown.
+- **State persistence**: All state (skills, approvals, credentials, image approvals, disabled languages/distros) stored in a single `state.json` file, loaded at startup, saved on mutations and shutdown.
 - **Registry integration**: Configured registry hosts are detected in the transparent proxy. Manifest requests (`/v2/{name}/manifests/{ref}`) trigger image-level approval. Blob requests are allowed at repo level once any image in that repo is approved. All other registry traffic (auth endpoints, /v2/ pings, CDN) is auto-approved since the registry is configured explicitly.
+- **Language/distro toggle**: Admin can disable entire programming language types (e.g., npm, pypi) or OS distro types (e.g., alpine) via settings. Disabled types return 403 immediately without creating pending entries. Settings stored in `state.json` as `disabled_languages` and `disabled_distros` arrays.
+- **Agent API**: Plain HTTP server on eth1 (10.255.255.1:80) serves `GET /v1/policy` (JSON with allowed/disallowed languages, packages, URLs) and `GET /ca.crt` (CA certificate for HTTPS inspection).
+- **AI-agent-friendly errors**: Denied requests return 403 with clear plain text message. Pending requests waiting for admin approval return 407 with clear message. Both include `Firewall4AI:` prefix for easy identification.
 
 ## Common Patterns
 - **Thread safety**: All managers use `sync.RWMutex`. Read operations use `RLock`, write operations use `Lock`.
@@ -84,6 +87,8 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 ## When Making Changes
 - Run `go test ./...` after changes; all tests should pass
 - The proxy handles three modes: explicit HTTP proxy, explicit CONNECT/MITM, and transparent TLS interception
+- Error responses use `writeErrorResponse()` (for http.ResponseWriter) and `writeErrorResponseConn()` (for net.Conn). StatusDenied → 403, StatusPendingTimeout → 407. Always include plain text body with `Firewall4AI:` prefix.
+- Disabled language/distro checks happen at the top of `handlePackageRepoHTTPRequest` and `handlePackageRepoTLSRequest` before any package parsing. Uses `config.IsLanguageDisabled()` and `config.IsDistroDisabled()`.
 - The `checkApproval(host, path, skill, sourceIP)` function checks: pre-approved hosts -> global approvals -> VM-specific approvals -> skill-specific approvals -> register pending and wait. Path-aware matching uses longest-prefix-wins semantics.
 - For CONNECT+MITM, `checkHostApproval()` allows the tunnel if any approval (host-only or path-specific) exists; per-request path checks happen in `handleMITMRequest()`. For blind tunnels (no MITM), only host-level approval is checked.
 - All approval methods take four identifiers: `host`, `skillID`, `sourceIP`, `pathPrefix`. The approval key is `sourceIP|skillID|host|pathPrefix`.

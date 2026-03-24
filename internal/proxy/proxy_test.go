@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -86,9 +87,9 @@ func TestProxy_NoAuthHeader_Anonymous(t *testing.T) {
 	p.handleHTTP(w, req)
 
 	// Without token, request is anonymous. No approval exists, so it times
-	// out and gets denied (403).
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for anonymous unapproved host, got %d", w.Code)
+	// out waiting for admin approval (407).
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Errorf("expected 407 for anonymous unapproved host, got %d", w.Code)
 	}
 }
 
@@ -113,8 +114,9 @@ func TestProxy_HostNotApproved(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.handleHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
+	// No approval exists, times out waiting → 407.
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Errorf("expected 407, got %d", w.Code)
 	}
 }
 
@@ -309,9 +311,9 @@ func TestProxy_CONNECT_NoAuth_Anonymous(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.handleConnect(w, req)
 
-	// Without token, CONNECT is anonymous. No approval -> timeout -> 403.
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for anonymous unapproved CONNECT, got %d", w.Code)
+	// Without token, CONNECT is anonymous. No approval -> timeout -> 407.
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Errorf("expected 407 for anonymous unapproved CONNECT, got %d", w.Code)
 	}
 }
 
@@ -325,8 +327,9 @@ func TestProxy_CONNECT_HostNotApproved(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.handleConnect(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
+	// No approval exists, times out waiting → 407.
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Errorf("expected 407, got %d", w.Code)
 	}
 }
 
@@ -542,9 +545,9 @@ func TestProxy_PathPrefixApproval_Denied(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.handleHTTP(w, req)
 
-	// Non-matching path should time out and be denied.
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for non-matching path, got %d", w.Code)
+	// Non-matching path should time out waiting for approval → 407.
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Errorf("expected 407 for non-matching path, got %d", w.Code)
 	}
 }
 
@@ -603,13 +606,13 @@ func TestProxy_HTTPPackageRepoDetection_Unapproved(t *testing.T) {
 		{Name: "Debian", Type: "debian", Hosts: []string{"deb.debian.org"}},
 	}
 
-	// Request a Debian package without approval — should be forbidden.
+	// Request a Debian package without approval — times out waiting → 407.
 	req := httptest.NewRequest("GET", "http://deb.debian.org/debian/pool/main/c/curl/curl_7.88.1-10_amd64.deb", nil)
 	w := httptest.NewRecorder()
 	p.handleHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for unapproved Debian package via HTTP, got %d", w.Code)
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Errorf("expected 407 for unapproved Debian package via HTTP, got %d", w.Code)
 	}
 }
 
@@ -681,8 +684,9 @@ func TestProxy_LearningModeDisabled(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.handleHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("default-deny: expected 403, got %d", w.Code)
+	// No approval, times out waiting → 407.
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Errorf("default-deny: expected 407, got %d", w.Code)
 	}
 }
 
@@ -803,7 +807,9 @@ func TestProxy_LearningMode_RegistryBlob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read response: %v", err)
 	}
-	defer resp.Body.Close()
+	// Drain the body so the writer goroutine can finish.
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
 
 	<-done
 
@@ -853,7 +859,9 @@ func TestProxy_LearningMode_RegistryBlob_DeniedWhenOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read response: %v", err)
 	}
-	defer resp.Body.Close()
+	// Drain the body so the writer goroutine can finish.
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
 
 	<-done
 
