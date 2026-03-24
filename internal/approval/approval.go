@@ -4,6 +4,7 @@
 package approval
 
 import (
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -495,6 +496,145 @@ func (m *Manager) Delete(host, skillID, sourceIP, pathPrefix string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.approvals, k)
+}
+
+// FilterParams specifies optional filters and pagination for ListFiltered.
+type FilterParams struct {
+	Status   string // filter by status (empty = all)
+	Category string // filter by category (empty = all)
+	SkillID  string // filter by skill_id (empty = all; use "_empty" for no-skill)
+	SourceIP string // filter by source_ip (empty = all; use "_empty" for no-IP)
+	Type     string // filter by type prefix in host field, e.g. "golang" (empty = all)
+	Offset   int    // pagination offset
+	Limit    int    // pagination limit (0 = default 100)
+}
+
+// FilteredResult contains a page of approvals and the total matching count.
+type FilteredResult struct {
+	Items []HostApproval `json:"items"`
+	Total int            `json:"total"`
+}
+
+// ListFiltered returns approvals matching the given filters with pagination.
+func (m *Manager) ListFiltered(p FilterParams) FilteredResult {
+	if p.Limit <= 0 {
+		p.Limit = 100
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Collect matching items.
+	matched := make([]HostApproval, 0)
+	for _, a := range m.approvals {
+		if p.Status != "" && string(a.Status) != p.Status {
+			continue
+		}
+		if p.Category != "" && a.Category != p.Category {
+			continue
+		}
+		if p.SkillID == "_empty" {
+			if a.SkillID != "" {
+				continue
+			}
+		} else if p.SkillID != "" && a.SkillID != p.SkillID {
+			continue
+		}
+		if p.SourceIP == "_empty" {
+			if a.SourceIP != "" {
+				continue
+			}
+		} else if p.SourceIP != "" && a.SourceIP != p.SourceIP {
+			continue
+		}
+		if p.Type != "" {
+			idx := strings.Index(a.Host, ":")
+			if idx < 0 || a.Host[:idx] != p.Type {
+				continue
+			}
+		}
+		matched = append(matched, *a)
+	}
+
+	total := len(matched)
+
+	// Sort by host for stable pagination.
+	sort.Slice(matched, func(i, j int) bool {
+		return matched[i].Host < matched[j].Host
+	})
+
+	// Apply pagination.
+	if p.Offset >= len(matched) {
+		return FilteredResult{Items: []HostApproval{}, Total: total}
+	}
+	end := p.Offset + p.Limit
+	if end > len(matched) {
+		end = len(matched)
+	}
+	return FilteredResult{Items: matched[p.Offset:end], Total: total}
+}
+
+// PendingCount returns the number of pending approvals.
+func (m *Manager) PendingCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for _, a := range m.approvals {
+		if a.Status == StatusPending {
+			count++
+		}
+	}
+	return count
+}
+
+// FilterMeta returns the unique values for filter dropdowns.
+type FilterMeta struct {
+	Categories []string `json:"categories"`
+	SkillIDs   []string `json:"skill_ids"`
+	SourceIPs  []string `json:"source_ips"`
+	Types      []string `json:"types,omitempty"`
+}
+
+// GetFilterMeta returns unique filter values across all approvals.
+func (m *Manager) GetFilterMeta() FilterMeta {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	catSet := make(map[string]bool)
+	skillSet := make(map[string]bool)
+	ipSet := make(map[string]bool)
+	typeSet := make(map[string]bool)
+	for _, a := range m.approvals {
+		if a.Category != "" {
+			catSet[a.Category] = true
+		}
+		if a.SkillID != "" {
+			skillSet[a.SkillID] = true
+		}
+		if a.SourceIP != "" {
+			ipSet[a.SourceIP] = true
+		}
+		if idx := strings.Index(a.Host, ":"); idx > 0 {
+			typeSet[a.Host[:idx]] = true
+		}
+	}
+	meta := FilterMeta{
+		Categories: sortedKeys(catSet),
+		SkillIDs:   sortedKeys(skillSet),
+		SourceIPs:  sortedKeys(ipSet),
+		Types:      sortedKeys(typeSet),
+	}
+	return meta
+}
+
+func sortedKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return []string{}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // Export returns all approvals for persistence.

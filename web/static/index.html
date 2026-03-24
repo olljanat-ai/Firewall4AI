@@ -56,16 +56,16 @@
           <button class="btn btn-primary" onclick="showAddRule()">+ Add Rule</button>
         </div>
         <div class="filter-bar">
-          <select id="filter-url-category" onchange="loadApprovals()">
+          <select id="filter-url-category" onchange="onFilterChange('url')">
             <option value="">All categories</option>
           </select>
-          <select id="filter-url-skill" onchange="loadApprovals()">
+          <select id="filter-url-skill" onchange="onFilterChange('url')">
             <option value="">All skills</option>
           </select>
-          <select id="filter-url-ip" onchange="loadApprovals()">
+          <select id="filter-url-ip" onchange="onFilterChange('url')">
             <option value="">All source IPs</option>
           </select>
-          <select id="filter-url-status" onchange="loadApprovals()">
+          <select id="filter-url-status" onchange="onFilterChange('url')">
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
@@ -88,6 +88,7 @@
               <tr><td colspan="9" class="empty-state">No URL rules</td></tr>
             </tbody>
           </table>
+          <div id="pager-url" class="pager" style="display:none"></div>
         </div>
       </div>
 
@@ -98,16 +99,16 @@
           <button class="btn btn-primary" onclick="showAddImageRule()">+ Add Image Rule</button>
         </div>
         <div class="filter-bar">
-          <select id="filter-image-category" onchange="loadImages()">
+          <select id="filter-image-category" onchange="onFilterChange('image')">
             <option value="">All categories</option>
           </select>
-          <select id="filter-image-skill" onchange="loadImages()">
+          <select id="filter-image-skill" onchange="onFilterChange('image')">
             <option value="">All skills</option>
           </select>
-          <select id="filter-image-ip" onchange="loadImages()">
+          <select id="filter-image-ip" onchange="onFilterChange('image')">
             <option value="">All source IPs</option>
           </select>
-          <select id="filter-image-status" onchange="loadImages()">
+          <select id="filter-image-status" onchange="onFilterChange('image')">
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
@@ -130,6 +131,7 @@
               <tr><td colspan="7" class="empty-state">No image approval records</td></tr>
             </tbody>
           </table>
+          <div id="pager-image" class="pager" style="display:none"></div>
         </div>
       </div>
 
@@ -140,19 +142,19 @@
           <button class="btn btn-primary" onclick="showAddPackageRule()">+ Add Package Rule</button>
         </div>
         <div class="filter-bar">
-          <select id="filter-package-type" onchange="loadPackages()">
+          <select id="filter-package-type" onchange="onFilterChange('package')">
             <option value="">All types</option>
           </select>
-          <select id="filter-package-category" onchange="loadPackages()">
+          <select id="filter-package-category" onchange="onFilterChange('package')">
             <option value="">All categories</option>
           </select>
-          <select id="filter-package-skill" onchange="loadPackages()">
+          <select id="filter-package-skill" onchange="onFilterChange('package')">
             <option value="">All skills</option>
           </select>
-          <select id="filter-package-ip" onchange="loadPackages()">
+          <select id="filter-package-ip" onchange="onFilterChange('package')">
             <option value="">All source IPs</option>
           </select>
-          <select id="filter-package-status" onchange="loadPackages()">
+          <select id="filter-package-status" onchange="onFilterChange('package')">
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
@@ -175,6 +177,7 @@
               <tr><td colspan="8" class="empty-state">No OS package approval records</td></tr>
             </tbody>
           </table>
+          <div id="pager-package" class="pager" style="display:none"></div>
         </div>
       </div>
 
@@ -185,19 +188,19 @@
           <button class="btn btn-primary" onclick="showAddLibraryRule()">+ Add Library Rule</button>
         </div>
         <div class="filter-bar">
-          <select id="filter-library-type" onchange="loadLibraries()">
+          <select id="filter-library-type" onchange="onFilterChange('library')">
             <option value="">All types</option>
           </select>
-          <select id="filter-library-category" onchange="loadLibraries()">
+          <select id="filter-library-category" onchange="onFilterChange('library')">
             <option value="">All categories</option>
           </select>
-          <select id="filter-library-skill" onchange="loadLibraries()">
+          <select id="filter-library-skill" onchange="onFilterChange('library')">
             <option value="">All skills</option>
           </select>
-          <select id="filter-library-ip" onchange="loadLibraries()">
+          <select id="filter-library-ip" onchange="onFilterChange('library')">
             <option value="">All source IPs</option>
           </select>
-          <select id="filter-library-status" onchange="loadLibraries()">
+          <select id="filter-library-status" onchange="onFilterChange('library')">
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
@@ -220,6 +223,7 @@
               <tr><td colspan="8" class="empty-state">No code library approval records</td></tr>
             </tbody>
           </table>
+          <div id="pager-library" class="pager" style="display:none"></div>
         </div>
       </div>
 

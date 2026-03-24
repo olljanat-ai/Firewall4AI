@@ -21,6 +21,15 @@ let currentCredentials = [];
 let currentCategories = [];
 let currentLogs = [];
 
+// Pagination state per page type
+const PAGE_SIZE = 50;
+let pageState = {
+  url: { offset: 0, total: 0 },
+  image: { offset: 0, total: 0 },
+  package: { offset: 0, total: 0 },
+  library: { offset: 0, total: 0 },
+};
+
 // Selection state for bulk actions
 let selectedApprovals = new Set();
 let selectedImages = new Set();
@@ -297,10 +306,63 @@ function clearFilters(prefix) {
   if (skill) skill.value = '';
   if (ip) ip.value = '';
   if (status) status.value = '';
+  pageState[prefix].offset = 0;
   if (prefix === 'url') loadApprovals();
   if (prefix === 'image') loadImages();
   if (prefix === 'package') loadPackages();
   if (prefix === 'library') loadLibraries();
+}
+
+// Build query string for server-side filtered + paginated requests.
+function buildFilterQuery(prefix) {
+  const filter = prefix === 'package' || prefix === 'library' ? getTypedFilter(prefix) : getFilter(prefix);
+  const ps = pageState[prefix];
+  const params = new URLSearchParams();
+  if (filter.status) params.set('status', filter.status);
+  if (filter.category) params.set('category', filter.category);
+  if (filter.skillID) params.set('skill_id', filter.skillID);
+  if (filter.ip) params.set('source_ip', filter.ip);
+  if (filter.type) params.set('type', filter.type);
+  params.set('offset', ps.offset);
+  params.set('limit', PAGE_SIZE);
+  return params.toString();
+}
+
+// Render pagination controls.
+function renderPager(prefix) {
+  const pager = document.getElementById('pager-' + prefix);
+  if (!pager) return;
+  const ps = pageState[prefix];
+  if (ps.total <= PAGE_SIZE) {
+    pager.style.display = 'none';
+    return;
+  }
+  pager.style.display = 'flex';
+  const page = Math.floor(ps.offset / PAGE_SIZE) + 1;
+  const totalPages = Math.ceil(ps.total / PAGE_SIZE);
+  const prevDisabled = ps.offset === 0 ? 'disabled' : '';
+  const nextDisabled = ps.offset + PAGE_SIZE >= ps.total ? 'disabled' : '';
+  pager.innerHTML = `<span>Showing ${ps.offset + 1}-${Math.min(ps.offset + PAGE_SIZE, ps.total)} of ${ps.total}</span>
+    <div class="pager-buttons">
+      <button ${prevDisabled} onclick="goPage('${prefix}',-1)">Previous</button>
+      <span style="padding:4px 8px">Page ${page} of ${totalPages}</span>
+      <button ${nextDisabled} onclick="goPage('${prefix}',1)">Next</button>
+    </div>`;
+}
+
+function goPage(prefix, dir) {
+  const ps = pageState[prefix];
+  ps.offset += dir * PAGE_SIZE;
+  if (ps.offset < 0) ps.offset = 0;
+  const loaders = { url: loadApprovals, image: loadImages, package: loadPackages, library: loadLibraries };
+  loaders[prefix]();
+}
+
+// Reset page offset when filter changes.
+function onFilterChange(prefix) {
+  pageState[prefix].offset = 0;
+  const loaders = { url: loadApprovals, image: loadImages, package: loadPackages, library: loadLibraries };
+  loaders[prefix]();
 }
 
 // --- Selection & Bulk Actions ---
@@ -509,78 +571,77 @@ async function refreshSkills() {
 // --- URL Rules (Approvals) ---
 async function loadApprovals() {
   try {
-    const [approvals] = await Promise.all([
-      api('GET', '/api/approvals'),
-      refreshCategories(),
+    const query = buildFilterQuery('url');
+    const [result, meta] = await Promise.all([
+      api('GET', '/api/approvals?' + query),
+      api('GET', '/api/approvals/meta'),
       refreshSkills(),
     ]);
-    currentApprovals = approvals || [];
-    populateFilterDropdowns('url', currentApprovals);
-    const pending = currentApprovals.filter(a => a.status === 'pending');
-    const badge = document.getElementById('approval-badge');
-    if (pending.length > 0) {
-      badge.textContent = pending.length;
-      badge.style.display = 'inline';
-    } else {
-      badge.style.display = 'none';
-    }
-    const filter = getFilter('url');
-    const filtered = currentApprovals.filter(a => matchesFilter(a, filter));
+    const items = result.items || [];
+    const total = result.total || 0;
+    pageState.url.total = total;
+    currentApprovals = items;
+    currentFilteredApprovals = items;
+    // Populate filter dropdowns from meta (not from full data).
+    currentCategories = meta.categories || [];
+    populateSelect('filter-url-category', currentCategories.map(c => ({ value: c, label: c })), 'All categories');
+    const skillOpts = (meta.skill_ids || []).map(id => ({ value: id, label: skillNameByID(id) }));
+    skillOpts.sort((a, b) => a.label.localeCompare(b.label));
+    populateSelect('filter-url-skill', skillOpts, 'All skills');
+    populateSelect('filter-url-ip', (meta.source_ips || []).map(ip => ({ value: ip, label: ip })), 'All source IPs');
     const tbody = document.getElementById('approvals-tbody');
-    tbody.innerHTML = '';
-    currentFilteredApprovals = filtered;
-    if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No URL rules</td></tr>';
-      updateBulkBar('url');
-      return;
+    const rows = [];
+    if (items.length === 0) {
+      rows.push('<tr><td colspan="10" class="empty-state">No URL rules</td></tr>');
+    } else {
+      items.forEach((a, i) => {
+        const key = approvalKey(a);
+        const cbChecked = selectedApprovals.has(key) ? 'checked' : '';
+        const skillDisplay = formatSkillID(a.skill_id);
+        const sourceDisplay = formatSourceIP(a.source_ip);
+        const pathDisplay = formatPathPrefix(a.path_prefix);
+        const categoryDisplay = formatCategory(a.category);
+        const pp = a.path_prefix || '';
+        const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditRule(${i})" title="Edit rule">Edit</button>`;
+        const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteApproval('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}')" title="Delete rule">Delete</button>`;
+        let actions = '';
+        if (a.status === 'pending') {
+          const vmBtn = a.source_ip
+            ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','${esc(pp)}','approved')" title="Approve for this VM">VM</button>` : '';
+          const globalBtn = (a.skill_id || a.source_ip)
+            ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','','${esc(pp)}','approved')" title="Approve for all agents">Global</button>` : '';
+          actions = `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
+             ${vmBtn} ${globalBtn}
+             <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
+             ${editBtn} ${deleteBtn}`;
+        } else {
+          const promoteBtn = a.source_ip && !a.skill_id
+            ? `<button class="btn btn-outline btn-sm" onclick="promoteToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${esc(pp)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+          actions = `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
+             <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
+             ${promoteBtn}
+             ${editBtn} ${deleteBtn}`;
+        }
+        const logModeDisplay = a.logging_mode === 'full'
+          ? '<span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent)">Full</span>'
+          : '<span class="badge-status" style="opacity:0.4">Normal</span>';
+        rows.push(`<tr>
+          <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('url',this)"></td>
+          <td><strong>${esc(a.host)}</strong></td>
+          <td>${pathDisplay}</td>
+          <td>${categoryDisplay}</td>
+          <td>${logModeDisplay}</td>
+          <td>${skillDisplay}</td>
+          <td>${sourceDisplay}</td>
+          <td><span class="badge-status ${a.status}">${a.status}</span></td>
+          <td>${timeAgo(a.updated_at)}</td>
+          <td>${actions}</td>
+        </tr>`);
+      });
     }
-    filtered.sort((a, b) => a.host.localeCompare(b.host));
-    filtered.forEach((a) => {
-      const key = approvalKey(a);
-      const cbChecked = selectedApprovals.has(key) ? 'checked' : '';
-      const idx = currentApprovals.indexOf(a);
-      const skillDisplay = formatSkillID(a.skill_id);
-      const sourceDisplay = formatSourceIP(a.source_ip);
-      const pathDisplay = formatPathPrefix(a.path_prefix);
-      const categoryDisplay = formatCategory(a.category);
-      const pp = a.path_prefix || '';
-      const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditRule(${idx})" title="Edit rule">Edit</button>`;
-      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteApproval('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}')" title="Delete rule">Delete</button>`;
-      let actions = '';
-      if (a.status === 'pending') {
-        const vmBtn = a.source_ip
-          ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','${esc(pp)}','approved')" title="Approve for this VM">VM</button>` : '';
-        const globalBtn = (a.skill_id || a.source_ip)
-          ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','','${esc(pp)}','approved')" title="Approve for all agents">Global</button>` : '';
-        actions = `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
-           ${vmBtn} ${globalBtn}
-           <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
-           ${editBtn} ${deleteBtn}`;
-      } else {
-        const promoteBtn = a.source_ip && !a.skill_id
-          ? `<button class="btn btn-outline btn-sm" onclick="promoteToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${esc(pp)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
-        actions = `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
-           <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
-           ${promoteBtn}
-           ${editBtn} ${deleteBtn}`;
-      }
-      const logModeDisplay = a.logging_mode === 'full'
-        ? '<span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent)">Full</span>'
-        : '<span class="badge-status" style="opacity:0.4">Normal</span>';
-      tbody.innerHTML += `<tr>
-        <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('url',this)"></td>
-        <td><strong>${esc(a.host)}</strong></td>
-        <td>${pathDisplay}</td>
-        <td>${categoryDisplay}</td>
-        <td>${logModeDisplay}</td>
-        <td>${skillDisplay}</td>
-        <td>${sourceDisplay}</td>
-        <td><span class="badge-status ${a.status}">${a.status}</span></td>
-        <td>${timeAgo(a.updated_at)}</td>
-        <td>${actions}</td>
-      </tr>`;
-    });
+    tbody.innerHTML = rows.join('');
     updateBulkBar('url');
+    renderPager('url');
   } catch (e) {
     console.error('URL rules load error:', e);
   }
@@ -729,71 +790,68 @@ async function submitRule() {
 // --- Images ---
 async function loadImages() {
   try {
-    const [images] = await Promise.all([
-      api('GET', '/api/images'),
-      refreshCategories(),
+    const query = buildFilterQuery('image');
+    const [result, meta] = await Promise.all([
+      api('GET', '/api/images?' + query),
+      api('GET', '/api/images/meta'),
       refreshSkills(),
     ]);
-    currentImages = images || [];
-    populateFilterDropdowns('image', currentImages);
-    const pending = currentImages.filter(a => a.status === 'pending');
-    const badge = document.getElementById('image-badge');
-    if (pending.length > 0) {
-      badge.textContent = pending.length;
-      badge.style.display = 'inline';
-    } else {
-      badge.style.display = 'none';
-    }
-    const filter = getFilter('image');
-    const filtered = currentImages.filter(a => matchesFilter(a, filter));
+    const items = result.items || [];
+    pageState.image.total = result.total || 0;
+    currentImages = items;
+    currentFilteredImages = items;
+    currentCategories = meta.categories || [];
+    populateSelect('filter-image-category', currentCategories.map(c => ({ value: c, label: c })), 'All categories');
+    const skillOpts = (meta.skill_ids || []).map(id => ({ value: id, label: skillNameByID(id) }));
+    skillOpts.sort((a, b) => a.label.localeCompare(b.label));
+    populateSelect('filter-image-skill', skillOpts, 'All skills');
+    populateSelect('filter-image-ip', (meta.source_ips || []).map(ip => ({ value: ip, label: ip })), 'All source IPs');
     const tbody = document.getElementById('images-tbody');
-    tbody.innerHTML = '';
-    currentFilteredImages = filtered;
-    if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No image approval records</td></tr>';
-      updateBulkBar('image');
-      return;
+    const rows = [];
+    if (items.length === 0) {
+      rows.push('<tr><td colspan="8" class="empty-state">No image approval records</td></tr>');
+    } else {
+      items.forEach((a, i) => {
+        const key = imgKey(a);
+        const cbChecked = selectedImages.has(key) ? 'checked' : '';
+        const skillDisplay = formatSkillID(a.skill_id);
+        const sourceDisplay = formatSourceIP(a.source_ip);
+        const categoryDisplay = formatCategory(a.category);
+        const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditImageRule(${i})" title="Edit rule">Edit</button>`;
+        const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+        let actions = '';
+        if (a.status === 'pending') {
+          const vmBtn = a.source_ip
+            ? `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+          const globalBtn = (a.skill_id || a.source_ip)
+            ? `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
+          actions = `<button class="btn btn-success btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+             ${vmBtn} ${globalBtn}
+             <button class="btn btn-danger btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+             ${editBtn} ${deleteBtn}`;
+        } else {
+          const promoteBtn = a.source_ip && !a.skill_id
+            ? `<button class="btn btn-outline btn-sm" onclick="promoteImageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+          actions = `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+             <button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+             ${promoteBtn}
+             ${editBtn} ${deleteBtn}`;
+        }
+        rows.push(`<tr>
+          <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('image',this)"></td>
+          <td><strong>${esc(a.host)}</strong></td>
+          <td>${categoryDisplay}</td>
+          <td>${skillDisplay}</td>
+          <td>${sourceDisplay}</td>
+          <td><span class="badge-status ${a.status}">${a.status}</span></td>
+          <td>${timeAgo(a.updated_at)}</td>
+          <td>${actions}</td>
+        </tr>`);
+      });
     }
-    filtered.sort((a, b) => a.host.localeCompare(b.host));
-    filtered.forEach((a) => {
-      const key = imgKey(a);
-      const cbChecked = selectedImages.has(key) ? 'checked' : '';
-      const idx = currentImages.indexOf(a);
-      const skillDisplay = formatSkillID(a.skill_id);
-      const sourceDisplay = formatSourceIP(a.source_ip);
-      const categoryDisplay = formatCategory(a.category);
-      const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditImageRule(${idx})" title="Edit rule">Edit</button>`;
-      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
-      let actions = '';
-      if (a.status === 'pending') {
-        const vmBtn = a.source_ip
-          ? `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
-        const globalBtn = (a.skill_id || a.source_ip)
-          ? `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
-        actions = `<button class="btn btn-success btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           ${vmBtn} ${globalBtn}
-           <button class="btn btn-danger btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
-           ${editBtn} ${deleteBtn}`;
-      } else {
-        const promoteBtn = a.source_ip && !a.skill_id
-          ? `<button class="btn btn-outline btn-sm" onclick="promoteImageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
-        actions = `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           <button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
-           ${promoteBtn}
-           ${editBtn} ${deleteBtn}`;
-      }
-      tbody.innerHTML += `<tr>
-        <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('image',this)"></td>
-        <td><strong>${esc(a.host)}</strong></td>
-        <td>${categoryDisplay}</td>
-        <td>${skillDisplay}</td>
-        <td>${sourceDisplay}</td>
-        <td><span class="badge-status ${a.status}">${a.status}</span></td>
-        <td>${timeAgo(a.updated_at)}</td>
-        <td>${actions}</td>
-      </tr>`;
-    });
+    tbody.innerHTML = rows.join('');
     updateBulkBar('image');
+    renderPager('image');
   } catch (e) {
     console.error('Images load error:', e);
   }
@@ -920,69 +978,73 @@ async function submitImageRule() {
 // --- OS Packages ---
 async function loadPackages() {
   try {
-    const [packages] = await Promise.all([
-      api('GET', '/api/packages'),
-      refreshCategories(),
+    const query = buildFilterQuery('package');
+    const [result, meta] = await Promise.all([
+      api('GET', '/api/packages?' + query),
+      api('GET', '/api/packages/meta'),
       refreshSkills(),
     ]);
-    currentPackages = packages || [];
-    populateFilterDropdowns('package', currentPackages);
-    populateTypeFilter('package', currentPackages);
-    const pending = currentPackages.filter(a => a.status === 'pending');
-    updateBadge('package-badge', pending);
-    const filter = getTypedFilter('package');
-    const filtered = currentPackages.filter(a => matchesFilter(a, filter));
+    const items = result.items || [];
+    pageState.package.total = result.total || 0;
+    currentPackages = items;
+    currentFilteredPackages = items;
+    currentCategories = meta.categories || [];
+    populateSelect('filter-package-category', currentCategories.map(c => ({ value: c, label: c })), 'All categories');
+    const skillOpts = (meta.skill_ids || []).map(id => ({ value: id, label: skillNameByID(id) }));
+    skillOpts.sort((a, b) => a.label.localeCompare(b.label));
+    populateSelect('filter-package-skill', skillOpts, 'All skills');
+    populateSelect('filter-package-ip', (meta.source_ips || []).map(ip => ({ value: ip, label: ip })), 'All source IPs');
+    const typeOpts = (meta.types || []).map(t => ({ value: t, label: typeLabels[t] || t }));
+    populateSelect('filter-package-type', typeOpts, 'All types');
     const tbody = document.getElementById('packages-tbody');
-    tbody.innerHTML = '';
-    currentFilteredPackages = filtered;
-    if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No OS package approval records</td></tr>';
-      updateBulkBar('package');
-      return;
+    const rows = [];
+    if (items.length === 0) {
+      rows.push('<tr><td colspan="9" class="empty-state">No OS package approval records</td></tr>');
+    } else {
+      items.forEach((a, i) => {
+        const key = imgKey(a);
+        const cbChecked = selectedPackages.has(key) ? 'checked' : '';
+        const skillDisplay = formatSkillID(a.skill_id);
+        const sourceDisplay = formatSourceIP(a.source_ip);
+        const categoryDisplay = formatCategory(a.category);
+        const typeDisplay = formatLibraryType(a.host);
+        const nameDisplay = formatLibraryName(a.host);
+        const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditPackageRule(${i})" title="Edit rule">Edit</button>`;
+        const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deletePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+        let actions = '';
+        if (a.status === 'pending') {
+          const vmBtn = a.source_ip
+            ? `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+          const globalBtn = (a.skill_id || a.source_ip)
+            ? `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
+          actions = `<button class="btn btn-success btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+             ${vmBtn} ${globalBtn}
+             <button class="btn btn-danger btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+             ${editBtn} ${deleteBtn}`;
+        } else {
+          const promoteBtn = a.source_ip && !a.skill_id
+            ? `<button class="btn btn-outline btn-sm" onclick="promotePackageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+          actions = `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+             <button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+             ${promoteBtn}
+             ${editBtn} ${deleteBtn}`;
+        }
+        rows.push(`<tr>
+          <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('package',this)"></td>
+          <td><strong>${nameDisplay}</strong></td>
+          <td>${typeDisplay}</td>
+          <td>${categoryDisplay}</td>
+          <td>${skillDisplay}</td>
+          <td>${sourceDisplay}</td>
+          <td><span class="badge-status ${a.status}">${a.status}</span></td>
+          <td>${timeAgo(a.updated_at)}</td>
+          <td>${actions}</td>
+        </tr>`);
+      });
     }
-    filtered.sort((a, b) => getLibraryName(a.host).localeCompare(getLibraryName(b.host)));
-    filtered.forEach((a) => {
-      const key = imgKey(a);
-      const cbChecked = selectedPackages.has(key) ? 'checked' : '';
-      const idx = currentPackages.indexOf(a);
-      const skillDisplay = formatSkillID(a.skill_id);
-      const sourceDisplay = formatSourceIP(a.source_ip);
-      const categoryDisplay = formatCategory(a.category);
-      const typeDisplay = formatLibraryType(a.host);
-      const nameDisplay = formatLibraryName(a.host);
-      const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditPackageRule(${idx})" title="Edit rule">Edit</button>`;
-      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deletePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
-      let actions = '';
-      if (a.status === 'pending') {
-        const vmBtn = a.source_ip
-          ? `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
-        const globalBtn = (a.skill_id || a.source_ip)
-          ? `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
-        actions = `<button class="btn btn-success btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           ${vmBtn} ${globalBtn}
-           <button class="btn btn-danger btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
-           ${editBtn} ${deleteBtn}`;
-      } else {
-        const promoteBtn = a.source_ip && !a.skill_id
-          ? `<button class="btn btn-outline btn-sm" onclick="promotePackageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
-        actions = `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           <button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
-           ${promoteBtn}
-           ${editBtn} ${deleteBtn}`;
-      }
-      tbody.innerHTML += `<tr>
-        <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('package',this)"></td>
-        <td><strong>${nameDisplay}</strong></td>
-        <td>${typeDisplay}</td>
-        <td>${categoryDisplay}</td>
-        <td>${skillDisplay}</td>
-        <td>${sourceDisplay}</td>
-        <td><span class="badge-status ${a.status}">${a.status}</span></td>
-        <td>${timeAgo(a.updated_at)}</td>
-        <td>${actions}</td>
-      </tr>`;
-    });
+    tbody.innerHTML = rows.join('');
     updateBulkBar('package');
+    renderPager('package');
   } catch (e) {
     console.error('Packages load error:', e);
   }
@@ -1095,69 +1157,73 @@ async function submitPackageRule() {
 // --- Code Libraries ---
 async function loadLibraries() {
   try {
-    const [libraries] = await Promise.all([
-      api('GET', '/api/libraries'),
-      refreshCategories(),
+    const query = buildFilterQuery('library');
+    const [result, meta] = await Promise.all([
+      api('GET', '/api/libraries?' + query),
+      api('GET', '/api/libraries/meta'),
       refreshSkills(),
     ]);
-    currentLibraries = libraries || [];
-    populateFilterDropdowns('library', currentLibraries);
-    populateTypeFilter('library', currentLibraries);
-    const pending = currentLibraries.filter(a => a.status === 'pending');
-    updateBadge('library-badge', pending);
-    const filter = getTypedFilter('library');
-    const filtered = currentLibraries.filter(a => matchesFilter(a, filter));
+    const items = result.items || [];
+    pageState.library.total = result.total || 0;
+    currentLibraries = items;
+    currentFilteredLibraries = items;
+    currentCategories = meta.categories || [];
+    populateSelect('filter-library-category', currentCategories.map(c => ({ value: c, label: c })), 'All categories');
+    const skillOpts = (meta.skill_ids || []).map(id => ({ value: id, label: skillNameByID(id) }));
+    skillOpts.sort((a, b) => a.label.localeCompare(b.label));
+    populateSelect('filter-library-skill', skillOpts, 'All skills');
+    populateSelect('filter-library-ip', (meta.source_ips || []).map(ip => ({ value: ip, label: ip })), 'All source IPs');
+    const typeOpts = (meta.types || []).map(t => ({ value: t, label: typeLabels[t] || t }));
+    populateSelect('filter-library-type', typeOpts, 'All types');
     const tbody = document.getElementById('libraries-tbody');
-    tbody.innerHTML = '';
-    currentFilteredLibraries = filtered;
-    if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No code library approval records</td></tr>';
-      updateBulkBar('library');
-      return;
+    const rows = [];
+    if (items.length === 0) {
+      rows.push('<tr><td colspan="9" class="empty-state">No code library approval records</td></tr>');
+    } else {
+      items.forEach((a, i) => {
+        const key = imgKey(a);
+        const cbChecked = selectedLibraries.has(key) ? 'checked' : '';
+        const skillDisplay = formatSkillID(a.skill_id);
+        const sourceDisplay = formatSourceIP(a.source_ip);
+        const categoryDisplay = formatCategory(a.category);
+        const typeDisplay = formatLibraryType(a.host);
+        const nameDisplay = formatLibraryName(a.host);
+        const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditLibraryRule(${i})" title="Edit rule">Edit</button>`;
+        const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+        let actions = '';
+        if (a.status === 'pending') {
+          const vmBtn = a.source_ip
+            ? `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+          const globalBtn = (a.skill_id || a.source_ip)
+            ? `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
+          actions = `<button class="btn btn-success btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+             ${vmBtn} ${globalBtn}
+             <button class="btn btn-danger btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+             ${editBtn} ${deleteBtn}`;
+        } else {
+          const promoteBtn = a.source_ip && !a.skill_id
+            ? `<button class="btn btn-outline btn-sm" onclick="promoteLibraryToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+          actions = `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+             <button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+             ${promoteBtn}
+             ${editBtn} ${deleteBtn}`;
+        }
+        rows.push(`<tr>
+          <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('library',this)"></td>
+          <td><strong>${nameDisplay}</strong></td>
+          <td>${typeDisplay}</td>
+          <td>${categoryDisplay}</td>
+          <td>${skillDisplay}</td>
+          <td>${sourceDisplay}</td>
+          <td><span class="badge-status ${a.status}">${a.status}</span></td>
+          <td>${timeAgo(a.updated_at)}</td>
+          <td>${actions}</td>
+        </tr>`);
+      });
     }
-    filtered.sort((a, b) => getLibraryName(a.host).localeCompare(getLibraryName(b.host)));
-    filtered.forEach((a) => {
-      const key = imgKey(a);
-      const cbChecked = selectedLibraries.has(key) ? 'checked' : '';
-      const idx = currentLibraries.indexOf(a);
-      const skillDisplay = formatSkillID(a.skill_id);
-      const sourceDisplay = formatSourceIP(a.source_ip);
-      const categoryDisplay = formatCategory(a.category);
-      const typeDisplay = formatLibraryType(a.host);
-      const nameDisplay = formatLibraryName(a.host);
-      const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditLibraryRule(${idx})" title="Edit rule">Edit</button>`;
-      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
-      let actions = '';
-      if (a.status === 'pending') {
-        const vmBtn = a.source_ip
-          ? `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
-        const globalBtn = (a.skill_id || a.source_ip)
-          ? `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
-        actions = `<button class="btn btn-success btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           ${vmBtn} ${globalBtn}
-           <button class="btn btn-danger btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
-           ${editBtn} ${deleteBtn}`;
-      } else {
-        const promoteBtn = a.source_ip && !a.skill_id
-          ? `<button class="btn btn-outline btn-sm" onclick="promoteLibraryToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
-        actions = `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           <button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
-           ${promoteBtn}
-           ${editBtn} ${deleteBtn}`;
-      }
-      tbody.innerHTML += `<tr>
-        <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('library',this)"></td>
-        <td><strong>${nameDisplay}</strong></td>
-        <td>${typeDisplay}</td>
-        <td>${categoryDisplay}</td>
-        <td>${skillDisplay}</td>
-        <td>${sourceDisplay}</td>
-        <td><span class="badge-status ${a.status}">${a.status}</span></td>
-        <td>${timeAgo(a.updated_at)}</td>
-        <td>${actions}</td>
-      </tr>`;
-    });
+    tbody.innerHTML = rows.join('');
     updateBulkBar('library');
+    renderPager('library');
   } catch (e) {
     console.error('Libraries load error:', e);
   }
@@ -1625,7 +1691,6 @@ async function loadLogs() {
       api('GET', '/api/logs?limit=200'),
       refreshSkills(),
       refreshCategories(),
-      (async () => { try { currentApprovals = await api('GET', '/api/approvals') || []; } catch (e) {} })(),
     ]);
     currentLogs = logs || [];
     if (currentLogs.length > 0) lastLogID = currentLogs[0].id;
@@ -1698,19 +1763,25 @@ function formatHeaders(headers) {
 }
 
 // --- Polling ---
+let lastPendingCounts = { approvals: -1, images: -1, packages: -1, libraries: -1 };
+
 function startPolling() {
   pollInterval = setInterval(async () => {
     try {
-      const [pending, pendingImages, pendingPkgs, pendingLibs] = await Promise.all([
-        api('GET', '/api/approvals/pending'),
-        api('GET', '/api/images/pending'),
-        api('GET', '/api/packages/pending'),
-        api('GET', '/api/libraries/pending'),
-      ]);
-      updateBadge('approval-badge', pending);
-      updateBadge('image-badge', pendingImages);
-      updateBadge('package-badge', pendingPkgs);
-      updateBadge('library-badge', pendingLibs);
+      // Use lightweight pending counts endpoint instead of fetching full lists.
+      const counts = await api('GET', '/api/pending-counts');
+      updateBadgeCount('approval-badge', counts.approvals || 0);
+      updateBadgeCount('image-badge', counts.images || 0);
+      updateBadgeCount('package-badge', counts.packages || 0);
+      updateBadgeCount('library-badge', counts.libraries || 0);
+
+      // Only refresh active page if pending counts changed.
+      const changed = counts.approvals !== lastPendingCounts.approvals ||
+        counts.images !== lastPendingCounts.images ||
+        counts.packages !== lastPendingCounts.packages ||
+        counts.libraries !== lastPendingCounts.libraries;
+      lastPendingCounts = { ...counts };
+
       // Poll new logs
       if (document.getElementById('page-logs').classList.contains('active')) {
         const newLogs = await api('GET', '/api/logs?after=' + lastLogID);
@@ -1721,23 +1792,40 @@ function startPolling() {
           renderLogs();
         }
       }
-      // Refresh dashboard or images page if active
-      if (document.getElementById('page-dashboard').classList.contains('active')) {
-        loadDashboard();
-      }
-      if (document.getElementById('page-images').classList.contains('active')) {
-        loadImages();
-      }
-      if (document.getElementById('page-packages').classList.contains('active')) {
-        loadPackages();
-      }
-      if (document.getElementById('page-libraries').classList.contains('active')) {
-        loadLibraries();
+
+      // Only refresh active rule pages if counts changed (new pending items arrived).
+      if (changed) {
+        if (document.getElementById('page-dashboard').classList.contains('active')) {
+          loadDashboard();
+        }
+        if (document.getElementById('page-approvals').classList.contains('active')) {
+          loadApprovals();
+        }
+        if (document.getElementById('page-images').classList.contains('active')) {
+          loadImages();
+        }
+        if (document.getElementById('page-packages').classList.contains('active')) {
+          loadPackages();
+        }
+        if (document.getElementById('page-libraries').classList.contains('active')) {
+          loadLibraries();
+        }
       }
     } catch (e) {
       // Silently ignore poll errors
     }
   }, 3000);
+}
+
+function updateBadgeCount(id, count) {
+  const badge = document.getElementById(id);
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
 }
 
 // --- Utilities ---

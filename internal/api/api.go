@@ -45,6 +45,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/approvals/pending", h.listPending)
 	mux.HandleFunc("POST /api/approvals/decide", h.decideApproval)
 	mux.HandleFunc("PUT /api/approvals/category", h.setApprovalCategory)
+	mux.HandleFunc("GET /api/approvals/meta", h.approvalMeta)
 	mux.HandleFunc("DELETE /api/approvals", h.deleteApproval)
 
 	// Skills
@@ -64,6 +65,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/images/pending", h.listPendingImages)
 	mux.HandleFunc("POST /api/images/decide", h.decideImageApproval)
 	mux.HandleFunc("PUT /api/images/category", h.setImageCategory)
+	mux.HandleFunc("GET /api/images/meta", h.imageMeta)
 	mux.HandleFunc("DELETE /api/images", h.deleteImageApproval)
 
 	// OS Package Approvals (e.g., Debian)
@@ -71,6 +73,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/packages/pending", h.listPendingPackages)
 	mux.HandleFunc("POST /api/packages/decide", h.decidePackageApproval)
 	mux.HandleFunc("PUT /api/packages/category", h.setPackageCategory)
+	mux.HandleFunc("GET /api/packages/meta", h.packageMeta)
 	mux.HandleFunc("DELETE /api/packages", h.deletePackageApproval)
 
 	// Code Library Approvals (Go, npm, PyPI, NuGet)
@@ -78,7 +81,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/libraries/pending", h.listPendingLibraries)
 	mux.HandleFunc("POST /api/libraries/decide", h.decideLibraryApproval)
 	mux.HandleFunc("PUT /api/libraries/category", h.setLibraryCategory)
+	mux.HandleFunc("GET /api/libraries/meta", h.libraryMeta)
 	mux.HandleFunc("DELETE /api/libraries", h.deleteLibraryApproval)
+
+	// Pending counts (lightweight polling endpoint)
+	mux.HandleFunc("GET /api/pending-counts", h.getPendingCounts)
 
 	// Logs
 	mux.HandleFunc("GET /api/logs", h.getLogs)
@@ -122,12 +129,75 @@ func readJSON(r *http.Request, v any) error {
 
 // --- Approvals ---
 
+// parseFilterParams extracts common filter and pagination query parameters.
+func parseFilterParams(r *http.Request) approval.FilterParams {
+	p := approval.FilterParams{
+		Status:   r.URL.Query().Get("status"),
+		Category: r.URL.Query().Get("category"),
+		SkillID:  r.URL.Query().Get("skill_id"),
+		SourceIP: r.URL.Query().Get("source_ip"),
+		Type:     r.URL.Query().Get("type"),
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			p.Offset = n
+		}
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			p.Limit = n
+		}
+	}
+	return p
+}
+
 func (h *Handler) listApprovals(w http.ResponseWriter, r *http.Request) {
+	// If any filter/pagination params are present, use filtered endpoint.
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") ||
+		r.URL.Query().Has("status") || r.URL.Query().Has("category") ||
+		r.URL.Query().Has("skill_id") || r.URL.Query().Has("source_ip") {
+		p := parseFilterParams(r)
+		writeJSON(w, http.StatusOK, h.Approvals.ListFiltered(p))
+		return
+	}
 	writeJSON(w, http.StatusOK, h.Approvals.ListAll())
 }
 
 func (h *Handler) listPending(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.Approvals.ListPending())
+}
+
+func (h *Handler) approvalMeta(w http.ResponseWriter, r *http.Request) {
+	meta := h.Approvals.GetFilterMeta()
+	meta.Categories = h.ListCategoriesSlice()
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (h *Handler) imageMeta(w http.ResponseWriter, r *http.Request) {
+	meta := h.ImageApprovals.GetFilterMeta()
+	meta.Categories = h.ListCategoriesSlice()
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (h *Handler) packageMeta(w http.ResponseWriter, r *http.Request) {
+	meta := h.PackageApprovals.GetFilterMeta()
+	meta.Categories = h.ListCategoriesSlice()
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (h *Handler) libraryMeta(w http.ResponseWriter, r *http.Request) {
+	meta := h.LibraryApprovals.GetFilterMeta()
+	meta.Categories = h.ListCategoriesSlice()
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (h *Handler) getPendingCounts(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]int{
+		"approvals": h.Approvals.PendingCount(),
+		"images":    h.ImageApprovals.PendingCount(),
+		"packages":  h.PackageApprovals.PendingCount(),
+		"libraries": h.LibraryApprovals.PendingCount(),
+	})
 }
 
 type decisionRequest struct {
@@ -383,6 +453,13 @@ func (h *Handler) deleteCredential(w http.ResponseWriter, r *http.Request) {
 // --- Image Approvals ---
 
 func (h *Handler) listImageApprovals(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") ||
+		r.URL.Query().Has("status") || r.URL.Query().Has("category") ||
+		r.URL.Query().Has("skill_id") || r.URL.Query().Has("source_ip") {
+		p := parseFilterParams(r)
+		writeJSON(w, http.StatusOK, h.ImageApprovals.ListFiltered(p))
+		return
+	}
 	writeJSON(w, http.StatusOK, h.ImageApprovals.ListAll())
 }
 
@@ -426,6 +503,14 @@ func (h *Handler) deleteImageApproval(w http.ResponseWriter, r *http.Request) {
 // --- OS Package Approvals ---
 
 func (h *Handler) listPackageApprovals(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") ||
+		r.URL.Query().Has("status") || r.URL.Query().Has("category") ||
+		r.URL.Query().Has("skill_id") || r.URL.Query().Has("source_ip") ||
+		r.URL.Query().Has("type") {
+		p := parseFilterParams(r)
+		writeJSON(w, http.StatusOK, h.PackageApprovals.ListFiltered(p))
+		return
+	}
 	writeJSON(w, http.StatusOK, h.PackageApprovals.ListAll())
 }
 
@@ -480,6 +565,14 @@ func (h *Handler) deletePackageApproval(w http.ResponseWriter, r *http.Request) 
 // --- Code Library Approvals ---
 
 func (h *Handler) listLibraryApprovals(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") ||
+		r.URL.Query().Has("status") || r.URL.Query().Has("category") ||
+		r.URL.Query().Has("skill_id") || r.URL.Query().Has("source_ip") ||
+		r.URL.Query().Has("type") {
+		p := parseFilterParams(r)
+		writeJSON(w, http.StatusOK, h.LibraryApprovals.ListFiltered(p))
+		return
+	}
 	writeJSON(w, http.StatusOK, h.LibraryApprovals.ListAll())
 }
 
