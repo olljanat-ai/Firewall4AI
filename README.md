@@ -55,7 +55,7 @@ The VM is a minimal Debian appliance that runs Firewall4AI as the main service w
 
 **What's included:**
 - **DHCP server** on eth1 serving `10.255.255.10` - `10.255.255.254` to agents
-- **DNS server** (dnsmasq) forwarding to `1.1.1.1` and `1.0.0.1`
+- **DNS server** forwarding to `1.1.1.1` and `1.0.0.1`
 - **iptables firewall** with transparent proxy redirect - agents need no proxy configuration
 - **TLS MITM inspection** with auto-generated CA certificate
 
