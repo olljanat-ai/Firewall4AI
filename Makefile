@@ -21,4 +21,5 @@ clean:
 	rm -rf bin/
 
 run: build
-	./bin/$(BINARY_NAME)
+	sudo ifconfig eth1 10.255.255.1 netmask 255.255.255.0 up
+	sudo ./bin/$(BINARY_NAME)
