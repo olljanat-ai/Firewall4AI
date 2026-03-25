@@ -1,6 +1,7 @@
 // Package dhcp implements a DHCP server for the agent network.
 // It assigns IP addresses from a configurable range, supports permanent
 // leases by MAC address, and provides PXE boot options for registered agents.
+// Uses github.com/insomniacslk/dhcp for protocol handling.
 package dhcp
 
 import (
@@ -8,54 +9,13 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
-)
 
-// MessageType represents DHCP message types (option 53).
-type MessageType byte
-
-const (
-	Discover MessageType = 1
-	Offer    MessageType = 2
-	Request  MessageType = 3
-	Decline  MessageType = 4
-	Ack      MessageType = 5
-	Nak      MessageType = 6
-	Release  MessageType = 7
-	Inform   MessageType = 8
-)
-
-// DHCP option codes.
-const (
-	OptSubnetMask       byte = 1
-	OptRouter           byte = 3
-	OptDNS              byte = 6
-	OptHostname         byte = 12
-	OptDomainName       byte = 15
-	OptBroadcast        byte = 28
-	OptRequestedIP      byte = 50
-	OptLeaseTime        byte = 51
-	OptMessageType      byte = 53
-	OptServerID         byte = 54
-	OptParamRequestList byte = 55
-	OptRenewalTime      byte = 58
-	OptRebindingTime    byte = 59
-	OptVendorClassID    byte = 60
-	OptTFTPServer       byte = 66
-	OptBootfileName     byte = 67
-	OptUserClass        byte = 77
-	OptClientArch       byte = 93
-	OptEnd              byte = 255
-)
-
-// PXE client architecture types.
-const (
-	ArchBIOSx86    uint16 = 0
-	ArchEFIx86     uint16 = 6
-	ArchEFIx86_64  uint16 = 7
-	ArchEFIBC      uint16 = 9
-	ArchEFIx86_64v uint16 = 10
+	"github.com/insomniacslk/dhcp/dhcpv4"
+	"github.com/insomniacslk/dhcp/dhcpv4/server4"
+	"github.com/insomniacslk/dhcp/iana"
 )
 
 // Lease represents a DHCP lease.
@@ -72,6 +32,15 @@ type PXEInfo struct {
 	Bootfile   string // Boot filename (e.g., "undionly.kpxe")
 	IPXEScript string // iPXE script URL for chainloading
 }
+
+// PXE client architecture types re-exported from iana for backward compat.
+const (
+	ArchBIOSx86    = uint16(iana.INTEL_X86PC)
+	ArchEFIx86     = uint16(iana.EFI_IA32)
+	ArchEFIx86_64  = uint16(iana.EFI_X86_64)
+	ArchEFIBC      = uint16(iana.EFI_BC)
+	ArchEFIx86_64v = uint16(iana.EFI_ARM32) // mapped for backward compat (was 10)
+)
 
 // PXEProvider is called to get PXE boot info for a given MAC address.
 // Returns nil if the MAC is not a registered agent.
@@ -178,102 +147,59 @@ func (s *Server) GetLeaseByMAC(mac string) *Lease {
 
 // ListenAndServe starts the DHCP server on UDP port 67.
 func (s *Server) ListenAndServe() error {
-	conn, err := net.ListenPacket("udp4", ":67")
-	if err != nil {
-		return fmt.Errorf("listen udp:67: %w", err)
+	laddr := &net.UDPAddr{
+		IP:   net.IPv4zero,
+		Port: 67,
 	}
-	defer conn.Close()
 
-	// Bind to specific interface if possible.
-	if s.Interface != "" {
-		if rawConn, err := conn.(*net.UDPConn).SyscallConn(); err == nil {
-			rawConn.Control(func(fd uintptr) {
-				bindToDevice(fd, s.Interface)
-			})
-		}
+	srv, err := server4.NewServer(s.Interface, laddr, s.handler)
+	if err != nil {
+		return fmt.Errorf("dhcp server: %w", err)
 	}
 
 	log.Printf("DHCP server listening on :67 (interface %s)", s.Interface)
-
-	buf := make([]byte, 1500)
-	for {
-		n, addr, err := conn.ReadFrom(buf)
-		if err != nil {
-			log.Printf("DHCP read error: %v", err)
-			continue
-		}
-		if n < 240 {
-			continue // Too small for a DHCP packet
-		}
-
-		pkt := make([]byte, n)
-		copy(pkt, buf[:n])
-		go s.handlePacket(conn, pkt, addr)
-	}
+	return srv.Serve()
 }
 
-func (s *Server) handlePacket(conn net.PacketConn, pkt []byte, addr net.Addr) {
-	// Parse DHCP packet.
-	if pkt[0] != 1 { // op: 1 = BOOTREQUEST
-		return
-	}
+func (s *Server) handler(conn net.PacketConn, peer net.Addr, m *dhcpv4.DHCPv4) {
+	mac := m.ClientHWAddr.String()
 
-	hlen := int(pkt[2])
-	if hlen > 16 {
-		hlen = 16
-	}
-	mac := net.HardwareAddr(pkt[28 : 28+hlen]).String()
-	xid := pkt[4:8]
-
-	// Parse options.
-	opts := parseOptions(pkt)
-	msgType := MessageType(0)
-	if v, ok := opts[OptMessageType]; ok && len(v) == 1 {
-		msgType = MessageType(v[0])
-	}
-
-	var requestedIP net.IP
-	if v, ok := opts[OptRequestedIP]; ok && len(v) == 4 {
-		requestedIP = net.IP(v)
-	}
-
-	var hostname string
-	if v, ok := opts[OptHostname]; ok {
-		hostname = string(v)
-	}
-
-	// Detect PXE client.
+	// Detect PXE client architecture.
 	var clientArch uint16
-	if v, ok := opts[OptClientArch]; ok && len(v) >= 2 {
-		clientArch = binary.BigEndian.Uint16(v[:2])
+	if archs := m.ClientArch(); len(archs) > 0 {
+		clientArch = uint16(archs[0])
 	}
 
+	// Detect iPXE client via user class or vendor class.
 	isIPXE := false
-	if v, ok := opts[OptUserClass]; ok && string(v) == "iPXE" {
-		isIPXE = true
+	for _, uc := range m.UserClass() {
+		if uc == "iPXE" {
+			isIPXE = true
+			break
+		}
 	}
-	// Also check vendor class.
-	if v, ok := opts[OptVendorClassID]; ok {
-		vc := string(v)
+	if !isIPXE {
+		vc := m.ClassIdentifier()
 		if len(vc) >= 4 && vc[:4] == "iPXE" {
 			isIPXE = true
 		}
 	}
 
-	switch msgType {
-	case Discover:
-		s.handleDiscover(conn, pkt, mac, xid, hostname, clientArch, isIPXE)
-	case Request:
-		s.handleRequest(conn, pkt, mac, xid, requestedIP, hostname, clientArch, isIPXE)
-	case Release:
-		// For permanent leases we don't actually release, just log.
+	hostname := m.HostName()
+
+	switch m.MessageType() {
+	case dhcpv4.MessageTypeDiscover:
+		s.handleDiscover(conn, peer, m, mac, hostname, clientArch, isIPXE)
+	case dhcpv4.MessageTypeRequest:
+		s.handleRequest(conn, peer, m, mac, hostname, clientArch, isIPXE)
+	case dhcpv4.MessageTypeRelease:
 		log.Printf("DHCP RELEASE from %s", mac)
-	case Inform:
-		s.handleInform(conn, pkt, mac, xid)
+	case dhcpv4.MessageTypeInform:
+		s.handleInform(conn, peer, m, mac)
 	}
 }
 
-func (s *Server) handleDiscover(conn net.PacketConn, pkt []byte, mac string, xid []byte, hostname string, clientArch uint16, isIPXE bool) {
+func (s *Server) handleDiscover(conn net.PacketConn, peer net.Addr, m *dhcpv4.DHCPv4, mac, hostname string, clientArch uint16, isIPXE bool) {
 	ip := s.allocateIP(mac, hostname)
 	if ip == nil {
 		log.Printf("DHCP DISCOVER from %s: no IP available", mac)
@@ -281,22 +207,23 @@ func (s *Server) handleDiscover(conn net.PacketConn, pkt []byte, mac string, xid
 	}
 	log.Printf("DHCP DISCOVER from %s -> offering %s", mac, ip)
 
-	resp := s.buildResponse(pkt, xid, ip, Offer, mac, clientArch, isIPXE)
-	s.sendResponse(conn, resp)
+	resp := s.buildResponse(m, ip, dhcpv4.MessageTypeOffer, mac, clientArch, isIPXE)
+	s.sendResponse(conn, peer, resp)
 }
 
-func (s *Server) handleRequest(conn net.PacketConn, pkt []byte, mac string, xid []byte, requestedIP net.IP, hostname string, clientArch uint16, isIPXE bool) {
+func (s *Server) handleRequest(conn net.PacketConn, peer net.Addr, m *dhcpv4.DHCPv4, mac, hostname string, clientArch uint16, isIPXE bool) {
 	ip := s.allocateIP(mac, hostname)
 	if ip == nil {
 		log.Printf("DHCP REQUEST from %s: no IP available, sending NAK", mac)
-		resp := s.buildNak(pkt, xid, mac)
-		s.sendResponse(conn, resp)
+		resp := s.buildNak(m)
+		s.sendResponse(conn, peer, resp)
 		return
 	}
 
+	requestedIP := m.RequestedIPAddress()
+
 	// If the client requested a specific IP, verify it matches.
-	if requestedIP != nil && !requestedIP.Equal(ip) {
-		// Check if the requested IP is the one we have leased.
+	if requestedIP != nil && !requestedIP.IsUnspecified() && !requestedIP.Equal(ip) {
 		s.mu.RLock()
 		lease, exists := s.leases[mac]
 		s.mu.RUnlock()
@@ -304,7 +231,6 @@ func (s *Server) handleRequest(conn net.PacketConn, pkt []byte, mac string, xid 
 			ip = requestedIP
 		} else {
 			log.Printf("DHCP REQUEST from %s for %s, but we assigned %s", mac, requestedIP, ip)
-			// Allow the requested IP if it's in our range and available.
 			if s.isInRange(requestedIP) {
 				s.mu.RLock()
 				occupant, taken := s.ipUsed[requestedIP.String()]
@@ -318,7 +244,6 @@ func (s *Server) handleRequest(conn net.PacketConn, pkt []byte, mac string, xid 
 
 	// Commit the lease.
 	s.mu.Lock()
-	// Remove old IP mapping if MAC had a different IP.
 	if old, ok := s.leases[mac]; ok && old.IP != ip.String() {
 		delete(s.ipUsed, old.IP)
 	}
@@ -336,21 +261,111 @@ func (s *Server) handleRequest(conn net.PacketConn, pkt []byte, mac string, xid 
 		s.OnLeaseChange(s.ExportLeases())
 	}
 
-	resp := s.buildResponse(pkt, xid, ip, Ack, mac, clientArch, isIPXE)
-	s.sendResponse(conn, resp)
+	resp := s.buildResponse(m, ip, dhcpv4.MessageTypeAck, mac, clientArch, isIPXE)
+	s.sendResponse(conn, peer, resp)
 }
 
-func (s *Server) handleInform(conn net.PacketConn, pkt []byte, mac string, xid []byte) {
-	// Client already has IP, just wants config.
-	ciaddr := net.IP(pkt[12:16])
-	log.Printf("DHCP INFORM from %s (%s)", mac, ciaddr)
-	resp := s.buildResponse(pkt, xid, ciaddr, Ack, mac, 0, false)
-	s.sendResponse(conn, resp)
+func (s *Server) handleInform(conn net.PacketConn, peer net.Addr, m *dhcpv4.DHCPv4, mac string) {
+	log.Printf("DHCP INFORM from %s (%s)", mac, m.ClientIPAddr)
+	resp := s.buildResponse(m, m.ClientIPAddr, dhcpv4.MessageTypeAck, mac, 0, false)
+	s.sendResponse(conn, peer, resp)
+}
+
+func (s *Server) buildResponse(req *dhcpv4.DHCPv4, clientIP net.IP, msgType dhcpv4.MessageType, mac string, clientArch uint16, isIPXE bool) *dhcpv4.DHCPv4 {
+	// Compute broadcast address.
+	broadcast := make(net.IP, 4)
+	serverIP4 := s.ServerIP.To4()
+	for i := 0; i < 4; i++ {
+		broadcast[i] = serverIP4[i] | ^s.SubnetMask[i]
+	}
+
+	modifiers := []dhcpv4.Modifier{
+		dhcpv4.WithMessageType(msgType),
+		dhcpv4.WithYourIP(clientIP),
+		dhcpv4.WithServerIP(s.ServerIP),
+		dhcpv4.WithOption(dhcpv4.OptServerIdentifier(s.ServerIP)),
+		dhcpv4.WithNetmask(s.SubnetMask),
+		dhcpv4.WithRouter(s.Gateway),
+		dhcpv4.WithDNS(s.DNS...),
+		dhcpv4.WithOption(dhcpv4.OptBroadcastAddress(broadcast)),
+		// Infinite lease time (0xFFFFFFFF).
+		dhcpv4.WithLeaseTime(0xFFFFFFFF),
+		// Renewal T1: 1 year.
+		dhcpv4.WithOption(dhcpv4.OptRenewTimeValue(365 * 24 * time.Hour)),
+		// Rebinding T2: ~1.5 years.
+		dhcpv4.WithOption(dhcpv4.OptRebindingTimeValue(547 * 24 * time.Hour)),
+	}
+
+	// PXE boot options.
+	var pxeInfo *PXEInfo
+	if s.PXEProvider != nil {
+		pxeInfo = s.PXEProvider(mac, clientArch, isIPXE)
+	}
+	if pxeInfo != nil {
+		if isIPXE && pxeInfo.IPXEScript != "" {
+			modifiers = append(modifiers, dhcpv4.WithOption(dhcpv4.OptBootFileName(pxeInfo.IPXEScript)))
+		} else if pxeInfo.Bootfile != "" {
+			modifiers = append(modifiers,
+				dhcpv4.WithOption(dhcpv4.OptTFTPServerName(pxeInfo.TFTPServer)),
+				dhcpv4.WithOption(dhcpv4.OptBootFileName(pxeInfo.Bootfile)),
+			)
+		}
+		// Set siaddr (next-server) for PXE.
+		if !isIPXE && pxeInfo.TFTPServer != "" {
+			modifiers = append(modifiers, dhcpv4.WithServerIP(net.ParseIP(pxeInfo.TFTPServer)))
+		}
+		// Set boot file in the header field for legacy PXE.
+		if !isIPXE && pxeInfo.Bootfile != "" {
+			modifiers = append(modifiers, func(d *dhcpv4.DHCPv4) {
+				d.BootFileName = pxeInfo.Bootfile
+			})
+		}
+	}
+
+	resp, err := dhcpv4.NewReplyFromRequest(req, modifiers...)
+	if err != nil {
+		log.Printf("DHCP: failed to build response: %v", err)
+		return nil
+	}
+	return resp
+}
+
+func (s *Server) buildNak(req *dhcpv4.DHCPv4) *dhcpv4.DHCPv4 {
+	resp, err := dhcpv4.NewReplyFromRequest(req,
+		dhcpv4.WithMessageType(dhcpv4.MessageTypeNak),
+		dhcpv4.WithOption(dhcpv4.OptServerIdentifier(s.ServerIP)),
+	)
+	if err != nil {
+		log.Printf("DHCP: failed to build NAK: %v", err)
+		return nil
+	}
+	return resp
+}
+
+func (s *Server) sendResponse(conn net.PacketConn, peer net.Addr, resp *dhcpv4.DHCPv4) {
+	if resp == nil {
+		return
+	}
+	dst := &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
+
+	// Use peer address if it's a unicast address.
+	if peer != nil {
+		if udpAddr, ok := peer.(*net.UDPAddr); ok && !udpAddr.IP.Equal(net.IPv4zero) {
+			dst = &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
+		}
+	}
+
+	if _, err := conn.WriteTo(resp.ToBytes(), dst); err != nil {
+		log.Printf("DHCP send error: %v", err)
+	}
 }
 
 func (s *Server) allocateIP(mac, hostname string) net.IP {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Normalize MAC for lookup.
+	mac = normMAC(mac)
 
 	// Check existing lease.
 	if lease, ok := s.leases[mac]; ok {
@@ -381,174 +396,13 @@ func (s *Server) isInRange(ip net.IP) bool {
 	return v >= ipToUint32(s.RangeStart) && v <= ipToUint32(s.RangeEnd)
 }
 
-func (s *Server) buildResponse(reqPkt []byte, xid []byte, clientIP net.IP, msgType MessageType, mac string, clientArch uint16, isIPXE bool) []byte {
-	resp := make([]byte, 240)
-
-	resp[0] = 2 // op: BOOTREPLY
-	resp[1] = 1 // htype: Ethernet
-	resp[2] = 6 // hlen: MAC length
-	resp[3] = 0 // hops
-
-	copy(resp[4:8], xid)
-
-	// yiaddr: Your IP address.
-	copy(resp[16:20], clientIP.To4())
-
-	// siaddr: Next server IP (for PXE/TFTP).
-	var pxeInfo *PXEInfo
-	if s.PXEProvider != nil {
-		pxeInfo = s.PXEProvider(mac, clientArch, isIPXE)
+// normMAC normalizes a MAC address string to lowercase colon-separated format.
+func normMAC(mac string) string {
+	hw, err := net.ParseMAC(mac)
+	if err != nil {
+		return strings.ToLower(mac)
 	}
-	if pxeInfo != nil {
-		siaddr := net.ParseIP(pxeInfo.TFTPServer).To4()
-		if siaddr != nil {
-			copy(resp[20:24], siaddr)
-		}
-		// Boot file name in the fixed header field (for legacy PXE).
-		if pxeInfo.Bootfile != "" && !isIPXE {
-			bootfile := []byte(pxeInfo.Bootfile)
-			if len(bootfile) > 128 {
-				bootfile = bootfile[:128]
-			}
-			copy(resp[108:108+len(bootfile)], bootfile)
-		}
-	}
-
-	// chaddr: Client hardware address.
-	hwAddr, _ := net.ParseMAC(mac)
-	if hwAddr != nil {
-		copy(resp[28:28+len(hwAddr)], hwAddr)
-	}
-
-	// Magic cookie.
-	resp = append(resp[:240], 99, 130, 83, 99)
-
-	// Options.
-	resp = addOption(resp, OptMessageType, []byte{byte(msgType)})
-	resp = addOption(resp, OptServerID, s.ServerIP.To4())
-	resp = addOption(resp, OptSubnetMask, []byte(s.SubnetMask))
-	resp = addOption(resp, OptRouter, s.Gateway.To4())
-
-	// DNS servers.
-	dnsBytes := make([]byte, 0, len(s.DNS)*4)
-	for _, d := range s.DNS {
-		dnsBytes = append(dnsBytes, d.To4()...)
-	}
-	resp = addOption(resp, OptDNS, dnsBytes)
-
-	// Broadcast address.
-	broadcast := make(net.IP, 4)
-	for i := 0; i < 4; i++ {
-		broadcast[i] = s.ServerIP.To4()[i] | ^s.SubnetMask[i]
-	}
-	resp = addOption(resp, OptBroadcast, broadcast)
-
-	// Lease time: infinite (0xFFFFFFFF).
-	leaseTime := make([]byte, 4)
-	binary.BigEndian.PutUint32(leaseTime, 0xFFFFFFFF)
-	resp = addOption(resp, OptLeaseTime, leaseTime)
-
-	// Renewal time T1: 1 year.
-	t1 := make([]byte, 4)
-	binary.BigEndian.PutUint32(t1, 31536000)
-	resp = addOption(resp, OptRenewalTime, t1)
-
-	// Rebinding time T2: 1.5 years.
-	t2 := make([]byte, 4)
-	binary.BigEndian.PutUint32(t2, 47304000)
-	resp = addOption(resp, OptRebindingTime, t2)
-
-	// PXE boot options.
-	if pxeInfo != nil {
-		if isIPXE && pxeInfo.IPXEScript != "" {
-			// iPXE client: provide HTTP boot script URL.
-			resp = addOption(resp, OptBootfileName, []byte(pxeInfo.IPXEScript))
-		} else if pxeInfo.Bootfile != "" {
-			// Legacy PXE: provide TFTP boot file.
-			resp = addOption(resp, OptTFTPServer, []byte(pxeInfo.TFTPServer))
-			resp = addOption(resp, OptBootfileName, []byte(pxeInfo.Bootfile))
-		}
-	}
-
-	resp = append(resp, OptEnd)
-
-	// Pad to minimum 300 bytes.
-	for len(resp) < 300 {
-		resp = append(resp, 0)
-	}
-
-	return resp
-}
-
-func (s *Server) buildNak(reqPkt []byte, xid []byte, mac string) []byte {
-	resp := make([]byte, 240)
-	resp[0] = 2 // op: BOOTREPLY
-	resp[1] = 1 // htype: Ethernet
-	resp[2] = 6 // hlen
-	copy(resp[4:8], xid)
-
-	hwAddr, _ := net.ParseMAC(mac)
-	if hwAddr != nil {
-		copy(resp[28:28+len(hwAddr)], hwAddr)
-	}
-
-	resp = append(resp[:240], 99, 130, 83, 99)
-	resp = addOption(resp, OptMessageType, []byte{byte(Nak)})
-	resp = addOption(resp, OptServerID, s.ServerIP.To4())
-	resp = append(resp, OptEnd)
-
-	for len(resp) < 300 {
-		resp = append(resp, 0)
-	}
-	return resp
-}
-
-func (s *Server) sendResponse(conn net.PacketConn, resp []byte) {
-	dst := &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
-	if _, err := conn.WriteTo(resp, dst); err != nil {
-		log.Printf("DHCP send error: %v", err)
-	}
-}
-
-// parseOptions extracts DHCP options from a packet starting after the magic cookie.
-func parseOptions(pkt []byte) map[byte][]byte {
-	opts := make(map[byte][]byte)
-	if len(pkt) < 244 {
-		return opts
-	}
-	// Verify magic cookie.
-	if pkt[236] != 99 || pkt[237] != 130 || pkt[238] != 83 || pkt[239] != 99 {
-		return opts
-	}
-	i := 240
-	for i < len(pkt) {
-		code := pkt[i]
-		if code == OptEnd {
-			break
-		}
-		if code == 0 { // Padding
-			i++
-			continue
-		}
-		if i+1 >= len(pkt) {
-			break
-		}
-		length := int(pkt[i+1])
-		if i+2+length > len(pkt) {
-			break
-		}
-		data := make([]byte, length)
-		copy(data, pkt[i+2:i+2+length])
-		opts[code] = data
-		i += 2 + length
-	}
-	return opts
-}
-
-func addOption(pkt []byte, code byte, data []byte) []byte {
-	pkt = append(pkt, code, byte(len(data)))
-	pkt = append(pkt, data...)
-	return pkt
+	return hw.String()
 }
 
 func ipToUint32(ip net.IP) uint32 {

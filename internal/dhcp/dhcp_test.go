@@ -3,6 +3,8 @@ package dhcp
 import (
 	"net"
 	"testing"
+
+	"github.com/insomniacslk/dhcp/dhcpv4"
 )
 
 func TestAllocateIP(t *testing.T) {
@@ -120,24 +122,6 @@ func TestExportLoadLeases(t *testing.T) {
 	}
 }
 
-func TestParseOptions(t *testing.T) {
-	// Build a minimal DHCP packet.
-	pkt := make([]byte, 244)
-	pkt[236] = 99
-	pkt[237] = 130
-	pkt[238] = 83
-	pkt[239] = 99
-	// Add message type option.
-	pkt = append(pkt, OptMessageType, 1, byte(Discover))
-	// Add end.
-	pkt = append(pkt, OptEnd)
-
-	opts := parseOptions(pkt)
-	if v, ok := opts[OptMessageType]; !ok || len(v) != 1 || MessageType(v[0]) != Discover {
-		t.Fatalf("expected DISCOVER, got %v", opts)
-	}
-}
-
 func TestBuildResponse(t *testing.T) {
 	s := NewServer(
 		net.ParseIP("10.255.255.1"),
@@ -149,28 +133,37 @@ func TestBuildResponse(t *testing.T) {
 		"eth1",
 	)
 
-	reqPkt := make([]byte, 240)
-	xid := []byte{0x12, 0x34, 0x56, 0x78}
-	clientIP := net.ParseIP("10.255.255.10")
-
-	resp := s.buildResponse(reqPkt, xid, clientIP, Offer, "aa:bb:cc:dd:ee:01", 0, false)
-
-	// Verify it's a BOOTREPLY.
-	if resp[0] != 2 {
-		t.Fatal("expected op=2 (BOOTREPLY)")
+	// Build a fake DHCP Discover request.
+	mac, _ := net.ParseMAC("aa:bb:cc:dd:ee:01")
+	req, err := dhcpv4.New(
+		dhcpv4.WithMessageType(dhcpv4.MessageTypeDiscover),
+		dhcpv4.WithHwAddr(mac),
+	)
+	if err != nil {
+		t.Fatalf("failed to build request: %v", err)
 	}
-	// Verify XID.
-	if resp[4] != 0x12 || resp[5] != 0x34 {
+
+	clientIP := net.ParseIP("10.255.255.10")
+	resp := s.buildResponse(req, clientIP, dhcpv4.MessageTypeOffer, "aa:bb:cc:dd:ee:01", 0, false)
+
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	// Verify it's a BOOTREPLY (OpCode 2).
+	if resp.OpCode != dhcpv4.OpcodeBootReply {
+		t.Fatalf("expected OpcodeBootReply, got %v", resp.OpCode)
+	}
+	// Verify transaction ID matches.
+	if resp.TransactionID != req.TransactionID {
 		t.Fatal("XID mismatch")
 	}
 	// Verify yiaddr.
-	yiaddr := net.IP(resp[16:20])
-	if !yiaddr.Equal(clientIP.To4()) {
-		t.Fatalf("yiaddr mismatch: %v vs %v", yiaddr, clientIP)
+	if !resp.YourIPAddr.Equal(clientIP.To4()) {
+		t.Fatalf("yiaddr mismatch: %v vs %v", resp.YourIPAddr, clientIP)
 	}
-	// Verify magic cookie.
-	if resp[240] != 99 || resp[241] != 130 || resp[242] != 83 || resp[243] != 99 {
-		t.Fatal("magic cookie mismatch")
+	// Verify message type is Offer.
+	if resp.MessageType() != dhcpv4.MessageTypeOffer {
+		t.Fatalf("expected Offer, got %v", resp.MessageType())
 	}
 }
 
