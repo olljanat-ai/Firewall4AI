@@ -138,7 +138,7 @@ COPY config/50-elemental-initrd.conf /etc/dracut.conf.d/
 RUN elemental --debug init -f
 
 # DNS resolution: use upstream DNS directly (DHCP/DNS now integrated)
-RUN printf 'nameserver 1.1.1.1\nnameserver 1.0.0.1\n' > /etc/resolv.conf
+COPY config/resolv.conf /etc/resolv.conf
 
 # Include bootargs.cfg after elemental init
 COPY config/bootargs.cfg /etc/elemental/
