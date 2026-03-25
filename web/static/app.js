@@ -2062,7 +2062,7 @@ async function removeCategory(name) {
 
 // --- Agents ---
 
-const osVersionDefaults = { alpine: '3.21', debian: '13', ubuntu: '24.04' };
+const osVersionDefaults = { alpine: '3.23', debian: '13', ubuntu: '24.04' };
 const osLabels = { alpine: 'Alpine Linux', debian: 'Debian', ubuntu: 'Ubuntu' };
 
 async function loadAgents() {
@@ -2119,7 +2119,7 @@ function showCreateAgent() {
   document.getElementById('agent-os').value = 'alpine';
   document.getElementById('agent-os-version').value = '';
   document.getElementById('agent-os-version').placeholder = osVersionDefaults['alpine'];
-  document.getElementById('agent-disk').value = '/dev/vda';
+  document.getElementById('agent-disk').value = '/dev/sda';
   document.getElementById('agent-packages').value = '';
   document.getElementById('modal-agent').classList.add('active');
 }
@@ -2144,7 +2144,7 @@ function editAgent(id) {
   document.getElementById('agent-ip').value = a.ip || '';
   document.getElementById('agent-os').value = a.os || 'alpine';
   document.getElementById('agent-os-version').value = a.os_version || '';
-  document.getElementById('agent-disk').value = a.disk_device || '/dev/vda';
+  document.getElementById('agent-disk').value = a.disk_device || '/dev/sda';
   document.getElementById('agent-packages').value = (a.packages || []).join(', ');
   document.getElementById('modal-agent').classList.add('active');
 }
@@ -2155,7 +2155,7 @@ async function submitAgent() {
   const ip = document.getElementById('agent-ip').value.trim();
   const os = document.getElementById('agent-os').value;
   const osVersion = document.getElementById('agent-os-version').value.trim() || osVersionDefaults[os] || '';
-  const disk = document.getElementById('agent-disk').value.trim() || '/dev/vda';
+  const disk = document.getElementById('agent-disk').value.trim() || '/dev/sda';
   const packagesStr = document.getElementById('agent-packages').value.trim();
   const packages = packagesStr ? packagesStr.split(',').map(p => p.trim()).filter(p => p) : [];
 

@@ -158,8 +158,8 @@ func TestValidateMAC(t *testing.T) {
 }
 
 func TestDefaultOSVersion(t *testing.T) {
-	if v := DefaultOSVersion(OSAlpine); v != "3.21" {
-		t.Fatalf("expected 3.21, got %s", v)
+	if v := DefaultOSVersion(OSAlpine); v != "3.23" {
+		t.Fatalf("expected 3.23, got %s", v)
 	}
 	if v := DefaultOSVersion(OSDebian); v != "13" {
 		t.Fatalf("expected 13, got %s", v)

@@ -8,11 +8,11 @@ import (
 )
 
 func TestGetNetbootURLsAlpine(t *testing.T) {
-	urls := GetNetbootURLs(agent.OSAlpine, "3.21")
-	if !strings.Contains(urls.Kernel, "alpine") || !strings.Contains(urls.Kernel, "3.21") {
+	urls := GetNetbootURLs(agent.OSAlpine, "3.23")
+	if !strings.Contains(urls.Kernel, "alpine") || !strings.Contains(urls.Kernel, "3.23") {
 		t.Fatalf("unexpected kernel URL: %s", urls.Kernel)
 	}
-	if !strings.Contains(urls.Initrd, "alpine") || !strings.Contains(urls.Initrd, "3.21") {
+	if !strings.Contains(urls.Initrd, "alpine") || !strings.Contains(urls.Initrd, "3.23") {
 		t.Fatalf("unexpected initrd URL: %s", urls.Initrd)
 	}
 }
@@ -37,7 +37,7 @@ func TestGenerateIPXEScriptAlpine(t *testing.T) {
 		ID:        "a1",
 		Hostname:  "agent1",
 		OS:        agent.OSAlpine,
-		OSVersion: "3.21",
+		OSVersion: "3.23",
 	}
 
 	script := m.GenerateIPXEScript(a)
@@ -80,7 +80,7 @@ func TestGeneratePreseedDebian(t *testing.T) {
 		Hostname:   "agent1",
 		OS:         agent.OSDebian,
 		OSVersion:  "13",
-		DiskDevice: "/dev/vda",
+		DiskDevice: "/dev/sda",
 		Packages:   []string{"curl", "vim"},
 	}
 
@@ -91,7 +91,7 @@ func TestGeneratePreseedDebian(t *testing.T) {
 	if !strings.Contains(preseed, "deb.debian.org") {
 		t.Fatal("missing debian mirror")
 	}
-	if !strings.Contains(preseed, "/dev/vda") {
+	if !strings.Contains(preseed, "/dev/sda") {
 		t.Fatal("missing disk device")
 	}
 	if !strings.Contains(preseed, "curl vim") {
@@ -126,8 +126,8 @@ func TestGenerateAlpineAnswerFile(t *testing.T) {
 		ID:         "a1",
 		Hostname:   "agent1",
 		OS:         agent.OSAlpine,
-		OSVersion:  "3.21",
-		DiskDevice: "/dev/vda",
+		OSVersion:  "3.23",
+		DiskDevice: "/dev/sda",
 		Packages:   []string{"curl", "htop"},
 	}
 
@@ -135,10 +135,10 @@ func TestGenerateAlpineAnswerFile(t *testing.T) {
 	if !strings.Contains(answer, "agent1") {
 		t.Fatal("missing hostname")
 	}
-	if !strings.Contains(answer, "/dev/vda") {
+	if !strings.Contains(answer, "/dev/sda") {
 		t.Fatal("missing disk device")
 	}
-	if !strings.Contains(answer, "3.21") {
+	if !strings.Contains(answer, "3.23") {
 		t.Fatal("missing version in repos")
 	}
 	if !strings.Contains(answer, "curl htop") {

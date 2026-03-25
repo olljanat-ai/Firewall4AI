@@ -38,7 +38,7 @@ type Agent struct {
 	Hostname    string   `json:"hostname"`      // Agent hostname
 	IP          string   `json:"ip"`            // Assigned IP address
 	OS          OSType   `json:"os"`            // "alpine", "debian", "ubuntu"
-	OSVersion   string   `json:"os_version"`    // e.g., "3.21", "13", "24.04"
+	OSVersion   string   `json:"os_version"`    // e.g., "3.23", "13", "24.04"
 	Packages    []string `json:"packages"`      // Extra packages to install
 	DiskDevice  string   `json:"disk_device"`   // e.g., "/dev/vda" or "/dev/sda"
 	Status      Status   `json:"status"`
@@ -209,7 +209,7 @@ func (m *Manager) Count() int {
 func DefaultOSVersion(os OSType) string {
 	switch os {
 	case OSAlpine:
-		return "3.21"
+		return "3.23"
 	case OSDebian:
 		return "13"
 	case OSUbuntu:
@@ -221,7 +221,7 @@ func DefaultOSVersion(os OSType) string {
 
 // DefaultDiskDevice returns the default disk device path.
 func DefaultDiskDevice() string {
-	return "/dev/vda"
+	return "/dev/sda"
 }
 
 // ValidateMAC checks if a MAC address is valid.
