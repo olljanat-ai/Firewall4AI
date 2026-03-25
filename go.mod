@@ -7,6 +7,7 @@ toolchain go1.24.7
 require (
 	github.com/insomniacslk/dhcp v0.0.0-20260220084031-5adc3eb26f91
 	github.com/miekg/dns v1.1.72
+	github.com/pin/tftp/v3 v3.2.0
 )
 
 require (
