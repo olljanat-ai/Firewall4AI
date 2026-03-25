@@ -10,6 +10,7 @@ let editingPackageRule = null; // null = adding, { host, skillID, sourceIP } = e
 let editingLibraryRule = null; // null = adding, { host, skillID, sourceIP } = editing
 let editingSkillID = null;    // null = creating, string = editing
 let editingCredID = null;     // null = creating, string = editing
+let editingAgentID = null;    // null = creating, string = editing
 
 // Cached data for edit lookups
 let currentApprovals = [];
@@ -20,6 +21,7 @@ let currentSkills = [];
 let currentCredentials = [];
 let currentCategories = [];
 let currentLogs = [];
+let currentAgents = [];
 
 // Pagination state per page type
 const PAGE_SIZE = 50;
@@ -49,6 +51,7 @@ function navigate(page) {
   document.getElementById('page-' + page).classList.add('active');
   document.querySelector(`[data-page="${page}"]`).classList.add('active');
   if (page === 'dashboard') loadDashboard();
+  if (page === 'agents') loadAgents();
   if (page === 'approvals') loadApprovals();
   if (page === 'images') loadImages();
   if (page === 'packages') loadPackages();
@@ -2052,6 +2055,149 @@ async function removeCategory(name) {
     await api('DELETE', '/api/categories?name=' + encodeURIComponent(name));
     await refreshCategories();
     renderCategories();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Agents ---
+
+const osVersionDefaults = { alpine: '3.21', debian: '13', ubuntu: '24.04' };
+const osLabels = { alpine: 'Alpine Linux', debian: 'Debian', ubuntu: 'Ubuntu' };
+
+async function loadAgents() {
+  try {
+    currentAgents = await api('GET', '/api/agents');
+    const tbody = document.getElementById('agents-tbody');
+    tbody.innerHTML = '';
+    if (!currentAgents || currentAgents.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>';
+      return;
+    }
+    currentAgents.forEach(a => {
+      const statusClass = agentStatusClass(a.status);
+      const statusLabel = a.status_msg ? a.status + ': ' + a.status_msg : a.status;
+      const pkgs = (a.packages && a.packages.length > 0) ? esc(a.packages.join(', ')) : '<span class="muted">none</span>';
+      const osLabel = (osLabels[a.os] || a.os) + ' ' + (a.os_version || '');
+      tbody.innerHTML += `<tr>
+        <td><strong>${esc(a.hostname)}</strong></td>
+        <td><code>${esc(a.mac)}</code></td>
+        <td>${a.ip ? esc(a.ip) : '<span class="muted">auto</span>'}</td>
+        <td>${esc(osLabel)}</td>
+        <td>${pkgs}</td>
+        <td><span class="badge-status ${statusClass}">${esc(statusLabel)}</span></td>
+        <td>
+          <button class="btn btn-outline btn-sm" onclick="editAgent('${esc(a.id)}')">Edit</button>
+          <button class="btn btn-outline btn-sm" onclick="downloadAgentFiles('${esc(a.id)}')">Download Files</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteAgent('${esc(a.id)}','${esc(a.hostname)}')">Delete</button>
+        </td>
+      </tr>`;
+    });
+  } catch (e) {
+    console.error('Agents load error:', e);
+  }
+}
+
+function agentStatusClass(status) {
+  switch (status) {
+    case 'installed': return 'approved';
+    case 'ready': return 'approved';
+    case 'installing': return 'pending';
+    case 'downloading': return 'pending';
+    case 'error': return 'denied';
+    default: return '';
+  }
+}
+
+function showCreateAgent() {
+  editingAgentID = null;
+  document.getElementById('modal-agent-title').textContent = 'Add Agent';
+  document.getElementById('modal-agent-submit').textContent = 'Add';
+  document.getElementById('agent-mac').value = '';
+  document.getElementById('agent-hostname').value = '';
+  document.getElementById('agent-ip').value = '';
+  document.getElementById('agent-os').value = 'alpine';
+  document.getElementById('agent-os-version').value = '';
+  document.getElementById('agent-os-version').placeholder = osVersionDefaults['alpine'];
+  document.getElementById('agent-disk').value = '/dev/vda';
+  document.getElementById('agent-packages').value = '';
+  document.getElementById('modal-agent').classList.add('active');
+}
+
+function hideAgentModal() {
+  document.getElementById('modal-agent').classList.remove('active');
+}
+
+function updateAgentDefaults() {
+  const os = document.getElementById('agent-os').value;
+  document.getElementById('agent-os-version').placeholder = osVersionDefaults[os] || '';
+}
+
+function editAgent(id) {
+  const a = currentAgents.find(x => x.id === id);
+  if (!a) return;
+  editingAgentID = id;
+  document.getElementById('modal-agent-title').textContent = 'Edit Agent';
+  document.getElementById('modal-agent-submit').textContent = 'Save';
+  document.getElementById('agent-mac').value = a.mac || '';
+  document.getElementById('agent-hostname').value = a.hostname || '';
+  document.getElementById('agent-ip').value = a.ip || '';
+  document.getElementById('agent-os').value = a.os || 'alpine';
+  document.getElementById('agent-os-version').value = a.os_version || '';
+  document.getElementById('agent-disk').value = a.disk_device || '/dev/vda';
+  document.getElementById('agent-packages').value = (a.packages || []).join(', ');
+  document.getElementById('modal-agent').classList.add('active');
+}
+
+async function submitAgent() {
+  const mac = document.getElementById('agent-mac').value.trim();
+  const hostname = document.getElementById('agent-hostname').value.trim();
+  const ip = document.getElementById('agent-ip').value.trim();
+  const os = document.getElementById('agent-os').value;
+  const osVersion = document.getElementById('agent-os-version').value.trim() || osVersionDefaults[os] || '';
+  const disk = document.getElementById('agent-disk').value.trim() || '/dev/vda';
+  const packagesStr = document.getElementById('agent-packages').value.trim();
+  const packages = packagesStr ? packagesStr.split(',').map(p => p.trim()).filter(p => p) : [];
+
+  if (!mac || !hostname) {
+    alert('MAC address and hostname are required');
+    return;
+  }
+
+  try {
+    if (editingAgentID) {
+      await api('PUT', '/api/agents', {
+        id: editingAgentID, mac, hostname, ip, os, os_version: osVersion,
+        disk_device: disk, packages
+      });
+    } else {
+      await api('POST', '/api/agents', {
+        mac, hostname, ip, os, os_version: osVersion,
+        disk_device: disk, packages
+      });
+    }
+    hideAgentModal();
+    loadAgents();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteAgent(id, name) {
+  if (!confirm(`Delete agent "${name}"?`)) return;
+  try {
+    await api('DELETE', '/api/agents?id=' + encodeURIComponent(id));
+    loadAgents();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function downloadAgentFiles(id) {
+  try {
+    await api('POST', '/api/agents/download', { id });
+    alert('Boot file download started. Refresh to check status.');
+    loadAgents();
   } catch (e) {
     alert('Error: ' + e.message);
   }

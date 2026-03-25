@@ -13,6 +13,7 @@
       <h1><span class="logo">&#x1f6e1;</span> Firewall4AI<div id="version-display" class="version-text"></div></h1>
       <nav>
         <a href="#" data-page="dashboard" class="active">&#x25a0; Dashboard</a>
+        <a href="#" data-page="agents">&#x1f5a5; Agents</a>
         <a href="#" data-page="approvals">&#x1f517; URLs <span id="approval-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="images">&#x1f4e6; Container Images <span id="image-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="packages">&#x1f4e6; OS Packages <span id="package-badge" class="badge" style="display:none">0</span></a>
@@ -44,6 +45,22 @@
             <thead><tr><th>Host</th><th>Path</th><th>Skill</th><th>Source IP</th><th>Requested</th><th>Actions</th></tr></thead>
             <tbody id="dash-pending-tbody">
               <tr><td colspan="6" class="empty-state">No pending approvals</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Agents -->
+      <div id="page-agents" class="page">
+        <div class="toolbar">
+          <h2>Agent VMs</h2>
+          <button class="btn btn-primary" onclick="showCreateAgent()">+ New Agent</button>
+        </div>
+        <div class="card">
+          <table>
+            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>OS</th><th>Packages</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="agents-tbody">
+              <tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -706,6 +723,49 @@
       <div id="log-detail-content"></div>
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideLogDetail()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent Modal -->
+  <div id="modal-agent" class="modal-overlay">
+    <div class="modal">
+      <h3 id="modal-agent-title">Add Agent</h3>
+      <div class="form-group">
+        <label>MAC Address</label>
+        <input type="text" id="agent-mac" placeholder="e.g., aa:bb:cc:dd:ee:ff">
+      </div>
+      <div class="form-group">
+        <label>Hostname</label>
+        <input type="text" id="agent-hostname" placeholder="e.g., agent-01">
+      </div>
+      <div class="form-group">
+        <label>IP Address (optional, auto-assigned if empty)</label>
+        <input type="text" id="agent-ip" placeholder="e.g., 10.255.255.50">
+      </div>
+      <div class="form-group">
+        <label>Operating System</label>
+        <select id="agent-os" onchange="updateAgentDefaults()">
+          <option value="alpine">Alpine Linux</option>
+          <option value="debian">Debian</option>
+          <option value="ubuntu">Ubuntu</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>OS Version</label>
+        <input type="text" id="agent-os-version" placeholder="auto-detected">
+      </div>
+      <div class="form-group">
+        <label>Disk Device</label>
+        <input type="text" id="agent-disk" value="/dev/vda" placeholder="/dev/vda">
+      </div>
+      <div class="form-group">
+        <label>Extra Packages (comma-separated)</label>
+        <input type="text" id="agent-packages" placeholder="e.g., curl, vim, htop">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideAgentModal()">Cancel</button>
+        <button class="btn btn-primary" id="modal-agent-submit" onclick="submitAgent()">Add</button>
       </div>
     </div>
   </div>

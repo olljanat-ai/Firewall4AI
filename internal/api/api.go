@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olljanat-ai/firewall4ai/internal/agent"
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
@@ -33,6 +34,12 @@ type Handler struct {
 	SetDisabledLanguagesFunc func([]string) // called to update disabled languages
 	SetDisabledDistrosFunc   func([]string) // called to update disabled distros
 	Version                string          // build version string
+
+	// Agent management.
+	AgentManager      *agent.Manager
+	OnAgentChange     func(a *agent.Agent) // called when agent is created/updated
+	OnAgentDelete     func(a *agent.Agent) // called when agent is deleted
+	DownloadBootFiles func(a *agent.Agent) // called to download boot files
 
 	catMu      sync.RWMutex
 	categories []string

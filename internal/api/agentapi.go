@@ -4,26 +4,41 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/olljanat-ai/firewall4ai/internal/agent"
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/library"
+	"github.com/olljanat-ai/firewall4ai/internal/netboot"
 )
 
 // AgentHandler serves the agent-facing API on the agent network (eth1).
-// It provides policy information and CA certificates to AI agents.
+// It provides policy information, CA certificates, and boot files to AI agents.
 type AgentHandler struct {
 	Approvals        *approval.Manager
 	ImageApprovals   *approval.Manager
 	PackageApprovals *approval.Manager
 	LibraryApprovals *approval.Manager
 	CACertPEM        []byte // PEM-encoded CA certificate
+	AgentManager     *agent.Manager
+	NetbootManager   *netboot.Manager
 }
 
 // RegisterAgentRoutes sets up the agent API routes.
 func (h *AgentHandler) RegisterAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/policy", h.getPolicy)
 	mux.HandleFunc("GET /ca.crt", h.getCACert)
+
+	// Boot endpoints for PXE netboot.
+	mux.HandleFunc("GET /boot/ipxe", h.getIPXEScript)
+	mux.HandleFunc("GET /boot/preseed/", h.getPreseed)
+	mux.HandleFunc("GET /boot/autoinstall/", h.getAutoinstall)
+	mux.HandleFunc("GET /boot/postinstall/", h.getPostInstall)
+	mux.HandleFunc("GET /boot/", h.serveBootFile)
+
 	mux.HandleFunc("GET /", h.index)
 }
 
@@ -159,6 +174,152 @@ func (h *AgentHandler) index(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Firewall4AI Agent API")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Endpoints:")
-	fmt.Fprintln(w, "  GET /v1/policy  - Get firewall policy (allowed/disallowed languages, packages, URLs)")
-	fmt.Fprintln(w, "  GET /ca.crt     - Download CA certificate for HTTPS inspection")
+	fmt.Fprintln(w, "  GET /v1/policy           - Get firewall policy (allowed/disallowed languages, packages, URLs)")
+	fmt.Fprintln(w, "  GET /ca.crt              - Download CA certificate for HTTPS inspection")
+	fmt.Fprintln(w, "  GET /boot/ipxe?mac=XX    - iPXE boot script for agent")
+	fmt.Fprintln(w, "  GET /boot/{os}/{ver}/...  - Boot files (kernel, initrd)")
+}
+
+// --- Boot endpoints ---
+
+// getIPXEScript serves the iPXE boot script for an agent identified by MAC.
+func (h *AgentHandler) getIPXEScript(w http.ResponseWriter, r *http.Request) {
+	if h.AgentManager == nil || h.NetbootManager == nil {
+		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	mac := r.URL.Query().Get("mac")
+	if mac == "" {
+		http.Error(w, "mac parameter required", http.StatusBadRequest)
+		return
+	}
+	// Normalize MAC: iPXE sends as aa-bb-cc-dd-ee-ff, convert to aa:bb:cc:dd:ee:ff.
+	mac = strings.ReplaceAll(mac, "-", ":")
+
+	a, ok := h.AgentManager.GetByMAC(mac)
+	if !ok {
+		http.Error(w, "unknown agent MAC", http.StatusNotFound)
+		return
+	}
+
+	// Mark agent as installing.
+	h.AgentManager.SetStatus(a.ID, agent.StatusInstalling, "PXE boot in progress")
+
+	script := h.NetbootManager.GenerateIPXEScript(a)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(script))
+}
+
+// getPreseed serves the Debian/Ubuntu preseed file for an agent.
+func (h *AgentHandler) getPreseed(w http.ResponseWriter, r *http.Request) {
+	if h.AgentManager == nil || h.NetbootManager == nil {
+		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Path: /boot/preseed/{agentID}
+	agentID := strings.TrimPrefix(r.URL.Path, "/boot/preseed/")
+	if agentID == "" {
+		http.Error(w, "agent ID required", http.StatusBadRequest)
+		return
+	}
+
+	a, ok := h.AgentManager.Get(agentID)
+	if !ok {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	preseed := h.NetbootManager.GeneratePreseed(a)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(preseed))
+}
+
+// getAutoinstall serves the Alpine answer file for an agent.
+func (h *AgentHandler) getAutoinstall(w http.ResponseWriter, r *http.Request) {
+	if h.AgentManager == nil || h.NetbootManager == nil {
+		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Path: /boot/autoinstall/{agentID}
+	agentID := strings.TrimPrefix(r.URL.Path, "/boot/autoinstall/")
+	if agentID == "" {
+		http.Error(w, "agent ID required", http.StatusBadRequest)
+		return
+	}
+
+	a, ok := h.AgentManager.Get(agentID)
+	if !ok {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	answer := h.NetbootManager.GenerateAlpineAnswerFile(a)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(answer))
+}
+
+// getPostInstall serves the post-installation script for an agent.
+func (h *AgentHandler) getPostInstall(w http.ResponseWriter, r *http.Request) {
+	if h.AgentManager == nil || h.NetbootManager == nil {
+		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	agentID := strings.TrimPrefix(r.URL.Path, "/boot/postinstall/")
+	if agentID == "" {
+		http.Error(w, "agent ID required", http.StatusBadRequest)
+		return
+	}
+
+	a, ok := h.AgentManager.Get(agentID)
+	if !ok {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	script := h.NetbootManager.GeneratePostInstallScript(a)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(script))
+}
+
+// serveBootFile serves kernel/initrd files from the netboot directory.
+// Path: /boot/{os}/{version}/{file}
+func (h *AgentHandler) serveBootFile(w http.ResponseWriter, r *http.Request) {
+	if h.NetbootManager == nil {
+		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Parse path: /boot/{os}/{version}/{file}
+	path := strings.TrimPrefix(r.URL.Path, "/boot/")
+	parts := strings.SplitN(path, "/", 3)
+	if len(parts) != 3 {
+		http.Error(w, "invalid boot path", http.StatusBadRequest)
+		return
+	}
+
+	osType := parts[0]
+	version := parts[1]
+	file := parts[2]
+
+	// Validate components to prevent path traversal.
+	for _, part := range parts {
+		if strings.Contains(part, "..") || strings.Contains(part, "/") {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+	}
+
+	filePath := filepath.Join(h.NetbootManager.OSDir(agent.OSType(osType), version), file)
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Write(data)
 }
