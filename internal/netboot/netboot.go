@@ -131,7 +131,7 @@ func (m *Manager) GenerateIPXEScript(a *agent.Agent) string {
 
 	switch a.OS {
 	case agent.OSAlpine:
-		sb.WriteString(fmt.Sprintf("kernel %s alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v%s/main/ modloop=https://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/netboot/modloop-lts ip=dhcp autoinstall=http://%s/boot/autoinstall/%s\n",
+		sb.WriteString(fmt.Sprintf("kernel %s alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v%s/main/ modloop=http://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/netboot/modloop-lts ip=dhcp autoinstall=http://%s/boot/autoinstall/%s\n",
 			kernelURL, a.OSVersion, a.OSVersion, m.ServerIP, a.ID))
 		sb.WriteString(fmt.Sprintf("initrd %s\n", initrdURL))
 
@@ -224,9 +224,13 @@ func (m *Manager) GeneratePreseed(a *agent.Agent) string {
 	sb.WriteString("\n# Finish\n")
 	sb.WriteString("d-i finish-install/reboot_in_progress note\n")
 
-	// Late command: enable auto-login and configure network.
-	sb.WriteString("\n# Post-install\n")
+	// Late command: enable auto-login, inject CA cert, configure proxy, ensure ca-certificates
+	sb.WriteString("\n# Post-install (CA + proxy + auto-login)\n")
 	sb.WriteString("d-i preseed/late_command string \\\n")
+	sb.WriteString(" in-target apt-get update ; \\\n")
+	sb.WriteString(" in-target apt-get install -y ca-certificates ; \\\n")
+	sb.WriteString(" in-target wget -qO /usr/local/share/ca-certificates/firewall4ai-ca.crt http://" + m.ServerIP + "/ca.crt ; \\\n")
+	sb.WriteString(" in-target update-ca-certificates ; \\\n")
 	sb.WriteString("  in-target mkdir -p /etc/systemd/system/getty@tty1.service.d ; \\\n")
 	sb.WriteString("  printf '[Service]\\nExecStart=\\nExecStart=-/sbin/agetty --autologin root --noclear %%I $TERM\\n' > /target/etc/systemd/system/getty@tty1.service.d/override.conf ; \\\n")
 	sb.WriteString("  in-target systemctl enable getty@tty1.service\n")
@@ -250,7 +254,7 @@ func (m *Manager) GenerateAlpineAnswerFile(a *agent.Agent) string {
 	sb.WriteString("DNSOPTS=\"-d local " + m.ServerIP + "\"\n")
 	sb.WriteString("TIMEZONEOPTS=\"-z UTC\"\n")
 	sb.WriteString("PROXYOPTS=\"http://" + m.ServerIP + ":8080\"\n")
-	sb.WriteString("APKREPOSOPTS=\"https://dl-cdn.alpinelinux.org/alpine/v" + a.OSVersion + "/main https://dl-cdn.alpinelinux.org/alpine/v" + a.OSVersion + "/community\"\n")
+	sb.WriteString("APKREPOSOPTS=\"http://dl-cdn.alpinelinux.org/alpine/v" + a.OSVersion + "/main http://dl-cdn.alpinelinux.org/alpine/v" + a.OSVersion + "/community\"\n")
 	sb.WriteString("SSHDOPTS=\"-c openssh\"\n")
 	sb.WriteString("NTPOPTS=\"-c busybox\"\n")
 	sb.WriteString("DISKOPTS=\"-m sys " + disk + "\"\n")
@@ -264,7 +268,10 @@ func (m *Manager) GenerateAlpineAnswerFile(a *agent.Agent) string {
 	// Extra packages.
 	if len(a.Packages) > 0 {
 		sb.WriteString("\n# Extra packages\n")
-		sb.WriteString("APKSOPTS=\"" + strings.Join(a.Packages, " ") + "\"\n")
+		sb.WriteString("apk add --no-cache " + strings.Join(a.Packages, " ") + " \n")
+	} else {
+		sb.WriteString("\n# Extra packages\n")
+		sb.WriteString("apk add --no-cache ca-certificates\n")
 	}
 
 	return sb.String()
