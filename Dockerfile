@@ -14,7 +14,7 @@ RUN apt-get update \
     curl \
     dbus-daemon \
     dmsetup \
-    dnsmasq \
+    ipxe \
     dosfstools \
     dracut-core \
     dracut-live \
@@ -96,8 +96,12 @@ RUN systemctl enable systemd-networkd.service
 # Add systemd-networkd configuration for two-NIC setup
 COPY config/network/ /etc/systemd/network/
 
-# Add dnsmasq configuration
-COPY config/dnsmasq/firewall4ai.conf /etc/dnsmasq.d/firewall4ai.conf
+# Copy iPXE boot files for PXE netboot support
+RUN mkdir -p /var/lib/firewall4ai/netboot/tftp \
+    && cp /usr/lib/ipxe/undionly.kpxe /var/lib/firewall4ai/netboot/tftp/ 2>/dev/null || true \
+    && cp /usr/lib/ipxe/ipxe.efi /var/lib/firewall4ai/netboot/tftp/ 2>/dev/null || true \
+    && cp /boot/ipxe.efi /var/lib/firewall4ai/netboot/tftp/ 2>/dev/null || true \
+    && cp /usr/lib/IPXE/ipxe.efi /var/lib/firewall4ai/netboot/tftp/ 2>/dev/null || true
 
 # Add iptables rules script
 COPY scripts/firewall4ai-iptables.sh /usr/local/bin/firewall4ai-iptables.sh
@@ -107,9 +111,8 @@ RUN chmod +x /usr/local/bin/firewall4ai-iptables.sh
 COPY systemd/firewall4ai.service /usr/lib/systemd/system/firewall4ai.service
 COPY systemd/firewall4ai-iptables.service /usr/lib/systemd/system/firewall4ai-iptables.service
 
-# Enable services
-RUN systemctl enable dnsmasq.service \
-    && systemctl enable firewall4ai.service \
+# Enable services (DHCP/DNS/TFTP are now integrated into firewall4ai binary)
+RUN systemctl enable firewall4ai.service \
     && systemctl enable firewall4ai-iptables.service \
     && systemctl enable ssh.service
 
@@ -134,8 +137,8 @@ COPY config/config.yaml /etc/elemental/
 COPY config/50-elemental-initrd.conf /etc/dracut.conf.d/
 RUN elemental --debug init -f
 
-# Use dnsmasq for DNS resolution
-COPY /config/resolv.conf /etc/resolv.conf
+# DNS resolution: use upstream DNS directly (DHCP/DNS now integrated)
+RUN printf 'nameserver 1.1.1.1\nnameserver 1.0.0.1\n' > /etc/resolv.conf
 
 # Include bootargs.cfg after elemental init
 COPY config/bootargs.cfg /etc/elemental/

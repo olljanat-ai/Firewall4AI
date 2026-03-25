@@ -1,6 +1,6 @@
 [Unit]
 Description=Firewall4AI AI proxy
-After=network.target dnsmasq.service firewall4ai-iptables.service
+After=network.target firewall4ai-iptables.service
 Requires=firewall4ai-iptables.service
 
 [Service]
@@ -8,6 +8,8 @@ Type=simple
 ExecStartPre=/bin/mkdir -p /var/lib/firewall4ai
 ExecStart=/usr/bin/firewall4ai -config /etc/firewall4ai/config.json
 Restart=on-failure
+# DHCP server needs to send broadcast packets
+AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
