@@ -15,15 +15,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/olljanat-ai/firewall4ai/internal/agent"
 	"github.com/olljanat-ai/firewall4ai/internal/api"
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	"github.com/olljanat-ai/firewall4ai/internal/certgen"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
+	"github.com/olljanat-ai/firewall4ai/internal/dhcp"
+	"github.com/olljanat-ai/firewall4ai/internal/dns"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
+	"github.com/olljanat-ai/firewall4ai/internal/netboot"
 	"github.com/olljanat-ai/firewall4ai/internal/proxy"
 	"github.com/olljanat-ai/firewall4ai/internal/store"
+	"github.com/olljanat-ai/firewall4ai/internal/tftp"
 	"github.com/olljanat-ai/firewall4ai/web"
 )
 
@@ -32,16 +37,18 @@ var Version = "dev"
 
 // storeData holds the persisted state.
 type storeData struct {
-	Skills             []auth.Skill             `json:"skills"`
-	Approvals          []approval.HostApproval  `json:"approvals"`
-	Creds              []credentials.Credential `json:"credentials"`
-	ImageApprovals     []approval.HostApproval  `json:"image_approvals"`
-	PackageApprovals   []approval.HostApproval  `json:"package_approvals"`
-	LibraryApprovals   []approval.HostApproval  `json:"library_approvals"`
-	Categories         []string                 `json:"categories"`
-	LearningMode       bool                     `json:"learning_mode"`
-	DisabledLanguages  []string                 `json:"disabled_languages"`
-	DisabledDistros    []string                 `json:"disabled_distros"`
+	Skills            []auth.Skill             `json:"skills"`
+	Approvals         []approval.HostApproval  `json:"approvals"`
+	Creds             []credentials.Credential `json:"credentials"`
+	ImageApprovals    []approval.HostApproval  `json:"image_approvals"`
+	PackageApprovals  []approval.HostApproval  `json:"package_approvals"`
+	LibraryApprovals  []approval.HostApproval  `json:"library_approvals"`
+	Categories        []string                 `json:"categories"`
+	LearningMode      bool                     `json:"learning_mode"`
+	DisabledLanguages []string                 `json:"disabled_languages"`
+	DisabledDistros   []string                 `json:"disabled_distros"`
+	Agents            []agent.Agent            `json:"agents"`
+	DHCPLeases        []dhcp.Lease             `json:"dhcp_leases"`
 }
 
 func main() {
@@ -81,6 +88,34 @@ func main() {
 	libraryApprovals := approval.NewManager()
 	creds := credentials.NewManager()
 	logger := proxylog.NewLogger(cfg.MaxLogEntries)
+	agentMgr := agent.NewManager()
+
+	// Network configuration.
+	serverIP := net.ParseIP("10.255.255.1")
+	internalIface := "eth1"
+
+	// Initialize netboot manager.
+	netbootMgr := netboot.NewManager(cfg.DataDir, serverIP.String())
+	if err := netbootMgr.EnsureTFTPDir(); err != nil {
+		log.Printf("Warning: could not create TFTP directory: %v", err)
+	}
+
+	// Initialize DHCP server.
+	dhcpServer := dhcp.NewServer(
+		serverIP,
+		net.ParseIP("10.255.255.10"),
+		net.ParseIP("10.255.255.254"),
+		serverIP,
+		net.CIDRMask(24, 32),
+		[]net.IP{serverIP},
+		internalIface,
+	)
+
+	// Initialize DNS server.
+	dnsServer := dns.NewServer(":53", []string{"1.1.1.1", "1.0.0.1"})
+
+	// Initialize TFTP server.
+	tftpServer := tftp.NewServer(":69", netbootMgr.TFTPDir())
 
 	// Load persisted state.
 	state := dataStore.Get()
@@ -90,6 +125,8 @@ func main() {
 	packageApprovals.LoadApprovals(state.PackageApprovals)
 	libraryApprovals.LoadApprovals(state.LibraryApprovals)
 	creds.LoadCredentials(state.Creds)
+	agentMgr.LoadAgents(state.Agents)
+	dhcpServer.LoadLeases(state.DHCPLeases)
 
 	// Restore learning mode from persisted state.
 	if state.LearningMode {
@@ -104,6 +141,48 @@ func main() {
 		config.SetDisabledDistros(state.DisabledDistros)
 	}
 
+	// Setup static DHCP leases and DNS entries for configured agents.
+	for _, a := range agentMgr.List() {
+		if a.IP != "" {
+			dhcpServer.SetStaticLease(a.MAC, a.IP, a.Hostname)
+		}
+		if a.Hostname != "" && a.IP != "" {
+			dnsServer.SetHost(a.Hostname, net.ParseIP(a.IP))
+		}
+	}
+
+	// DHCP PXE provider: returns boot info for registered agents.
+	dhcpServer.PXEProvider = func(mac string, clientArch uint16, isIPXE bool) *dhcp.PXEInfo {
+		a, ok := agentMgr.GetByMAC(mac)
+		if !ok {
+			return nil // Not a registered agent, no PXE.
+		}
+		if !netbootMgr.HasBootFiles(a.OS, a.OSVersion) {
+			return nil // Boot files not downloaded yet.
+		}
+		info := &dhcp.PXEInfo{
+			TFTPServer: serverIP.String(),
+			IPXEScript: fmt.Sprintf("http://%s/boot/ipxe?mac=${mac:hexhyp}", serverIP),
+		}
+		// Choose bootfile based on client architecture.
+		if isIPXE {
+			// iPXE client: provide HTTP boot script URL.
+			info.Bootfile = info.IPXEScript
+		} else if clientArch == dhcp.ArchEFIx86_64 || clientArch == dhcp.ArchEFIBC || clientArch == dhcp.ArchEFIx86_64v {
+			info.Bootfile = "ipxe.efi"
+		} else {
+			info.Bootfile = "undionly.kpxe"
+		}
+		return info
+	}
+
+	// DHCP lease change callback: persist leases.
+	dhcpServer.OnLeaseChange = func(leases []dhcp.Lease) {
+		dataStore.Update(func(d *storeData) {
+			d.DHCPLeases = leases
+		})
+	}
+
 	// Setup API handler early so we can load categories into it.
 	apiHandler := &api.Handler{
 		Skills:           skills,
@@ -114,8 +193,36 @@ func main() {
 		Credentials:      creds,
 		Logger:           logger,
 		Version:          Version,
+		AgentManager:     agentMgr,
 	}
 	apiHandler.LoadCategories(state.Categories)
+
+	// Agent change callbacks.
+	apiHandler.OnAgentChange = func(a *agent.Agent) {
+		if a.IP != "" {
+			dhcpServer.SetStaticLease(a.MAC, a.IP, a.Hostname)
+			dnsServer.SetHost(a.Hostname, net.ParseIP(a.IP))
+		}
+	}
+	apiHandler.OnAgentDelete = func(a *agent.Agent) {
+		dhcpServer.RemoveLease(a.MAC)
+		if a.Hostname != "" {
+			dnsServer.RemoveHost(a.Hostname)
+		}
+	}
+	apiHandler.DownloadBootFiles = func(a *agent.Agent) {
+		agentMgr.SetStatus(a.ID, agent.StatusDownloading, "downloading boot files")
+		if err := netbootMgr.DownloadBootFiles(a); err != nil {
+			log.Printf("Failed to download boot files for agent %s: %v", a.ID, err)
+			agentMgr.SetStatus(a.ID, agent.StatusError, err.Error())
+			return
+		}
+		agentMgr.SetStatus(a.ID, agent.StatusReady, "boot files ready")
+		// Save state after download.
+		dataStore.Update(func(d *storeData) {
+			d.Agents = agentMgr.ExportAgents()
+		})
+	}
 
 	// Save function persists current state.
 	saveFunc := func() error {
@@ -131,6 +238,8 @@ func main() {
 			d.LearningMode = cfg.LearningMode
 			d.DisabledLanguages = cfg.DisabledLanguages
 			d.DisabledDistros = cfg.DisabledDistros
+			d.Agents = agentMgr.ExportAgents()
+			d.DHCPLeases = dhcpServer.ExportLeases()
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
@@ -181,6 +290,7 @@ func main() {
 	// Setup admin API + UI server.
 	adminMux := http.NewServeMux()
 	apiHandler.RegisterRoutes(adminMux)
+	apiHandler.RegisterAgentMgmtRoutes(adminMux)
 
 	// Serve CA certificate for download.
 	adminMux.HandleFunc("GET /ca.crt", func(w http.ResponseWriter, r *http.Request) {
@@ -211,21 +321,44 @@ func main() {
 	}
 
 	// Setup agent API server (available on agent network).
-	agentMux := http.NewServeMux()
+	agentAPIMux := http.NewServeMux()
 	agentHandler := &api.AgentHandler{
 		Approvals:        approvals,
 		ImageApprovals:   imageApprovals,
 		PackageApprovals: packageApprovals,
 		LibraryApprovals: libraryApprovals,
 		CACertPEM:        ca.CertPEM,
+		AgentManager:     agentMgr,
+		NetbootManager:   netbootMgr,
 	}
-	agentHandler.RegisterAgentRoutes(agentMux)
-	agentServer := &http.Server{
+	agentHandler.RegisterAgentRoutes(agentAPIMux)
+	agentAPIServer := &http.Server{
 		Addr:         cfg.AgentAPIAddr,
-		Handler:      agentMux,
+		Handler:      agentAPIMux,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: 10 * time.Minute, // Longer timeout for boot file downloads.
 	}
+
+	// Start DHCP server.
+	go func() {
+		if err := dhcpServer.ListenAndServe(); err != nil {
+			log.Printf("DHCP server error (non-fatal): %v", err)
+		}
+	}()
+
+	// Start DNS server.
+	go func() {
+		if err := dnsServer.ListenAndServe(); err != nil {
+			log.Printf("DNS server error (non-fatal): %v", err)
+		}
+	}()
+
+	// Start TFTP server.
+	go func() {
+		if err := tftpServer.ListenAndServe(); err != nil {
+			log.Printf("TFTP server error (non-fatal): %v", err)
+		}
+	}()
 
 	// Start proxy server.
 	go func() {
@@ -257,11 +390,13 @@ func main() {
 	// Start agent API server (plain HTTP on agent network).
 	go func() {
 		log.Printf("Agent API listening on http://%s", cfg.AgentAPIAddr)
-		if err := agentServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := agentAPIServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			// Non-fatal: agent API may fail to bind if eth1 is not available.
 			log.Printf("Agent API server error (non-fatal): %v", err)
 		}
 	}()
+
+	log.Printf("Agents configured: %d", agentMgr.Count())
 
 	// Graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
@@ -280,7 +415,7 @@ func main() {
 	transparentListener.Close()
 	proxyServer.Shutdown(ctx)
 	adminServer.Shutdown(ctx)
-	agentServer.Shutdown(ctx)
+	agentAPIServer.Shutdown(ctx)
 	log.Println("Stopped.")
 }
 

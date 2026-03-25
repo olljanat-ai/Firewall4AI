@@ -51,14 +51,17 @@ iptables -A INPUT -i eth0 -j ACCEPT
 # INPUT rules for the internal interface (eth1)
 # ============================================================
 
-# Allow DHCP (clients requesting addresses)
+# Allow DHCP (integrated DHCP server)
 iptables -A INPUT -i $INTERNAL_IF -p udp --dport 67 -j ACCEPT
 
-# Allow DNS (dnsmasq)
+# Allow DNS (integrated DNS forwarder)
 iptables -A INPUT -i $INTERNAL_IF -p udp --dport 53 -j ACCEPT
 iptables -A INPUT -i $INTERNAL_IF -p tcp --dport 53 -j ACCEPT
 
-# Allow agent info API
+# Allow TFTP (integrated TFTP server for PXE boot)
+iptables -A INPUT -i $INTERNAL_IF -p udp --dport 69 -j ACCEPT
+
+# Allow agent info API and boot file serving
 iptables -A INPUT -i $INTERNAL_IF -p tcp --dport 80 -j ACCEPT
 
 # Allow proxy connections from internal network (explicit proxy mode)
