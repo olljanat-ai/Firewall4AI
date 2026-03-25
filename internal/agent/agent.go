@@ -209,7 +209,7 @@ func (m *Manager) Count() int {
 func DefaultOSVersion(os OSType) string {
 	switch os {
 	case OSAlpine:
-		return "3.21"
+		return "3.23"
 	case OSDebian:
 		return "13"
 	case OSUbuntu:
@@ -221,7 +221,7 @@ func DefaultOSVersion(os OSType) string {
 
 // DefaultDiskDevice returns the default disk device path.
 func DefaultDiskDevice() string {
-	return "/dev/vda"
+	return "/dev/sda"
 }
 
 // ValidateMAC checks if a MAC address is valid.
