@@ -163,7 +163,7 @@ ARG VERSION=dev
 RUN echo IMAGE_TAG=\"${VERSION}\" >> /etc/os-release
 
 # Build firewall4ai binary
-FROM golang:1.23 AS app-builder
+FROM golang:1.26.1 AS app-builder
 COPY . /src
 WORKDIR /src
 ARG VERSION=dev
