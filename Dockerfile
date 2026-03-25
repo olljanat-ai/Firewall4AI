@@ -1,5 +1,5 @@
 # OS image based on Debian 13
-FROM debian:13 AS os
+FROM debian:trixie-slim AS os
 
 # Install kernel, systemd, dracut, grub2 and required tools
 RUN apt-get update \
