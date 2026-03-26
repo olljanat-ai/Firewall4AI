@@ -4,7 +4,7 @@
 Firewall4AI is a transparent firewall/proxy that controls AI agent internet access from isolated VM environments. It sits between agent VMs and the internet, intercepting all HTTP/HTTPS traffic transparently via iptables without requiring proxy configuration on agent VMs. It also provides network boot (PXE) infrastructure for automated provisioning of agent VMs.
 
 ## Architecture
-- **Single Go binary**, zero external dependencies (stdlib only)
+- **Single Go binary** with minimal external dependencies
 - **Seven listeners**: HTTP proxy (:8080), transparent TLS (:8443), admin UI (:443), agent API (10.255.255.1:80), DHCP (:67), DNS (:53), TFTP (:69)
 - **iptables REDIRECT**: Port 80 -> :8080, port 443 -> :8443 for transparent interception
 - **TLS MITM**: Auto-generated CA signs per-host certificates; agents must trust the CA
@@ -17,6 +17,7 @@ Firewall4AI is a transparent firewall/proxy that controls AI agent internet acce
 - **Immutable OS**: Elemental Toolkit provides immutable rootfs with btrfs snapshots and OTA upgrades via container images
 - **Persistent storage**: Rules (state.json), CA certificates, DHCP leases, netboot files, and logs stored on COS_PERSISTENT partition
 - **Permanent DHCP leases**: Agents get stable IPs for reliable VM-specific approvals
+- **SQL database proxy**: Agent API provides HTTP endpoints to query configured SQL databases (MSSQL, PostgreSQL, MySQL). Connections configured via admin UI with per-database API paths and credentials.
 
 ## Key Directories
 ```
@@ -29,6 +30,7 @@ internal/
   certgen/           - CA and per-host TLS certificate generation
   config/            - JSON configuration loading
   credentials/       - Credential injection (header/bearer/basic_auth/query_param)
+  database/          - SQL database connection manager (MSSQL, PostgreSQL, MySQL)
   dhcp/              - Integrated DHCP server with PXE boot support
   dns/               - Integrated DNS forwarder with local hostname resolution
   logging/           - In-memory circular buffer request logger
@@ -77,7 +79,7 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 - **State persistence**: All state (skills, approvals, credentials, image approvals, agents, DHCP leases, disabled languages/distros) stored in a single `state.json` file, loaded at startup, saved on mutations and shutdown.
 - **Registry integration**: Configured registry hosts are detected in the transparent proxy. Manifest requests (`/v2/{name}/manifests/{ref}`) trigger image-level approval. Blob requests are allowed at repo level once any image in that repo is approved. All other registry traffic (auth endpoints, /v2/ pings, CDN) is auto-approved since the registry is configured explicitly.
 - **Language/distro toggle**: Admin can disable entire programming language types (e.g., npm, pypi) or OS distro types (e.g., alpine) via settings. Disabled types return 403 immediately without creating pending entries. Settings stored in `state.json` as `disabled_languages` and `disabled_distros` arrays.
-- **Agent API**: Plain HTTP server on eth1 (10.255.255.1:80) serves `GET /v1/policy` (JSON with allowed/disallowed languages, packages, URLs), `GET /ca.crt` (CA certificate), and boot endpoints for PXE netboot.
+- **Agent API**: Plain HTTP server on eth1 (10.255.255.1:80) serves `GET /v1/policy` (JSON with allowed/disallowed languages, packages, URLs), `POST /v1/db/{name}/query` (SQL database query proxy), `GET /ca.crt` (CA certificate), and boot endpoints for PXE netboot.
 - **AI-agent-friendly errors**: Denied requests return 403 with clear plain text message. Pending requests waiting for admin approval return 407 with clear message. Both include `Firewall4AI:` prefix for easy identification.
 - **Integrated DHCP/DNS/TFTP**: All network services run inside the single Go binary. No external dnsmasq dependency. DHCP assigns IPs with permanent leases, DNS forwards to upstream (1.1.1.1/1.0.0.1) with local hostname resolution, TFTP serves iPXE bootloader files.
 - **Agent VM provisioning**: Agents are identified by MAC address. Admin configures OS type (Alpine/Debian/Ubuntu), version, disk device, and extra packages via the Agents tab. The system downloads netboot files (kernel+initrd), generates iPXE scripts and installer configs (Alpine answer file, Debian/Ubuntu preseed), and serves them via HTTP/TFTP for fully automated PXE installation.
@@ -92,7 +94,7 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 - **Image approval**: Uses a second `approval.Manager` instance. `Host` field holds image references (e.g., `docker.io/library/ubuntu:latest`). `CheckExistingWithMatcher()` enables custom pattern matching via `registry.MatchImageRef()` which supports `docker.io/library/*` and `docker.io/library/ubuntu:*` wildcards.
 - **Registry utilities**: `registry.ParsePath()` extracts name+reference from V2 API URLs. `registry.RegistryForHost()` looks up the registry config for a hostname. `registry.ParseImageRef()` constructs full image references. These are used by `handleRegistryTLSRequest()` in the proxy.
 - **Agent management**: `agent.Manager` stores agent configs indexed by ID and MAC. `SetStaticLease()` and `SetHost()` keep DHCP/DNS in sync when agents are created/updated/deleted. Boot file downloads happen asynchronously with status tracking.
-- **No external dependencies**: Everything uses Go stdlib. Don't add third-party packages.
+- **Minimal external dependencies**: Core proxy uses Go stdlib. Database drivers (MSSQL, PostgreSQL, MySQL) are the exception. Don't add unnecessary third-party packages.
 
 ## When Making Changes
 - Run `go test ./...` after changes; all tests should pass
@@ -117,3 +119,7 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 - Boot endpoints on agent API: `/boot/ipxe?mac=XX` (iPXE script), `/boot/preseed/{id}` (Debian/Ubuntu), `/boot/autoinstall/{id}` (Alpine), `/boot/{os}/{ver}/kernel` and `/boot/{os}/{ver}/initrd` (boot files)
 - Netboot files are cached in `{DataDir}/netboot/{os}/{version}/` and downloaded on demand when an agent is configured
 - iPXE bootloader files (undionly.kpxe, ipxe.efi) are served via TFTP from `{DataDir}/netboot/tftp/`
+- SQL database connections: CRUD via `/api/databases` (admin API). Agent API serves `POST /v1/db/{api_path}/query` with JSON body `{"query": "SELECT ...", "args": []}`. Each database has a unique `api_path` for routing. Passwords masked in admin API responses. Connections are lazily created and pooled via `database/sql`.
+- Database manager (`database.Manager`) stores configs indexed by ID. `GetByAPIPath()` looks up active configs by API path. `Query()` determines read vs write queries by SQL prefix. Results returned as `{columns: [...], rows: [[...]], error: ""}`.
+- The admin UI "Credentials" page includes a "SQL Databases" section for managing database connections with a separate modal form for MSSQL/PostgreSQL/MySQL configs.
+- The admin UI "System" page (formerly "Settings") includes a service logs viewer at the top that shows `journalctl` output for whitelisted systemd services.
