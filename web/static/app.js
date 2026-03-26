@@ -2212,35 +2212,193 @@ async function removeCategory(name) {
   }
 }
 
-// --- Agents ---
+// --- Disk Images & Agents ---
 
-const osVersionDefaults = { alpine: '3.23', debian: '13', ubuntu: '24.04' };
+const osVersionDefaults = { alpine: '3.21', debian: '13', ubuntu: '24.04' };
 const osLabels = { alpine: 'Alpine Linux', debian: 'Debian', ubuntu: 'Ubuntu' };
 
+let currentDiskImages = [];
+let editingDiskImageID = null;
+
 async function loadAgents() {
+  await loadDiskImages();
+  await loadAgentVMs();
+}
+
+async function loadDiskImages() {
+  try {
+    currentDiskImages = await api('GET', '/api/disk-images');
+    const tbody = document.getElementById('disk-images-tbody');
+    tbody.innerHTML = '';
+    if (!currentDiskImages || currentDiskImages.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
+      return;
+    }
+    currentDiskImages.forEach(img => {
+      const osLabel = (osLabels[img.os] || img.os) + ' ' + (img.os_version || '');
+      const pkgs = (img.packages && img.packages.length > 0) ? esc(img.packages.join(', ')) : '<span class="muted">none</span>';
+
+      // Build versions display.
+      let versionsHTML = '';
+      if (img.versions && img.versions.length > 0) {
+        versionsHTML = img.versions.map(v => {
+          const cls = imageVersionStatusClass(v.status);
+          const sizeStr = v.size ? ' (' + formatBytes(v.size) + ')' : '';
+          const label = 'v' + v.version + ': ' + v.status + (v.status_msg ? ' - ' + v.status_msg : '') + sizeStr;
+          return `<span class="badge-status ${cls}">${esc(label)}</span>`;
+        }).join(' ');
+      } else {
+        versionsHTML = '<span class="muted">no builds</span>';
+      }
+
+      tbody.innerHTML += `<tr>
+        <td><strong>${esc(img.name)}</strong></td>
+        <td>${esc(osLabel)}</td>
+        <td>${pkgs}</td>
+        <td>${versionsHTML}</td>
+        <td>
+          <button class="btn btn-primary btn-sm" onclick="buildDiskImage('${esc(img.id)}')">Build</button>
+          <button class="btn btn-outline btn-sm" onclick="editDiskImage('${esc(img.id)}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteDiskImage('${esc(img.id)}','${esc(img.name)}')">Delete</button>
+        </td>
+      </tr>`;
+    });
+  } catch (e) {
+    console.error('Disk images load error:', e);
+  }
+}
+
+function imageVersionStatusClass(status) {
+  switch (status) {
+    case 'ready': return 'approved';
+    case 'building': return 'pending';
+    case 'pending': return 'pending';
+    case 'error': return 'denied';
+    default: return '';
+  }
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+
+function showCreateDiskImage() {
+  editingDiskImageID = null;
+  document.getElementById('modal-disk-image-title').textContent = 'Add Disk Image';
+  document.getElementById('modal-disk-image-submit').textContent = 'Add';
+  document.getElementById('disk-image-name').value = '';
+  document.getElementById('disk-image-os').value = 'alpine';
+  document.getElementById('disk-image-os-version').value = '';
+  document.getElementById('disk-image-os-version').placeholder = osVersionDefaults['alpine'];
+  document.getElementById('disk-image-packages').value = '';
+  document.getElementById('disk-image-scripts').value = '';
+  document.getElementById('modal-disk-image').classList.add('active');
+}
+
+function hideDiskImageModal() {
+  document.getElementById('modal-disk-image').classList.remove('active');
+}
+
+function updateDiskImageDefaults() {
+  const os = document.getElementById('disk-image-os').value;
+  document.getElementById('disk-image-os-version').placeholder = osVersionDefaults[os] || '';
+}
+
+function editDiskImage(id) {
+  const img = currentDiskImages.find(x => x.id === id);
+  if (!img) return;
+  editingDiskImageID = id;
+  document.getElementById('modal-disk-image-title').textContent = 'Edit Disk Image';
+  document.getElementById('modal-disk-image-submit').textContent = 'Save';
+  document.getElementById('disk-image-name').value = img.name || '';
+  document.getElementById('disk-image-os').value = img.os || 'alpine';
+  document.getElementById('disk-image-os-version').value = img.os_version || '';
+  document.getElementById('disk-image-packages').value = (img.packages || []).join(', ');
+  document.getElementById('disk-image-scripts').value = (img.scripts || []).join('\n');
+  document.getElementById('modal-disk-image').classList.add('active');
+}
+
+async function submitDiskImage() {
+  const name = document.getElementById('disk-image-name').value.trim();
+  const os = document.getElementById('disk-image-os').value;
+  const osVersion = document.getElementById('disk-image-os-version').value.trim() || osVersionDefaults[os] || '';
+  const packagesStr = document.getElementById('disk-image-packages').value.trim();
+  const packages = packagesStr ? packagesStr.split(',').map(p => p.trim()).filter(p => p) : [];
+  const scriptsStr = document.getElementById('disk-image-scripts').value.trim();
+  const scripts = scriptsStr ? scriptsStr.split('\n').filter(s => s.trim()) : [];
+
+  if (!name) {
+    alert('Name is required');
+    return;
+  }
+
+  try {
+    if (editingDiskImageID) {
+      await api('PUT', '/api/disk-images', {
+        id: editingDiskImageID, name, os, os_version: osVersion, packages, scripts
+      });
+    } else {
+      await api('POST', '/api/disk-images', {
+        name, os, os_version: osVersion, packages, scripts
+      });
+    }
+    hideDiskImageModal();
+    loadDiskImages();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteDiskImage(id, name) {
+  if (!confirm(`Delete disk image "${name}" and all its built versions?`)) return;
+  try {
+    await api('DELETE', '/api/disk-images?id=' + encodeURIComponent(id));
+    loadDiskImages();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function buildDiskImage(id) {
+  try {
+    const result = await api('POST', '/api/disk-images/build', { id });
+    alert('Build started for version ' + result.version + '. This may take several minutes.');
+    loadDiskImages();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Agent VMs ---
+
+async function loadAgentVMs() {
   try {
     currentAgents = await api('GET', '/api/agents');
     const tbody = document.getElementById('agents-tbody');
     tbody.innerHTML = '';
     if (!currentAgents || currentAgents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No agents configured. Add one to get started.</td></tr>';
       return;
     }
     currentAgents.forEach(a => {
       const statusClass = agentStatusClass(a.status);
       const statusLabel = a.status_msg ? a.status + ': ' + a.status_msg : a.status;
-      const pkgs = (a.packages && a.packages.length > 0) ? esc(a.packages.join(', ')) : '<span class="muted">none</span>';
-      const osLabel = (osLabels[a.os] || a.os) + ' ' + (a.os_version || '');
+
+      // Find the referenced disk image name.
+      const img = currentDiskImages.find(x => x.id === a.image_id);
+      const imgLabel = img ? esc(img.name) + (a.image_version ? ' v' + a.image_version : ' (latest)') : '<span class="muted">none</span>';
+
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.hostname)}</strong></td>
         <td><code>${esc(a.mac)}</code></td>
         <td>${a.ip ? esc(a.ip) : '<span class="muted">auto</span>'}</td>
-        <td>${esc(osLabel)}</td>
-        <td>${pkgs}</td>
+        <td>${imgLabel}</td>
         <td><span class="badge-status ${statusClass}">${esc(statusLabel)}</span></td>
         <td>
           <button class="btn btn-outline btn-sm" onclick="editAgent('${esc(a.id)}')">Edit</button>
-          <button class="btn btn-outline btn-sm" onclick="downloadAgentFiles('${esc(a.id)}')">Download Files</button>
           <button class="btn btn-danger btn-sm" onclick="deleteAgent('${esc(a.id)}','${esc(a.hostname)}')">Delete</button>
         </td>
       </tr>`;
@@ -2254,11 +2412,23 @@ function agentStatusClass(status) {
   switch (status) {
     case 'installed': return 'approved';
     case 'ready': return 'approved';
-    case 'installing': return 'pending';
-    case 'downloading': return 'pending';
+    case 'deploying': return 'pending';
     case 'error': return 'denied';
     default: return '';
   }
+}
+
+function populateAgentImageSelect(selectedID) {
+  const sel = document.getElementById('agent-image-id');
+  sel.innerHTML = '<option value="">-- Select a disk image --</option>';
+  (currentDiskImages || []).forEach(img => {
+    const osLabel = (osLabels[img.os] || img.os) + ' ' + (img.os_version || '');
+    const opt = document.createElement('option');
+    opt.value = img.id;
+    opt.textContent = img.name + ' (' + osLabel + ')';
+    if (img.id === selectedID) opt.selected = true;
+    sel.appendChild(opt);
+  });
 }
 
 function showCreateAgent() {
@@ -2268,21 +2438,14 @@ function showCreateAgent() {
   document.getElementById('agent-mac').value = '';
   document.getElementById('agent-hostname').value = '';
   document.getElementById('agent-ip').value = '';
-  document.getElementById('agent-os').value = 'alpine';
-  document.getElementById('agent-os-version').value = '';
-  document.getElementById('agent-os-version').placeholder = osVersionDefaults['alpine'];
+  document.getElementById('agent-image-version').value = '0';
   document.getElementById('agent-disk').value = '/dev/sda';
-  document.getElementById('agent-packages').value = '';
+  populateAgentImageSelect('');
   document.getElementById('modal-agent').classList.add('active');
 }
 
 function hideAgentModal() {
   document.getElementById('modal-agent').classList.remove('active');
-}
-
-function updateAgentDefaults() {
-  const os = document.getElementById('agent-os').value;
-  document.getElementById('agent-os-version').placeholder = osVersionDefaults[os] || '';
 }
 
 function editAgent(id) {
@@ -2294,10 +2457,9 @@ function editAgent(id) {
   document.getElementById('agent-mac').value = a.mac || '';
   document.getElementById('agent-hostname').value = a.hostname || '';
   document.getElementById('agent-ip').value = a.ip || '';
-  document.getElementById('agent-os').value = a.os || 'alpine';
-  document.getElementById('agent-os-version').value = a.os_version || '';
+  document.getElementById('agent-image-version').value = a.image_version || 0;
   document.getElementById('agent-disk').value = a.disk_device || '/dev/sda';
-  document.getElementById('agent-packages').value = (a.packages || []).join(', ');
+  populateAgentImageSelect(a.image_id || '');
   document.getElementById('modal-agent').classList.add('active');
 }
 
@@ -2305,31 +2467,31 @@ async function submitAgent() {
   const mac = document.getElementById('agent-mac').value.trim();
   const hostname = document.getElementById('agent-hostname').value.trim();
   const ip = document.getElementById('agent-ip').value.trim();
-  const os = document.getElementById('agent-os').value;
-  const osVersion = document.getElementById('agent-os-version').value.trim() || osVersionDefaults[os] || '';
+  const image_id = document.getElementById('agent-image-id').value;
+  const image_version = parseInt(document.getElementById('agent-image-version').value) || 0;
   const disk = document.getElementById('agent-disk').value.trim() || '/dev/sda';
-  const packagesStr = document.getElementById('agent-packages').value.trim();
-  const packages = packagesStr ? packagesStr.split(',').map(p => p.trim()).filter(p => p) : [];
 
   if (!mac || !hostname) {
     alert('MAC address and hostname are required');
+    return;
+  }
+  if (!image_id) {
+    alert('Please select a disk image');
     return;
   }
 
   try {
     if (editingAgentID) {
       await api('PUT', '/api/agents', {
-        id: editingAgentID, mac, hostname, ip, os, os_version: osVersion,
-        disk_device: disk, packages
+        id: editingAgentID, mac, hostname, ip, image_id, image_version, disk_device: disk
       });
     } else {
       await api('POST', '/api/agents', {
-        mac, hostname, ip, os, os_version: osVersion,
-        disk_device: disk, packages
+        mac, hostname, ip, image_id, image_version, disk_device: disk
       });
     }
     hideAgentModal();
-    loadAgents();
+    loadAgentVMs();
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -2339,17 +2501,7 @@ async function deleteAgent(id, name) {
   if (!confirm(`Delete agent "${name}"?`)) return;
   try {
     await api('DELETE', '/api/agents?id=' + encodeURIComponent(id));
-    loadAgents();
-  } catch (e) {
-    alert('Error: ' + e.message);
-  }
-}
-
-async function downloadAgentFiles(id) {
-  try {
-    await api('POST', '/api/agents/download', { id });
-    alert('Boot file download started. Refresh to check status.');
-    loadAgents();
+    loadAgentVMs();
   } catch (e) {
     alert('Error: ' + e.message);
   }

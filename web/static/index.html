@@ -53,14 +53,27 @@
       <!-- Agents -->
       <div id="page-agents" class="page">
         <div class="toolbar">
+          <h2>Disk Images</h2>
+          <button class="btn btn-primary" onclick="showCreateDiskImage()">+ New Image</button>
+        </div>
+        <div class="card">
+          <table>
+            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>Versions</th><th>Actions</th></tr></thead>
+            <tbody id="disk-images-tbody">
+              <tr><td colspan="5" class="empty-state">No disk images configured. Create one to get started.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="toolbar" style="margin-top:24px">
           <h2>Agent VMs</h2>
           <button class="btn btn-primary" onclick="showCreateAgent()">+ New Agent</button>
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>OS</th><th>Packages</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="agents-tbody">
-              <tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>
+              <tr><td colspan="6" class="empty-state">No agents configured. Add one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -816,6 +829,41 @@
     </div>
   </div>
 
+  <!-- Disk Image Modal -->
+  <div id="modal-disk-image" class="modal-overlay">
+    <div class="modal">
+      <h3 id="modal-disk-image-title">Add Disk Image</h3>
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" id="disk-image-name" placeholder="e.g., Alpine Dev Agent">
+      </div>
+      <div class="form-group">
+        <label>Operating System</label>
+        <select id="disk-image-os" onchange="updateDiskImageDefaults()">
+          <option value="alpine">Alpine Linux</option>
+          <option value="debian">Debian</option>
+          <option value="ubuntu">Ubuntu</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>OS Version</label>
+        <input type="text" id="disk-image-os-version" placeholder="auto-detected">
+      </div>
+      <div class="form-group">
+        <label>Extra Packages (comma-separated)</label>
+        <input type="text" id="disk-image-packages" placeholder="e.g., curl, vim, htop">
+      </div>
+      <div class="form-group">
+        <label>Custom Scripts (one per line, run in chroot during build)</label>
+        <textarea id="disk-image-scripts" rows="3" placeholder="e.g., echo 'custom config' > /etc/myapp.conf"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideDiskImageModal()">Cancel</button>
+        <button class="btn btn-primary" id="modal-disk-image-submit" onclick="submitDiskImage()">Add</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Agent Modal -->
   <div id="modal-agent" class="modal-overlay">
     <div class="modal">
@@ -833,24 +881,18 @@
         <input type="text" id="agent-ip" placeholder="e.g., 10.255.255.50">
       </div>
       <div class="form-group">
-        <label>Operating System</label>
-        <select id="agent-os" onchange="updateAgentDefaults()">
-          <option value="alpine">Alpine Linux</option>
-          <option value="debian">Debian</option>
-          <option value="ubuntu">Ubuntu</option>
+        <label>Disk Image</label>
+        <select id="agent-image-id">
+          <option value="">-- Select a disk image --</option>
         </select>
       </div>
       <div class="form-group">
-        <label>OS Version</label>
-        <input type="text" id="agent-os-version" placeholder="auto-detected">
+        <label>Image Version (0 = latest ready)</label>
+        <input type="number" id="agent-image-version" value="0" min="0" placeholder="0 = latest">
       </div>
       <div class="form-group">
         <label>Disk Device</label>
         <input type="text" id="agent-disk" value="/dev/sda" placeholder="/dev/sda">
-      </div>
-      <div class="form-group">
-        <label>Extra Packages (comma-separated)</label>
-        <input type="text" id="agent-packages" placeholder="e.g., curl, vim, htop">
       </div>
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideAgentModal()">Cancel</button>
