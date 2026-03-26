@@ -140,6 +140,17 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	proxyConf := fmt.Sprintf("export http_proxy=http://%s:8080\nexport https_proxy=http://%s:8080\n", serverIP, serverIP)
 	os.WriteFile(filepath.Join(rootfsDir, "etc/profile.d/proxy.sh"), []byte(proxyConf), 0o644)
 
+	// Install custom CA certificate into the rootfs.
+	log.Printf("Image build [%s v%s]: installing CA certificate", img.Name, img.OSVersion)
+	caDir := filepath.Join(rootfsDir, "usr/local/share/ca-certificates")
+	os.MkdirAll(caDir, 0o755)
+	caURL := fmt.Sprintf("http://%s/ca.crt", serverIP)
+	if err := downloadFile(caURL, filepath.Join(caDir, "firewall4ai-ca.crt")); err != nil {
+		log.Printf("Warning: failed to download CA certificate: %v", err)
+	} else {
+		runChroot(rootfsDir, "update-ca-certificates")
+	}
+
 	// Root password: set to 'root'.
 	runChroot(rootfsDir, "sh", "-c", "echo 'root:root' | chpasswd")
 
@@ -268,6 +279,17 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 	}
 	if err := runChrootEnv(rootfsDir, debEnv, "apt-get", append([]string{"install", "-y"}, allPkgs...)...); err != nil {
 		return fmt.Errorf("apt-get install: %w", err)
+	}
+
+	// Install custom CA certificate into the rootfs.
+	log.Printf("Image build [%s v%s]: installing CA certificate", img.Name, img.OSVersion)
+	caDir := filepath.Join(rootfsDir, "usr/local/share/ca-certificates")
+	os.MkdirAll(caDir, 0o755)
+	caURL := fmt.Sprintf("http://%s/ca.crt", serverIP)
+	if err := downloadFile(caURL, filepath.Join(caDir, "firewall4ai-ca.crt")); err != nil {
+		log.Printf("Warning: failed to download CA certificate: %v", err)
+	} else {
+		runChroot(rootfsDir, "update-ca-certificates")
 	}
 
 	// Configure the system.
@@ -555,10 +577,16 @@ echo "=== Firewall4AI Deploy done, continuing boot ==="
 		return err
 	}
 
+	// Convert outputPath to absolute before cd changes the working directory.
+	absOutput, err := filepath.Abs(outputPath)
+	if err != nil {
+		return fmt.Errorf("resolve output path: %w", err)
+	}
+
 	// Create cpio.gz archive.
 	if err := run("sh", "-c", fmt.Sprintf(
 		"cd %s && find . | cpio -o -H newc 2>/dev/null | gzip > %s",
-		overlayDir, outputPath)); err != nil {
+		overlayDir, absOutput)); err != nil {
 		return fmt.Errorf("create cpio.gz: %w", err)
 	}
 
