@@ -15,6 +15,7 @@ RUN apt-get update \
     dbus-daemon \
     dmsetup \
     ipxe \
+    debootstrap \
     dosfstools \
     dracut-core \
     dracut-live \
