@@ -119,6 +119,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/languages", h.setDisabledLanguages)
 	mux.HandleFunc("GET /api/settings/distros", h.getDisabledDistros)
 	mux.HandleFunc("POST /api/settings/distros", h.setDisabledDistros)
+	mux.HandleFunc("GET /api/system/logs", h.systemLogs)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
 }
@@ -825,6 +826,37 @@ func (h *Handler) setSSHStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": req.Enabled})
+}
+
+// allowedServices is the whitelist of systemd services whose logs can be viewed.
+var allowedServices = map[string]bool{
+	"firewall4ai":      true,
+	"iptables":         true,
+	"systemd-networkd": true,
+	"ssh":              true,
+}
+
+func (h *Handler) systemLogs(w http.ResponseWriter, r *http.Request) {
+	service := r.URL.Query().Get("service")
+	if service == "" {
+		service = "firewall4ai"
+	}
+	if !allowedServices[service] {
+		http.Error(w, "service not allowed", http.StatusBadRequest)
+		return
+	}
+	lines := "200"
+	if v := r.URL.Query().Get("lines"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
+			lines = strconv.Itoa(n)
+		}
+	}
+	out, err := exec.Command("journalctl", "-u", service, "-n", lines, "--no-pager", "--output=short-iso").CombinedOutput()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"logs": "Error reading logs: " + string(out)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"logs": string(out)})
 }
 
 func (h *Handler) systemUpgrade(w http.ResponseWriter, r *http.Request) {

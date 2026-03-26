@@ -21,7 +21,7 @@
         <a href="#" data-page="skills">&#x26a1; Skills</a>
         <a href="#" data-page="credentials">&#x1f511; Credentials</a>
         <a href="#" data-page="logs">&#x1f4cb; Logs</a>
-        <a href="#" data-page="settings">&#x2699; Settings</a>
+        <a href="#" data-page="system">&#x2699; System</a>
       </nav>
       <div class="sidebar-footer">
         <a href="/ca.crt" class="sidebar-link" download>&#x1f4e5; Download CA Certificate</a>
@@ -310,9 +310,28 @@
         </div>
       </div>
 
-      <!-- Settings -->
-      <div id="page-settings" class="page">
-        <h2>Settings</h2>
+      <!-- System -->
+      <div id="page-system" class="page">
+        <h2>System</h2>
+        <div class="card">
+          <h3>Service Logs</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Service</div>
+              <div class="setting-desc">View systemd service logs in real-time.</div>
+            </div>
+            <div class="setting-control">
+              <select id="service-log-select" onchange="loadServiceLogs()">
+                <option value="firewall4ai" selected>firewall4ai</option>
+                <option value="iptables">iptables</option>
+                <option value="systemd-networkd">systemd-networkd</option>
+                <option value="ssh">ssh</option>
+              </select>
+              <button class="btn btn-outline btn-sm" onclick="loadServiceLogs()">Refresh</button>
+            </div>
+          </div>
+          <pre id="service-log-output" style="background:var(--bg-secondary);padding:12px;border-radius:6px;max-height:400px;overflow-y:auto;font-size:12px;white-space:pre-wrap;word-break:break-all;margin-top:8px">Loading...</pre>
+        </div>
         <div class="card">
           <h3>Categories</h3>
           <div class="setting-row">

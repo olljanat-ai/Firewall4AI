@@ -59,7 +59,7 @@ function navigate(page) {
   if (page === 'skills') loadSkills();
   if (page === 'credentials') loadCredentials();
   if (page === 'logs') loadLogs();
-  if (page === 'settings') loadSettings();
+  if (page === 'system') loadSystem();
 }
 
 // --- API helpers ---
@@ -1854,8 +1854,9 @@ function timeAgo(ts) {
   return Math.floor(seconds / 86400) + 'd ago';
 }
 
-// --- Settings ---
-async function loadSettings() {
+// --- System ---
+async function loadSystem() {
+  loadServiceLogs();
   await refreshCategories();
   renderCategories();
   try {
@@ -1867,7 +1868,7 @@ async function loadSettings() {
     btn.textContent = data.enabled ? 'Disable' : 'Enable';
     btn.disabled = false;
   } catch (e) {
-    console.error('Settings load error:', e);
+    console.error('System load error:', e);
   }
   try {
     const data = await api('GET', '/api/settings/learning-mode');
@@ -1882,6 +1883,19 @@ async function loadSettings() {
   }
   loadLanguageSettings();
   loadDistroSettings();
+}
+
+async function loadServiceLogs() {
+  const service = document.getElementById('service-log-select').value;
+  const output = document.getElementById('service-log-output');
+  output.textContent = 'Loading...';
+  try {
+    const data = await api('GET', '/api/system/logs?service=' + encodeURIComponent(service) + '&lines=200');
+    output.textContent = data.logs || 'No log entries.';
+    output.scrollTop = output.scrollHeight;
+  } catch (e) {
+    output.textContent = 'Error loading logs: ' + e.message;
+  }
 }
 
 // Known language types and their display names
@@ -1984,7 +1998,7 @@ async function toggleLearningMode() {
   if (!confirm(isEnabled ? 'Disable Learning Mode? New connections will require approval.' : 'Enable Learning Mode? All connections will be allowed by default.')) return;
   try {
     await api('POST', '/api/settings/learning-mode', { enabled: !isEnabled });
-    loadSettings();
+    loadSystem();
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -1996,7 +2010,7 @@ async function toggleSSH() {
   if (!confirm(isEnabled ? 'Disable SSH access?' : 'Enable SSH access?')) return;
   try {
     await api('POST', '/api/settings/ssh', { enabled: !isEnabled });
-    loadSettings();
+    loadSystem();
   } catch (e) {
     alert('Error: ' + e.message);
   }
