@@ -41,9 +41,6 @@ func TestGenerateDeployIPXEScriptDebian(t *testing.T) {
 	if !strings.Contains(script, "/images/img-1/1/netboot/initrd.img") {
 		t.Fatal("missing image initrd URL")
 	}
-	if !strings.Contains(script, "/images/img-1/1/netboot/deploy-initrd.img") {
-		t.Fatal("missing deploy overlay URL")
-	}
 	if !strings.Contains(script, "root=/dev/sda1") {
 		t.Fatal("missing root parameter")
 	}

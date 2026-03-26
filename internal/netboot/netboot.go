@@ -1,8 +1,8 @@
 // Package netboot manages the deploy boot system for agent VMs.
-// Each image build produces its own kernel, initrd, and deploy overlay
-// in the image version's netboot/ directory. For Debian/Ubuntu, a deploy
-// overlay initrd hooks into the initramfs premount stage. For Alpine,
-// the existing apkovl mechanism handles deployment.
+// Each image build produces its own kernel and initrd in the image
+// version's netboot/ directory. For Debian/Ubuntu, deploy tools and a
+// premount script are baked into the initrd via initramfs-tools hooks.
+// For Alpine, the apkovl mechanism handles deployment.
 package netboot
 
 import (
@@ -72,9 +72,9 @@ func (m *Manager) HasImageBootFiles(imageID string, version int) bool {
 }
 
 // GenerateDeployIPXEScript generates an iPXE boot script that boots the
-// image's own kernel and initrd. For Debian/Ubuntu, a deploy overlay initrd
-// is loaded which handles partitioning and rootfs extraction during the
-// initramfs premount stage. For Alpine, the apkovl mechanism is used.
+// image's own kernel and initrd. For Debian/Ubuntu, the initrd has deploy
+// tools and a premount script baked in. For Alpine, the apkovl mechanism
+// is used.
 func (m *Manager) GenerateDeployIPXEScript(info DeployBootInfo) string {
 	var b strings.Builder
 
@@ -87,14 +87,13 @@ func (m *Manager) GenerateDeployIPXEScript(info DeployBootInfo) string {
 
 	switch info.OSType {
 	case agent.OSDebian, agent.OSUbuntu:
-		// Boot image's kernel+initrd with deploy overlay.
-		// The deploy overlay contains a premount script that partitions,
-		// formats, and extracts rootfs before the initrd mounts root.
-		deployOverlayURL := baseURL + "/deploy-initrd.img"
+		// Boot image's kernel+initrd. The initrd has deploy tools and a premount
+		// script baked in via initramfs-tools hooks. The premount script detects
+		// fw4ai_agent/fw4ai_server kernel params and handles partitioning,
+		// formatting, and rootfs extraction before root mount.
 		b.WriteString(fmt.Sprintf("kernel %s root=/dev/sda1 ip=dhcp fw4ai_agent=%s fw4ai_server=%s\n",
 			kernelURL, info.AgentID, m.ServerIP))
 		b.WriteString(fmt.Sprintf("initrd %s\n", initrdURL))
-		b.WriteString(fmt.Sprintf("initrd %s\n", deployOverlayURL))
 
 	case agent.OSAlpine:
 		// Boot image's kernel+initrd with Alpine's apkovl mechanism.
