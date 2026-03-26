@@ -154,6 +154,7 @@ wget -qO /tmp/deploy-info.txt "${API}/boot/deploy-info/${AGENT_ID}"
 DISK=$(grep '^disk=' /tmp/deploy-info.txt | cut -d= -f2-)
 IMAGE_URL=$(grep '^image_url=' /tmp/deploy-info.txt | cut -d= -f2-)
 HOSTNAME=$(grep '^hostname=' /tmp/deploy-info.txt | cut -d= -f2-)
+OS_TYPE=$(grep '^os_type=' /tmp/deploy-info.txt | cut -d= -f2-)
 
 if [ -z "$DISK" ] || [ -z "$IMAGE_URL" ]; then
     echo "ERROR: Missing disk or image_url in deploy info"
@@ -167,7 +168,7 @@ echo "-> Hostname: $HOSTNAME"
 
 # Install e2fsprogs for mkfs.ext4 (busybox version is limited).
 echo "-> Installing deployment tools..."
-apk add e2fsprogs syslinux 2>/dev/null || true
+apk add e2fsprogs syslinux kexec-tools 2>/dev/null || true
 
 # Partition disk: single partition, entire disk, bootable.
 echo "-> Partitioning ${DISK}..."
@@ -228,9 +229,24 @@ fi
 echo "-> Deployment complete!"
 wget -qO /dev/null "${API}/boot/status/${AGENT_ID}?status=installed" || true
 
-# Reboot into the installed system.
+# Boot into the installed system.
 sync
-umount /mnt/target
+
+if [ "$OS_TYPE" = "debian" ] || [ "$OS_TYPE" = "ubuntu" ]; then
+    # Use kexec to boot directly into the installed kernel without hardware reboot.
+    KERNEL=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -n1)
+    INITRD=$(ls /mnt/target/boot/initrd.img-* 2>/dev/null | head -n1)
+    if [ -n "$KERNEL" ] && [ -n "$INITRD" ]; then
+        echo "-> Loading installed kernel via kexec..."
+        kexec -l "$KERNEL" --initrd="$INITRD" --command-line="root=${PART} ro quiet"
+        umount /mnt/target
+        echo "-> kexec into installed system..."
+        kexec -e
+    fi
+fi
+
+# Fallback: traditional reboot (for Alpine or if kexec fails).
+umount /mnt/target 2>/dev/null || true
 echo "-> Rebooting..."
 reboot -f
 `

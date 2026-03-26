@@ -295,6 +295,24 @@ LABEL linux
 		}
 	}
 
+	// Export kernel + initrd for netboot/kexec use.
+	log.Printf("Image build [%s v%s]: exporting kernel and initrd for netboot", img.Name, img.OSVersion)
+	netbootDir := filepath.Join(filepath.Dir(rootfsPath), "netboot")
+	if err := os.MkdirAll(netbootDir, 0o755); err != nil {
+		return fmt.Errorf("create netboot dir: %w", err)
+	}
+
+	if len(kernelGlob) > 0 {
+		if err := copyFile(kernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
+			return fmt.Errorf("export kernel: %w", err)
+		}
+	}
+	if len(initrdGlob) > 0 {
+		if err := copyFile(initrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
+			return fmt.Errorf("export initrd: %w", err)
+		}
+	}
+
 	// Create rootfs tarball.
 	log.Printf("Image build [%s v%s]: creating rootfs tarball", img.Name, img.OSVersion)
 
@@ -341,6 +359,30 @@ func runChrootEnv(rootfs string, env []string, name string, args ...string) erro
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// copyFile copies a file from src to dst atomically.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	tmpPath := dst + ".tmp"
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	out.Close()
+
+	return os.Rename(tmpPath, dst)
 }
 
 func downloadFile(url, dest string) error {
