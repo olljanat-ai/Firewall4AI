@@ -163,12 +163,19 @@ func main() {
 
 	// DHCP PXE provider: returns boot info for registered agents.
 	dhcpServer.PXEProvider = func(mac string, clientArch uint16, isIPXE bool) *dhcp.PXEInfo {
-		_, ok := agentMgr.GetByMAC(mac)
+		a, ok := agentMgr.GetByMAC(mac)
 		if !ok {
 			return nil // Not a registered agent, no PXE.
 		}
-		if !netbootMgr.HasDeployFiles() {
-			return nil // Deploy boot files not downloaded yet.
+		// Check if image boot files are ready.
+		ver := a.ImageVersion
+		if ver == 0 {
+			if img, ok := imageMgr.Get(a.ImageID); ok {
+				ver = img.LatestReadyVersion()
+			}
+		}
+		if ver == 0 || !netbootMgr.HasImageBootFiles(a.ImageID, ver) {
+			return nil // Image boot files not ready.
 		}
 		info := &dhcp.PXEInfo{
 			TFTPServer: serverIP.String(),
@@ -234,10 +241,6 @@ func main() {
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusError, err.Error())
 		} else {
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusReady, "")
-			// Download deploy boot files if not already cached.
-			if err := netbootMgr.EnsureDeployFiles(); err != nil {
-				log.Printf("Warning: could not download deploy boot files: %v", err)
-			}
 		}
 
 		dataStore.Update(func(d *storeData) {

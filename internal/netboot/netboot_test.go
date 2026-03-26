@@ -3,12 +3,20 @@ package netboot
 import (
 	"strings"
 	"testing"
+
+	"github.com/olljanat-ai/firewall4ai/internal/agent"
 )
 
-func TestGenerateDeployIPXEScript(t *testing.T) {
+func TestGenerateDeployIPXEScriptDebian(t *testing.T) {
 	m := NewManager("/tmp/test", "10.255.255.1")
 
-	script := m.GenerateDeployIPXEScript("agent-123")
+	script := m.GenerateDeployIPXEScript(DeployBootInfo{
+		AgentID:      "agent-123",
+		ImageID:      "img-1",
+		ImageVersion: 1,
+		OSType:       agent.OSDebian,
+		OSVersion:    "13",
+	})
 	if !strings.HasPrefix(script, "#!ipxe") {
 		t.Fatal("missing iPXE shebang")
 	}
@@ -17,9 +25,6 @@ func TestGenerateDeployIPXEScript(t *testing.T) {
 	}
 	if !strings.Contains(script, "initrd") {
 		t.Fatal("missing initrd line")
-	}
-	if !strings.Contains(script, "alpine_repo") {
-		t.Fatal("missing alpine_repo parameter")
 	}
 	if !strings.Contains(script, "fw4ai_agent=agent-123") {
 		t.Fatal("missing agent ID parameter")
@@ -30,11 +35,41 @@ func TestGenerateDeployIPXEScript(t *testing.T) {
 	if !strings.Contains(script, "boot") {
 		t.Fatal("missing boot command")
 	}
-	if !strings.Contains(script, "/boot/deploy/kernel") {
-		t.Fatal("missing deploy kernel URL")
+	if !strings.Contains(script, "/images/img-1/1/netboot/vmlinuz") {
+		t.Fatal("missing image kernel URL")
 	}
-	if !strings.Contains(script, "/boot/deploy/initrd") {
-		t.Fatal("missing deploy initrd URL")
+	if !strings.Contains(script, "/images/img-1/1/netboot/initrd.img") {
+		t.Fatal("missing image initrd URL")
+	}
+	if !strings.Contains(script, "/images/img-1/1/netboot/deploy-initrd.img") {
+		t.Fatal("missing deploy overlay URL")
+	}
+	if !strings.Contains(script, "root=/dev/sda1") {
+		t.Fatal("missing root parameter")
+	}
+}
+
+func TestGenerateDeployIPXEScriptAlpine(t *testing.T) {
+	m := NewManager("/tmp/test", "10.255.255.1")
+
+	script := m.GenerateDeployIPXEScript(DeployBootInfo{
+		AgentID:      "agent-456",
+		ImageID:      "img-2",
+		ImageVersion: 3,
+		OSType:       agent.OSAlpine,
+		OSVersion:    "3.23",
+	})
+	if !strings.Contains(script, "alpine_repo") {
+		t.Fatal("missing alpine_repo parameter")
+	}
+	if !strings.Contains(script, "fw4ai_agent=agent-456") {
+		t.Fatal("missing agent ID parameter")
+	}
+	if !strings.Contains(script, "/images/img-2/3/netboot/vmlinuz") {
+		t.Fatal("missing image kernel URL")
+	}
+	if !strings.Contains(script, "apkovl") {
+		t.Fatal("missing apkovl parameter")
 	}
 }
 
@@ -67,5 +102,13 @@ func TestTFTPDir(t *testing.T) {
 	expected := "/var/lib/firewall4ai/netboot/tftp"
 	if d := m.TFTPDir(); d != expected {
 		t.Fatalf("expected %s, got %s", expected, d)
+	}
+}
+
+func TestHasImageBootFiles(t *testing.T) {
+	m := NewManager("/tmp/nonexistent", "10.255.255.1")
+
+	if m.HasImageBootFiles("img-1", 1) {
+		t.Fatal("expected false for non-existent files")
 	}
 }

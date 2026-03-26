@@ -259,7 +259,7 @@ func (h *AgentHandler) index(w http.ResponseWriter, r *http.Request) {
 
 // getIPXEScript serves the iPXE boot script for an agent identified by MAC.
 func (h *AgentHandler) getIPXEScript(w http.ResponseWriter, r *http.Request) {
-	if h.AgentManager == nil || h.NetbootManager == nil {
+	if h.AgentManager == nil || h.NetbootManager == nil || h.ImageManager == nil {
 		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -278,10 +278,37 @@ func (h *AgentHandler) getIPXEScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	img, ok := h.ImageManager.Get(a.ImageID)
+	if !ok {
+		http.Error(w, "image not found for agent", http.StatusNotFound)
+		return
+	}
+
+	// Determine which version to deploy.
+	ver := a.ImageVersion
+	if ver == 0 {
+		ver = img.LatestReadyVersion()
+	}
+	if ver == 0 {
+		http.Error(w, "no ready image version available", http.StatusNotFound)
+		return
+	}
+
+	if !h.NetbootManager.HasImageBootFiles(a.ImageID, ver) {
+		http.Error(w, "image boot files not ready", http.StatusNotFound)
+		return
+	}
+
 	// Mark agent as deploying.
 	h.AgentManager.SetStatus(a.ID, agent.StatusDeploying, "PXE boot in progress")
 
-	script := h.NetbootManager.GenerateDeployIPXEScript(a.ID)
+	script := h.NetbootManager.GenerateDeployIPXEScript(netboot.DeployBootInfo{
+		AgentID:      a.ID,
+		ImageID:      a.ImageID,
+		ImageVersion: ver,
+		OSType:       img.OS,
+		OSVersion:    img.OSVersion,
+	})
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte(script))
 }

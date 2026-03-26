@@ -98,6 +98,13 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 
 	// Install base packages + kernel + bootloader.
 	log.Printf("Image build [%s v%s]: installing packages", img.Name, img.OSVersion)
+
+	// Configure mkinitfs to include network feature for PXE boot support.
+	// This must be done before installing the kernel, which triggers mkinitfs.
+	os.MkdirAll(filepath.Join(rootfsDir, "etc/mkinitfs"), 0o755)
+	mkinitfsConf := "features=\"ata base cdrom ext4 keymap kms mmc network nvme scsi usb virtio\"\n"
+	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/mkinitfs.conf"), []byte(mkinitfsConf), 0o644)
+
 	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates"}
 	allPkgs := append(basePkgs, img.Packages...)
 
@@ -185,6 +192,12 @@ LABEL alpine
 		if err := copyFile(initrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
 			return fmt.Errorf("export initrd: %w", err)
 		}
+	}
+
+	// Generate deploy overlay initrd for PXE boot.
+	log.Printf("Image build [%s v%s]: generating deploy overlay initrd", img.Name, img.OSVersion)
+	if err := generateDeployOverlay(filepath.Join(netbootDir, "deploy-initrd.img")); err != nil {
+		return fmt.Errorf("generate deploy overlay: %w", err)
 	}
 
 	// Create rootfs tarball.
@@ -332,6 +345,12 @@ LABEL linux
 		}
 	}
 
+	// Generate deploy overlay initrd for PXE boot.
+	log.Printf("Image build [%s v%s]: generating deploy overlay initrd", img.Name, img.OSVersion)
+	if err := generateDeployOverlay(filepath.Join(netbootDir, "deploy-initrd.img")); err != nil {
+		return fmt.Errorf("generate deploy overlay: %w", err)
+	}
+
 	// Create rootfs tarball.
 	log.Printf("Image build [%s v%s]: creating rootfs tarball", img.Name, img.OSVersion)
 
@@ -402,6 +421,148 @@ func copyFile(src, dst string) error {
 	out.Close()
 
 	return os.Rename(tmpPath, dst)
+}
+
+// generateDeployOverlay creates a cpio.gz initrd overlay containing a
+// premount deploy script. When loaded alongside the image's initrd during
+// PXE boot, the premount script runs after module loading and network
+// configuration but before root mount. It partitions the disk, downloads
+// the rootfs tarball, and extracts it so that the normal initrd init can
+// mount root and switch_root seamlessly.
+func generateDeployOverlay(outputPath string) error {
+	deployScript := `#!/bin/sh
+# Firewall4AI: Deploy premount script
+# Runs inside initramfs before root is mounted.
+# Partitions disk, downloads rootfs, extracts it, installs bootloader.
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+# Extract deploy parameters from kernel cmdline.
+FW4AI_AGENT=""
+FW4AI_SERVER=""
+for p in $(cat /proc/cmdline); do
+    case "$p" in
+        fw4ai_agent=*) FW4AI_AGENT="${p#fw4ai_agent=}" ;;
+        fw4ai_server=*) FW4AI_SERVER="${p#fw4ai_server=}" ;;
+    esac
+done
+
+# Skip if not a deploy boot (no fw4ai parameters).
+[ -z "$FW4AI_AGENT" ] && exit 0
+[ -z "$FW4AI_SERVER" ] && exit 0
+
+API="http://${FW4AI_SERVER}"
+
+echo "=== Firewall4AI Deploy starting ==="
+
+# Report deploying status.
+wget -qO /dev/null "${API}/boot/status/${FW4AI_AGENT}?status=deploying" 2>/dev/null || true
+
+# Get deployment info.
+echo "-> Fetching deployment info..."
+wget -qO /tmp/deploy-info.txt "${API}/boot/deploy-info/${FW4AI_AGENT}"
+
+DISK=$(grep '^disk=' /tmp/deploy-info.txt | cut -d= -f2-)
+IMAGE_URL=$(grep '^image_url=' /tmp/deploy-info.txt | cut -d= -f2-)
+HOSTNAME=$(grep '^hostname=' /tmp/deploy-info.txt | cut -d= -f2-)
+
+if [ -z "$DISK" ] || [ -z "$IMAGE_URL" ]; then
+    echo "ERROR: Missing disk or image_url in deploy info"
+    wget -qO /dev/null "${API}/boot/status/${FW4AI_AGENT}?status=error&msg=missing+deploy+info" 2>/dev/null || true
+    exit 0
+fi
+
+echo "-> Disk: $DISK"
+echo "-> Image: $IMAGE_URL"
+
+# Partition disk: single partition, entire disk, bootable.
+echo "-> Partitioning ${DISK}..."
+echo -e "o\nn\np\n1\n\n\na\n1\nw" | fdisk ${DISK} 2>/dev/null || true
+sleep 1
+
+# Detect partition name (sda1 vs vda1 vs nvme0n1p1).
+PART="${DISK}1"
+if echo "$DISK" | grep -q "nvme"; then
+    PART="${DISK}p1"
+fi
+
+# Format partition.
+echo "-> Formatting ${PART}..."
+mkfs.ext4 -F ${PART}
+
+# Mount and extract rootfs.
+echo "-> Extracting rootfs image..."
+mkdir -p /mnt/target
+mount ${PART} /mnt/target
+wget -qO - "${IMAGE_URL}" | tar xzf - -C /mnt/target
+
+# Set hostname.
+if [ -n "$HOSTNAME" ]; then
+    echo "$HOSTNAME" > /mnt/target/etc/hostname
+fi
+
+# Download CA certificate.
+echo "-> Installing CA certificate..."
+mkdir -p /mnt/target/usr/local/share/ca-certificates
+wget -qO /mnt/target/usr/local/share/ca-certificates/firewall4ai-ca.crt "${API}/ca.crt" 2>/dev/null || true
+if [ -x /mnt/target/usr/sbin/update-ca-certificates ]; then
+    chroot /mnt/target update-ca-certificates 2>/dev/null || true
+fi
+
+# Install bootloader for future disk boots.
+echo "-> Installing bootloader..."
+MBR_BIN=""
+EXTLINUX_BIN=""
+for p in /mnt/target/usr/share/syslinux/mbr.bin /mnt/target/usr/lib/syslinux/mbr/mbr.bin; do
+    [ -f "$p" ] && MBR_BIN="$p" && break
+done
+for p in /mnt/target/sbin/extlinux /mnt/target/usr/bin/extlinux /mnt/target/usr/sbin/extlinux; do
+    [ -x "$p" ] && EXTLINUX_BIN="$p" && break
+done
+if [ -n "$MBR_BIN" ]; then
+    dd if="$MBR_BIN" of=${DISK} bs=440 count=1 2>/dev/null
+fi
+if [ -n "$EXTLINUX_BIN" ]; then
+    mkdir -p /mnt/target/boot
+    "$EXTLINUX_BIN" --install /mnt/target/boot
+fi
+
+# Report success.
+echo "-> Deploy complete!"
+wget -qO /dev/null "${API}/boot/status/${FW4AI_AGENT}?status=installed" 2>/dev/null || true
+
+# Unmount so initrd can mount it as root.
+umount /mnt/target
+
+echo "=== Firewall4AI Deploy done, continuing boot ==="
+`
+
+	// Create overlay directory structure.
+	overlayDir, err := os.MkdirTemp("", "fw4ai-deploy-overlay-")
+	if err != nil {
+		return fmt.Errorf("create overlay temp dir: %w", err)
+	}
+	defer os.RemoveAll(overlayDir)
+
+	// Create premount script.
+	scriptDir := filepath.Join(overlayDir, "scripts", "init-premount")
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(scriptDir, "deploy"), []byte(deployScript), 0o755); err != nil {
+		return err
+	}
+
+	// Create cpio.gz archive.
+	if err := run("sh", "-c", fmt.Sprintf(
+		"cd %s && find . | cpio -o -H newc 2>/dev/null | gzip > %s",
+		overlayDir, outputPath)); err != nil {
+		return fmt.Errorf("create cpio.gz: %w", err)
+	}
+
+	return nil
 }
 
 func downloadFile(url, dest string) error {

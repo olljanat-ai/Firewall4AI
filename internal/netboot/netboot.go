@@ -1,7 +1,8 @@
 // Package netboot manages the deploy boot system for agent VMs.
-// It uses Alpine Linux netboot as a universal deploy system that boots
-// into RAM, partitions the target disk, and extracts a pre-built rootfs
-// tarball for fast deployment.
+// Each image build produces its own kernel, initrd, and deploy overlay
+// in the image version's netboot/ directory. For Debian/Ubuntu, a deploy
+// overlay initrd hooks into the initramfs premount stage. For Alpine,
+// the existing apkovl mechanism handles deployment.
 package netboot
 
 import (
@@ -9,20 +10,28 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/olljanat-ai/firewall4ai/internal/agent"
 )
 
 const (
 	// Alpine version used for the deploy boot system.
 	deployAlpineVersion = "3.23"
 )
+
+// DeployBootInfo contains the information needed to generate an iPXE boot script.
+type DeployBootInfo struct {
+	AgentID      string
+	ImageID      string
+	ImageVersion int
+	OSType       agent.OSType
+	OSVersion    string
+}
 
 // Manager handles the deploy boot system and iPXE script generation.
 type Manager struct {
@@ -55,64 +64,47 @@ func (m *Manager) EnsureTFTPDir() error {
 	return os.MkdirAll(m.TFTPDir(), 0o755)
 }
 
-// EnsureDeployFiles downloads the Alpine netboot files used for deployment.
-// These are cached and only downloaded once.
-func (m *Manager) EnsureDeployFiles() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	dir := m.DeployDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create deploy dir: %w", err)
-	}
-
-	kernelPath := filepath.Join(dir, "kernel")
-	initrdPath := filepath.Join(dir, "initrd")
-
-	if fileExists(kernelPath) && fileExists(initrdPath) {
-		log.Printf("Deploy boot files already cached")
-		return nil
-	}
-
-	kernelURL := fmt.Sprintf("https://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/netboot/vmlinuz-lts", deployAlpineVersion)
-	initrdURL := fmt.Sprintf("https://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/netboot/initramfs-lts", deployAlpineVersion)
-
-	log.Printf("Downloading deploy boot files (Alpine %s netboot)...", deployAlpineVersion)
-
-	if err := downloadFile(kernelURL, kernelPath); err != nil {
-		return fmt.Errorf("download deploy kernel: %w", err)
-	}
-	if err := downloadFile(initrdURL, initrdPath); err != nil {
-		return fmt.Errorf("download deploy initrd: %w", err)
-	}
-
-	log.Printf("Deploy boot files ready")
-	return nil
-}
-
-// HasDeployFiles checks if the deploy boot files are already downloaded.
-func (m *Manager) HasDeployFiles() bool {
-	dir := m.DeployDir()
-	return fileExists(filepath.Join(dir, "kernel")) && fileExists(filepath.Join(dir, "initrd"))
+// HasImageBootFiles checks if the image version has netboot files ready.
+func (m *Manager) HasImageBootFiles(imageID string, version int) bool {
+	netbootDir := filepath.Join(m.DataDir, "images", imageID, fmt.Sprintf("%d", version), "netboot")
+	return fileExists(filepath.Join(netbootDir, "vmlinuz")) &&
+		fileExists(filepath.Join(netbootDir, "initrd.img"))
 }
 
 // GenerateDeployIPXEScript generates an iPXE boot script that boots the
-// Alpine deploy system. The deploy system will partition, format, and
-// extract the rootfs image onto the agent's disk.
-func (m *Manager) GenerateDeployIPXEScript(agentID string) string {
+// image's own kernel and initrd. For Debian/Ubuntu, a deploy overlay initrd
+// is loaded which handles partitioning and rootfs extraction during the
+// initramfs premount stage. For Alpine, the apkovl mechanism is used.
+func (m *Manager) GenerateDeployIPXEScript(info DeployBootInfo) string {
 	var b strings.Builder
 
-	kernelURL := fmt.Sprintf("http://%s/boot/deploy/kernel", m.ServerIP)
-	initrdURL := fmt.Sprintf("http://%s/boot/deploy/initrd", m.ServerIP)
-	modloopURL := fmt.Sprintf("http://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/netboot/modloop-lts", deployAlpineVersion)
-	apkovlURL := fmt.Sprintf("http://%s/boot/deploy/apkovl.tar.gz", m.ServerIP)
+	baseURL := fmt.Sprintf("http://%s/images/%s/%d/netboot",
+		m.ServerIP, info.ImageID, info.ImageVersion)
+	kernelURL := baseURL + "/vmlinuz"
+	initrdURL := baseURL + "/initrd.img"
 
 	b.WriteString("#!ipxe\n\n")
-	b.WriteString(fmt.Sprintf("kernel %s alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v%s/main/ modloop=%s ip=dhcp apkovl=%s fw4ai_agent=%s fw4ai_server=%s\n",
-		kernelURL, deployAlpineVersion, modloopURL, apkovlURL, agentID, m.ServerIP))
-	b.WriteString(fmt.Sprintf("initrd %s\n", initrdURL))
-	b.WriteString("boot\n")
 
+	switch info.OSType {
+	case agent.OSDebian, agent.OSUbuntu:
+		// Boot image's kernel+initrd with deploy overlay.
+		// The deploy overlay contains a premount script that partitions,
+		// formats, and extracts rootfs before the initrd mounts root.
+		deployOverlayURL := baseURL + "/deploy-initrd.img"
+		b.WriteString(fmt.Sprintf("kernel %s root=/dev/sda1 ip=dhcp fw4ai_agent=%s fw4ai_server=%s\n",
+			kernelURL, info.AgentID, m.ServerIP))
+		b.WriteString(fmt.Sprintf("initrd %s\n", initrdURL))
+		b.WriteString(fmt.Sprintf("initrd %s\n", deployOverlayURL))
+
+	case agent.OSAlpine:
+		// Boot image's kernel+initrd with Alpine's apkovl mechanism.
+		apkovlURL := fmt.Sprintf("http://%s/boot/deploy/apkovl.tar.gz", m.ServerIP)
+		b.WriteString(fmt.Sprintf("kernel %s alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v%s/main/ ip=dhcp apkovl=%s fw4ai_agent=%s fw4ai_server=%s\n",
+			kernelURL, info.OSVersion, apkovlURL, info.AgentID, m.ServerIP))
+		b.WriteString(fmt.Sprintf("initrd %s\n", initrdURL))
+	}
+
+	b.WriteString("boot\n")
 	return b.String()
 }
 
@@ -154,7 +146,6 @@ wget -qO /tmp/deploy-info.txt "${API}/boot/deploy-info/${AGENT_ID}"
 DISK=$(grep '^disk=' /tmp/deploy-info.txt | cut -d= -f2-)
 IMAGE_URL=$(grep '^image_url=' /tmp/deploy-info.txt | cut -d= -f2-)
 HOSTNAME=$(grep '^hostname=' /tmp/deploy-info.txt | cut -d= -f2-)
-OS_TYPE=$(grep '^os_type=' /tmp/deploy-info.txt | cut -d= -f2-)
 
 if [ -z "$DISK" ] || [ -z "$IMAGE_URL" ]; then
     echo "ERROR: Missing disk or image_url in deploy info"
@@ -166,7 +157,7 @@ echo "-> Disk: $DISK"
 echo "-> Image: $IMAGE_URL"
 echo "-> Hostname: $HOSTNAME"
 
-# Install e2fsprogs for mkfs.ext4 (busybox version is limited).
+# Install deployment tools.
 echo "-> Installing deployment tools..."
 apk add e2fsprogs syslinux kexec-tools 2>/dev/null || true
 
@@ -209,7 +200,6 @@ echo "-> Installing bootloader..."
 MBR_BIN=""
 EXTLINUX_BIN=""
 
-# Try Alpine paths first, then Debian paths.
 for p in /mnt/target/usr/share/syslinux/mbr.bin /usr/share/syslinux/mbr.bin; do
     if [ -f "$p" ]; then MBR_BIN="$p"; break; fi
 done
@@ -229,19 +219,12 @@ fi
 echo "-> Deployment complete!"
 wget -qO /dev/null "${API}/boot/status/${AGENT_ID}?status=installed" || true
 
-# Boot into the installed system.
+# Boot into the installed system via kexec.
 sync
 
-# Use kexec to boot directly into the installed kernel without hardware reboot.
 KERNEL=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -n1)
-INITRD=""
-if [ "$OS_TYPE" = "debian" ] || [ "$OS_TYPE" = "ubuntu" ]; then
-    INITRD=$(ls /mnt/target/boot/initrd.img-* 2>/dev/null | head -n1)
-    APPEND="root=${PART} ro quiet"
-elif [ "$OS_TYPE" = "alpine" ]; then
-    INITRD=$(ls /mnt/target/boot/initramfs-* 2>/dev/null | head -n1)
-    APPEND="root=${PART} modules=ext4 quiet"
-fi
+INITRD=$(ls /mnt/target/boot/initramfs-* 2>/dev/null | head -n1)
+APPEND="root=${PART} modules=ext4 quiet"
 
 if [ -n "$KERNEL" ] && [ -n "$INITRD" ]; then
     echo "-> Loading installed kernel via kexec..."
@@ -273,33 +256,6 @@ reboot -f
 	tw.Close()
 	gw.Close()
 	return buf.Bytes()
-}
-
-func downloadFile(url, dest string) error {
-	resp, err := http.Get(url)
-	if err != nil {
-		return fmt.Errorf("GET %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
-	}
-
-	tmpPath := dest + ".tmp"
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	f.Close()
-
-	return os.Rename(tmpPath, dest)
 }
 
 func fileExists(path string) bool {
