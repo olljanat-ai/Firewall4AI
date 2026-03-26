@@ -11,6 +11,7 @@ let editingLibraryRule = null; // null = adding, { host, skillID, sourceIP } = e
 let editingSkillID = null;    // null = creating, string = editing
 let editingCredID = null;     // null = creating, string = editing
 let editingAgentID = null;    // null = creating, string = editing
+let editingDBID = null;       // null = creating, string = editing
 
 // Cached data for edit lookups
 let currentApprovals = [];
@@ -22,6 +23,7 @@ let currentCredentials = [];
 let currentCategories = [];
 let currentLogs = [];
 let currentAgents = [];
+let currentDatabases = [];
 
 // Pagination state per page type
 const PAGE_SIZE = 50;
@@ -1483,6 +1485,138 @@ async function loadCredentials() {
     });
   } catch (e) {
     console.error('Credentials load error:', e);
+  }
+  loadDatabases();
+}
+
+// --- Databases ---
+
+const DB_PORT_DEFAULTS = { mssql: 1433, postgres: 5432, mysql: 3306 };
+
+async function loadDatabases() {
+  try {
+    const dbs = await api('GET', '/api/databases');
+    currentDatabases = dbs || [];
+    currentDatabases.sort((a, b) => a.name.localeCompare(b.name));
+    const tbody = document.getElementById('databases-tbody');
+    tbody.innerHTML = '';
+    if (currentDatabases.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No database connections configured.</td></tr>';
+      return;
+    }
+    currentDatabases.forEach((db, idx) => {
+      const driverLabel = { mssql: 'MSSQL', postgres: 'PostgreSQL', mysql: 'MySQL' }[db.driver] || db.driver;
+      const hostPort = db.host + (db.port ? ':' + db.port : '');
+      tbody.innerHTML += `<tr>
+        <td><strong>${esc(db.name)}</strong></td>
+        <td><code>/v1/db/${esc(db.api_path)}/query</code></td>
+        <td><span class="badge-status approved">${esc(driverLabel)}</span></td>
+        <td>${esc(hostPort)}</td>
+        <td>${esc(db.db_name)}</td>
+        <td><span class="badge-status ${db.active ? 'approved' : 'denied'}">${db.active ? 'active' : 'inactive'}</span></td>
+        <td>
+          <button class="btn btn-outline btn-sm" onclick="showEditDB(${idx})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteDatabase('${esc(db.id)}','${esc(db.name)}')">Delete</button>
+        </td>
+      </tr>`;
+    });
+  } catch (e) {
+    console.error('Databases load error:', e);
+  }
+}
+
+function showCreateDB() {
+  editingDBID = null;
+  document.getElementById('modal-db-title').textContent = 'Add Database Connection';
+  document.getElementById('modal-db-submit').textContent = 'Add';
+  document.getElementById('db-name').value = '';
+  document.getElementById('db-api-path').value = '';
+  document.getElementById('db-driver').value = 'mssql';
+  document.getElementById('db-host').value = '';
+  document.getElementById('db-port').value = '';
+  document.getElementById('db-port').placeholder = '1433';
+  document.getElementById('db-dbname').value = '';
+  document.getElementById('db-username').value = '';
+  document.getElementById('db-password').value = '';
+  document.getElementById('db-password').placeholder = 'password';
+  document.getElementById('db-active-group').style.display = 'none';
+  document.getElementById('modal-db').classList.add('active');
+}
+
+function showEditDB(idx) {
+  const db = currentDatabases[idx];
+  if (!db) return;
+  editingDBID = db.id;
+  document.getElementById('modal-db-title').textContent = 'Edit Database Connection';
+  document.getElementById('modal-db-submit').textContent = 'Save';
+  document.getElementById('db-name').value = db.name;
+  document.getElementById('db-api-path').value = db.api_path;
+  document.getElementById('db-driver').value = db.driver;
+  document.getElementById('db-host').value = db.host;
+  document.getElementById('db-port').value = db.port || '';
+  document.getElementById('db-port').placeholder = DB_PORT_DEFAULTS[db.driver] || '';
+  document.getElementById('db-dbname').value = db.db_name;
+  document.getElementById('db-username').value = db.username;
+  document.getElementById('db-password').value = '';
+  document.getElementById('db-password').placeholder = 'leave empty to keep current value';
+  document.getElementById('db-active-group').style.display = 'block';
+  document.getElementById('db-active').value = db.active ? 'true' : 'false';
+  document.getElementById('modal-db').classList.add('active');
+}
+
+function hideDBModal() {
+  document.getElementById('modal-db').classList.remove('active');
+  editingDBID = null;
+}
+
+function updateDBDefaults() {
+  const driver = document.getElementById('db-driver').value;
+  document.getElementById('db-port').placeholder = DB_PORT_DEFAULTS[driver] || '';
+}
+
+async function submitDatabase() {
+  const db = {
+    name: document.getElementById('db-name').value.trim(),
+    api_path: document.getElementById('db-api-path').value.trim(),
+    driver: document.getElementById('db-driver').value,
+    host: document.getElementById('db-host').value.trim(),
+    port: parseInt(document.getElementById('db-port').value) || 0,
+    db_name: document.getElementById('db-dbname').value.trim(),
+    username: document.getElementById('db-username').value.trim(),
+    password: document.getElementById('db-password').value,
+  };
+  if (!db.name || !db.api_path || !db.host || !db.db_name) {
+    alert('Name, API path, host, and database name are required');
+    return;
+  }
+  // Validate API path: only alphanumeric, dash, underscore
+  if (!/^[a-zA-Z0-9_-]+$/.test(db.api_path)) {
+    alert('API path must contain only letters, numbers, dashes, and underscores');
+    return;
+  }
+  try {
+    if (editingDBID) {
+      db.id = editingDBID;
+      db.active = document.getElementById('db-active').value === 'true';
+      await api('PUT', '/api/databases', db);
+    } else {
+      db.active = true;
+      await api('POST', '/api/databases', db);
+    }
+    hideDBModal();
+    loadDatabases();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteDatabase(id, name) {
+  if (!confirm(`Delete database connection "${name}"?`)) return;
+  try {
+    await api('DELETE', '/api/databases?id=' + encodeURIComponent(id));
+    loadDatabases();
+  } catch (e) {
+    alert('Error: ' + e.message);
   }
 }
 

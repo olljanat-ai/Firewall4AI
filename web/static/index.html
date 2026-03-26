@@ -274,6 +274,18 @@
             </tbody>
           </table>
         </div>
+        <div class="toolbar" style="margin-top:24px">
+          <h2>SQL Databases</h2>
+          <button class="btn btn-primary" onclick="showCreateDB()">+ New Database</button>
+        </div>
+        <div class="card">
+          <table>
+            <thead><tr><th>Name</th><th>API Path</th><th>Driver</th><th>Host</th><th>Database</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="databases-tbody">
+              <tr><td colspan="7" class="empty-state">No database connections configured.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Logs -->
@@ -586,6 +598,60 @@
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideCredModal()">Cancel</button>
         <button class="btn btn-primary" id="modal-cred-submit" onclick="submitCredential()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Database Modal -->
+  <div id="modal-db" class="modal-overlay">
+    <div class="modal">
+      <h3 id="modal-db-title">Add Database Connection</h3>
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" id="db-name" placeholder="e.g., Production SQL Server">
+      </div>
+      <div class="form-group">
+        <label>API Path (used in agent API URL: /v1/db/{path}/query)</label>
+        <input type="text" id="db-api-path" placeholder="e.g., proddb">
+      </div>
+      <div class="form-group">
+        <label>Driver</label>
+        <select id="db-driver" onchange="updateDBDefaults()">
+          <option value="mssql">Microsoft SQL Server</option>
+          <option value="postgres">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Host</label>
+        <input type="text" id="db-host" placeholder="e.g., db.example.com">
+      </div>
+      <div class="form-group">
+        <label>Port</label>
+        <input type="number" id="db-port" placeholder="1433">
+      </div>
+      <div class="form-group">
+        <label>Database Name</label>
+        <input type="text" id="db-dbname" placeholder="e.g., myapp">
+      </div>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="db-username" placeholder="e.g., sa">
+      </div>
+      <div class="form-group">
+        <label id="db-password-label">Password</label>
+        <input type="password" id="db-password" placeholder="password">
+      </div>
+      <div class="form-group" id="db-active-group" style="display:none">
+        <label>Status</label>
+        <select id="db-active">
+          <option value="true">Active</option>
+          <option value="false">Inactive</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideDBModal()">Cancel</button>
+        <button class="btn btn-primary" id="modal-db-submit" onclick="submitDatabase()">Add</button>
       </div>
     </div>
   </div>
