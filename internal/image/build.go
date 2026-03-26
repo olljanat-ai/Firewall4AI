@@ -97,12 +97,9 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	}()
 
 	// Install base packages + kernel + bootloader.
-	// Install both linux-virt (optimized for VMs, used for disk boot) and
-	// linux-lts (broader hardware support, used for PXE boot). The virt kernel
-	// lacks drivers for some legacy devices (e.g., Hyper-V Gen1 legacy NIC).
 	log.Printf("Image build [%s v%s]: installing packages", img.Name, img.OSVersion)
 
-	basePkgs := []string{"linux-virt", "linux-lts", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates"}
+	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChroot(rootfsDir, "apk", append([]string{"update"})...); err != nil {
@@ -112,25 +109,32 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 		return fmt.Errorf("apk add: %w", err)
 	}
 
-	// Reconfigure mkinitfs to include network feature for PXE boot support.
+	// Reconfigure mkinitfs to include network and Hyper-V support for PXE boot.
 	// This must be done AFTER apk add, because installing the mkinitfs package
 	// overwrites mkinitfs.conf with its default (which lacks "network").
 	// We must pass the kernel version explicitly because mkinitfs defaults to
 	// uname -r which returns the host kernel, not the chroot's Alpine kernel.
-	log.Printf("Image build [%s v%s]: regenerating initrds with network support", img.Name, img.OSVersion)
-	mkinitfsConf := "features=\"ata base cdrom ext4 keymap kms mmc network nvme scsi usb virtio\"\n"
+	log.Printf("Image build [%s v%s]: regenerating initrd with network support", img.Name, img.OSVersion)
+
+	// Create a custom "hyperv" feature for mkinitfs that includes the Hyper-V
+	// VMBus driver (hv_vmbus) and the tulip driver (used by Hyper-V Gen1 legacy NIC).
+	// The "network" feature covers kernel/drivers/net (hv_netvsc, tulip) but NOT
+	// kernel/drivers/hv (hv_vmbus), so hv_netvsc would fail to load without this.
+	os.MkdirAll(filepath.Join(rootfsDir, "etc/mkinitfs/features.d"), 0o755)
+	hypervModules := "kernel/drivers/hv\nkernel/drivers/net/ethernet/dec/tulip\n"
+	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/features.d/hyperv.modules"), []byte(hypervModules), 0o644)
+
+	mkinitfsConf := "features=\"ata base cdrom ext4 hyperv keymap kms mmc network nvme scsi usb virtio\"\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/mkinitfs.conf"), []byte(mkinitfsConf), 0o644)
 
-	// Regenerate initrd for all installed kernels.
+	// Find the installed kernel version from /lib/modules/<version>/.
 	moduleDirs, _ := filepath.Glob(filepath.Join(rootfsDir, "lib/modules/*"))
 	if len(moduleDirs) == 0 {
 		return fmt.Errorf("no kernel modules found in chroot")
 	}
-	for _, modDir := range moduleDirs {
-		ver := filepath.Base(modDir)
-		if err := runChroot(rootfsDir, "mkinitfs", ver); err != nil {
-			return fmt.Errorf("mkinitfs %s: %w", ver, err)
-		}
+	kernelVersion := filepath.Base(moduleDirs[0])
+	if err := runChroot(rootfsDir, "mkinitfs", kernelVersion); err != nil {
+		return fmt.Errorf("mkinitfs: %w", err)
 	}
 
 	// Configure the system.
@@ -202,24 +206,21 @@ LABEL alpine
 		}
 	}
 
-	// Export kernel + initrd for netboot use.
-	// Use linux-lts for PXE boot (broader hardware support including Hyper-V Gen1).
-	// The virt kernel is used for disk boot via extlinux.
-	log.Printf("Image build [%s v%s]: exporting LTS kernel and initrd for netboot", img.Name, img.OSVersion)
+	// Export virt kernel + initrd for netboot use.
+	log.Printf("Image build [%s v%s]: exporting kernel and initrd for netboot", img.Name, img.OSVersion)
 	netbootDir := filepath.Join(filepath.Dir(rootfsPath), "netboot")
 	if err := os.MkdirAll(netbootDir, 0o755); err != nil {
 		return fmt.Errorf("create netboot dir: %w", err)
 	}
 
-	ltsKernelGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/vmlinuz-*-lts"))
-	ltsInitrdGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/initramfs-*-lts"))
-	if len(ltsKernelGlob) > 0 {
-		if err := copyFile(ltsKernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
+	if len(virtKernelGlob) > 0 {
+		if err := copyFile(virtKernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
 			return fmt.Errorf("export kernel: %w", err)
 		}
 	}
-	if len(ltsInitrdGlob) > 0 {
-		if err := copyFile(ltsInitrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
+	virtInitrdGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/initramfs-*-virt"))
+	if len(virtInitrdGlob) > 0 {
+		if err := copyFile(virtInitrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
 			return fmt.Errorf("export initrd: %w", err)
 		}
 	}

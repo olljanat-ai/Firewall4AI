@@ -221,11 +221,8 @@ wget -qO /dev/null "${API}/boot/status/${AGENT_ID}?status=installed" || true
 # Boot into the installed system via kexec.
 sync
 
-# Prefer virt kernel (optimized for VMs), fall back to any kernel.
-KERNEL=$(ls /mnt/target/boot/vmlinuz-*-virt 2>/dev/null | head -n1)
-[ -z "$KERNEL" ] && KERNEL=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -n1)
-INITRD=$(ls /mnt/target/boot/initramfs-*-virt 2>/dev/null | head -n1)
-[ -z "$INITRD" ] && INITRD=$(ls /mnt/target/boot/initramfs-* 2>/dev/null | head -n1)
+KERNEL=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -n1)
+INITRD=$(ls /mnt/target/boot/initramfs-* 2>/dev/null | head -n1)
 APPEND="root=${PART} modules=ext4 quiet"
 
 if [ -n "$KERNEL" ] && [ -n "$INITRD" ]; then
