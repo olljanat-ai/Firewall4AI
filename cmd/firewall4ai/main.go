@@ -22,6 +22,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/certgen"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
+	"github.com/olljanat-ai/firewall4ai/internal/database"
 	"github.com/olljanat-ai/firewall4ai/internal/dhcp"
 	"github.com/olljanat-ai/firewall4ai/internal/dns"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
@@ -47,6 +48,7 @@ type storeData struct {
 	LearningMode      bool                     `json:"learning_mode"`
 	DisabledLanguages []string                 `json:"disabled_languages"`
 	DisabledDistros   []string                 `json:"disabled_distros"`
+	Databases         []database.DatabaseConfig `json:"databases"`
 	Agents            []agent.Agent            `json:"agents"`
 	DHCPLeases        []dhcp.Lease             `json:"dhcp_leases"`
 }
@@ -87,6 +89,7 @@ func main() {
 	packageApprovals := approval.NewManager()
 	libraryApprovals := approval.NewManager()
 	creds := credentials.NewManager()
+	dbMgr := database.NewManager()
 	logger := proxylog.NewLogger(cfg.MaxLogEntries)
 	agentMgr := agent.NewManager()
 
@@ -125,6 +128,7 @@ func main() {
 	packageApprovals.LoadApprovals(state.PackageApprovals)
 	libraryApprovals.LoadApprovals(state.LibraryApprovals)
 	creds.LoadCredentials(state.Creds)
+	dbMgr.LoadConfigs(state.Databases)
 	agentMgr.LoadAgents(state.Agents)
 	dhcpServer.LoadLeases(state.DHCPLeases)
 
@@ -191,6 +195,7 @@ func main() {
 		PackageApprovals: packageApprovals,
 		LibraryApprovals: libraryApprovals,
 		Credentials:      creds,
+		DatabaseManager:  dbMgr,
 		Logger:           logger,
 		Version:          Version,
 		AgentManager:     agentMgr,
@@ -234,6 +239,7 @@ func main() {
 			d.PackageApprovals = packageApprovals.Export()
 			d.LibraryApprovals = libraryApprovals.Export()
 			d.Creds = creds.List()
+			d.Databases = dbMgr.List()
 			d.Categories = apiHandler.ListCategoriesSlice()
 			d.LearningMode = cfg.LearningMode
 			d.DisabledLanguages = cfg.DisabledLanguages
@@ -328,6 +334,7 @@ func main() {
 		PackageApprovals: packageApprovals,
 		LibraryApprovals: libraryApprovals,
 		CACertPEM:        ca.CertPEM,
+		DatabaseManager:  dbMgr,
 		AgentManager:     agentMgr,
 		NetbootManager:   netbootMgr,
 	}
@@ -412,6 +419,7 @@ func main() {
 		log.Printf("Error saving state on shutdown: %v", err)
 	}
 
+	dbMgr.Close()
 	transparentListener.Close()
 	proxyServer.Shutdown(ctx)
 	adminServer.Shutdown(ctx)

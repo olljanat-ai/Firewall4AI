@@ -11,12 +11,14 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/agent"
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
+	"github.com/olljanat-ai/firewall4ai/internal/database"
 	"github.com/olljanat-ai/firewall4ai/internal/library"
 	"github.com/olljanat-ai/firewall4ai/internal/netboot"
 )
 
 // AgentHandler serves the agent-facing API on the agent network (eth1).
-// It provides policy information, CA certificates, and boot files to AI agents.
+// It provides policy information, CA certificates, boot files, and database
+// query access to AI agents.
 type AgentHandler struct {
 	Approvals        *approval.Manager
 	ImageApprovals   *approval.Manager
@@ -25,6 +27,7 @@ type AgentHandler struct {
 	CACertPEM        []byte // PEM-encoded CA certificate
 	AgentManager     *agent.Manager
 	NetbootManager   *netboot.Manager
+	DatabaseManager  *database.Manager
 }
 
 // RegisterAgentRoutes sets up the agent API routes.
@@ -46,6 +49,9 @@ func (h *AgentHandler) RegisterAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /boot/autoinstall/", h.getAutoinstall)
 	mux.HandleFunc("GET /boot/postinstall/", h.getPostInstall)
 	mux.HandleFunc("GET /boot/", h.serveBootFile)
+
+	// Database query endpoint.
+	mux.HandleFunc("POST /v1/db/", h.queryDatabase)
 
 	mux.HandleFunc("GET /", h.index)
 }
@@ -177,15 +183,70 @@ func (h *AgentHandler) getCACert(w http.ResponseWriter, r *http.Request) {
 	w.Write(h.CACertPEM)
 }
 
+// queryDatabase handles POST /v1/db/{name}/query requests from agents.
+// Agents send a SQL query and receive results as JSON.
+func (h *AgentHandler) queryDatabase(w http.ResponseWriter, r *http.Request) {
+	if h.DatabaseManager == nil {
+		http.Error(w, "Firewall4AI: database query feature not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Parse path: /v1/db/{name}/query
+	path := strings.TrimPrefix(r.URL.Path, "/v1/db/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "query" {
+		http.Error(w, "Firewall4AI: invalid database query path, use /v1/db/{name}/query", http.StatusBadRequest)
+		return
+	}
+	dbName := parts[0]
+	if dbName == "" {
+		http.Error(w, "Firewall4AI: database name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Look up the database config by API path.
+	cfg, ok := h.DatabaseManager.GetByAPIPath(dbName)
+	if !ok {
+		http.Error(w, "Firewall4AI: database not found or not active: "+dbName, http.StatusNotFound)
+		return
+	}
+
+	// Parse the query request.
+	var req struct {
+		Query string        `json:"query"`
+		Args  []interface{} `json:"args"`
+	}
+	defer r.Body.Close()
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Firewall4AI: invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Query == "" {
+		http.Error(w, "Firewall4AI: query is required", http.StatusBadRequest)
+		return
+	}
+
+	// Execute the query.
+	result := h.DatabaseManager.Query(cfg.ID, req.Query, req.Args)
+
+	w.Header().Set("Content-Type", "application/json")
+	if result.Error != "" {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+	json.NewEncoder(w).Encode(result)
+}
+
 func (h *AgentHandler) index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprintln(w, "Firewall4AI Agent API")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Endpoints:")
-	fmt.Fprintln(w, "  GET /v1/policy           - Get firewall policy (allowed/disallowed languages, packages, URLs)")
-	fmt.Fprintln(w, "  GET /ca.crt              - Download CA certificate for HTTPS inspection")
-	fmt.Fprintln(w, "  GET /boot/ipxe?mac=XX    - iPXE boot script for agent")
-	fmt.Fprintln(w, "  GET /boot/{os}/{ver}/...  - Boot files (kernel, initrd)")
+	fmt.Fprintln(w, "  GET  /v1/policy               - Get firewall policy (allowed/disallowed languages, packages, URLs)")
+	fmt.Fprintln(w, "  POST /v1/db/{name}/query       - Execute SQL query on a configured database")
+	fmt.Fprintln(w, "  GET  /ca.crt                   - Download CA certificate for HTTPS inspection")
+	fmt.Fprintln(w, "  GET  /boot/ipxe?mac=XX         - iPXE boot script for agent")
+	fmt.Fprintln(w, "  GET  /boot/{os}/{ver}/...       - Boot files (kernel, initrd)")
 }
 
 // --- Boot endpoints ---

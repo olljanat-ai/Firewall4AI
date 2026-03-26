@@ -17,6 +17,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
+	"github.com/olljanat-ai/firewall4ai/internal/database"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
 
@@ -34,6 +35,9 @@ type Handler struct {
 	SetDisabledLanguagesFunc func([]string) // called to update disabled languages
 	SetDisabledDistrosFunc   func([]string) // called to update disabled distros
 	Version                string          // build version string
+
+	// Database management.
+	DatabaseManager   *database.Manager
 
 	// Agent management.
 	AgentManager      *agent.Manager
@@ -66,6 +70,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/credentials", h.createCredential)
 	mux.HandleFunc("PUT /api/credentials", h.updateCredential)
 	mux.HandleFunc("DELETE /api/credentials", h.deleteCredential)
+
+	// Database connections
+	mux.HandleFunc("GET /api/databases", h.listDatabases)
+	mux.HandleFunc("POST /api/databases", h.createDatabase)
+	mux.HandleFunc("PUT /api/databases", h.updateDatabase)
+	mux.HandleFunc("DELETE /api/databases", h.deleteDatabase)
 
 	// Image Approvals (container registry)
 	mux.HandleFunc("GET /api/images", h.listImageApprovals)
@@ -454,6 +464,96 @@ func (h *Handler) deleteCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Credentials.Delete(id)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+// --- Databases ---
+
+func (h *Handler) listDatabases(w http.ResponseWriter, r *http.Request) {
+	if h.DatabaseManager == nil {
+		writeJSON(w, http.StatusOK, []database.DatabaseConfig{})
+		return
+	}
+	dbs := h.DatabaseManager.List()
+	// Mask passwords in response.
+	masked := make([]database.DatabaseConfig, len(dbs))
+	for i, db := range dbs {
+		masked[i] = db
+		if db.Password != "" {
+			masked[i].Password = "********"
+		}
+	}
+	writeJSON(w, http.StatusOK, masked)
+}
+
+func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request) {
+	if h.DatabaseManager == nil {
+		http.Error(w, "database feature not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var db database.DatabaseConfig
+	if err := readJSON(r, &db); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if db.ID == "" {
+		db.ID = fmt.Sprintf("db-%d", time.Now().UnixNano())
+	}
+	if db.APIPath == "" {
+		http.Error(w, "api_path is required", http.StatusBadRequest)
+		return
+	}
+	// Check for duplicate API path.
+	if existing, ok := h.DatabaseManager.GetByAPIPath(db.APIPath); ok && existing.ID != db.ID {
+		http.Error(w, "api_path already in use", http.StatusConflict)
+		return
+	}
+	h.DatabaseManager.Add(db)
+	h.save()
+	writeJSON(w, http.StatusCreated, map[string]string{"id": db.ID})
+}
+
+func (h *Handler) updateDatabase(w http.ResponseWriter, r *http.Request) {
+	if h.DatabaseManager == nil {
+		http.Error(w, "database feature not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var db database.DatabaseConfig
+	if err := readJSON(r, &db); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	// Preserve existing password when empty (secrets are never exposed via API).
+	if existing, ok := h.DatabaseManager.Get(db.ID); ok {
+		if db.Password == "" {
+			db.Password = existing.Password
+		}
+	}
+	// Check for duplicate API path.
+	if existing, ok := h.DatabaseManager.GetByAPIPath(db.APIPath); ok && existing.ID != db.ID {
+		http.Error(w, "api_path already in use", http.StatusConflict)
+		return
+	}
+	if err := h.DatabaseManager.Update(db); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request) {
+	if h.DatabaseManager == nil {
+		http.Error(w, "database feature not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "id parameter required", http.StatusBadRequest)
+		return
+	}
+	h.DatabaseManager.Delete(id)
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
