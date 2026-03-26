@@ -168,6 +168,25 @@ LABEL alpine
 		}
 	}
 
+	// Export kernel + initrd for netboot/kexec use.
+	log.Printf("Image build [%s v%s]: exporting kernel and initrd for netboot", img.Name, img.OSVersion)
+	netbootDir := filepath.Join(filepath.Dir(rootfsPath), "netboot")
+	if err := os.MkdirAll(netbootDir, 0o755); err != nil {
+		return fmt.Errorf("create netboot dir: %w", err)
+	}
+
+	if len(kernelGlob) > 0 {
+		if err := copyFile(kernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
+			return fmt.Errorf("export kernel: %w", err)
+		}
+	}
+	initrdGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/initramfs-*"))
+	if len(initrdGlob) > 0 {
+		if err := copyFile(initrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
+			return fmt.Errorf("export initrd: %w", err)
+		}
+	}
+
 	// Create rootfs tarball.
 	log.Printf("Image build [%s v%s]: creating rootfs tarball", img.Name, img.OSVersion)
 

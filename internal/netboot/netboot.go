@@ -232,20 +232,26 @@ wget -qO /dev/null "${API}/boot/status/${AGENT_ID}?status=installed" || true
 # Boot into the installed system.
 sync
 
+# Use kexec to boot directly into the installed kernel without hardware reboot.
+KERNEL=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -n1)
+INITRD=""
 if [ "$OS_TYPE" = "debian" ] || [ "$OS_TYPE" = "ubuntu" ]; then
-    # Use kexec to boot directly into the installed kernel without hardware reboot.
-    KERNEL=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -n1)
     INITRD=$(ls /mnt/target/boot/initrd.img-* 2>/dev/null | head -n1)
-    if [ -n "$KERNEL" ] && [ -n "$INITRD" ]; then
-        echo "-> Loading installed kernel via kexec..."
-        kexec -l "$KERNEL" --initrd="$INITRD" --command-line="root=${PART} ro quiet"
-        umount /mnt/target
-        echo "-> kexec into installed system..."
-        kexec -e
-    fi
+    APPEND="root=${PART} ro quiet"
+elif [ "$OS_TYPE" = "alpine" ]; then
+    INITRD=$(ls /mnt/target/boot/initramfs-* 2>/dev/null | head -n1)
+    APPEND="root=${PART} modules=ext4 quiet"
 fi
 
-# Fallback: traditional reboot (for Alpine or if kexec fails).
+if [ -n "$KERNEL" ] && [ -n "$INITRD" ]; then
+    echo "-> Loading installed kernel via kexec..."
+    kexec -l "$KERNEL" --initrd="$INITRD" --command-line="$APPEND"
+    umount /mnt/target
+    echo "-> kexec into installed system..."
+    kexec -e
+fi
+
+# Fallback: traditional reboot (if kexec fails).
 umount /mnt/target 2>/dev/null || true
 echo "-> Rebooting..."
 reboot -f
