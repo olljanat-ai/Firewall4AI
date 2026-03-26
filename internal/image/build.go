@@ -99,12 +99,6 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	// Install base packages + kernel + bootloader.
 	log.Printf("Image build [%s v%s]: installing packages", img.Name, img.OSVersion)
 
-	// Configure mkinitfs to include network feature for PXE boot support.
-	// This must be done before installing the kernel, which triggers mkinitfs.
-	os.MkdirAll(filepath.Join(rootfsDir, "etc/mkinitfs"), 0o755)
-	mkinitfsConf := "features=\"ata base cdrom ext4 keymap kms mmc network nvme scsi usb virtio\"\n"
-	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/mkinitfs.conf"), []byte(mkinitfsConf), 0o644)
-
 	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates"}
 	allPkgs := append(basePkgs, img.Packages...)
 
@@ -113,6 +107,17 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	}
 	if err := runChroot(rootfsDir, "apk", append([]string{"add"}, allPkgs...)...); err != nil {
 		return fmt.Errorf("apk add: %w", err)
+	}
+
+	// Reconfigure mkinitfs to include network feature for PXE boot support.
+	// This must be done AFTER apk add, because installing the mkinitfs package
+	// overwrites mkinitfs.conf with its default (which lacks "network").
+	// Then regenerate the initrd so it includes network drivers.
+	log.Printf("Image build [%s v%s]: regenerating initrd with network support", img.Name, img.OSVersion)
+	mkinitfsConf := "features=\"ata base cdrom ext4 keymap kms mmc network nvme scsi usb virtio\"\n"
+	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/mkinitfs.conf"), []byte(mkinitfsConf), 0o644)
+	if err := runChroot(rootfsDir, "mkinitfs"); err != nil {
+		return fmt.Errorf("mkinitfs: %w", err)
 	}
 
 	// Configure the system.
@@ -205,12 +210,6 @@ LABEL alpine
 		}
 	}
 
-	// Generate deploy overlay initrd for PXE boot.
-	log.Printf("Image build [%s v%s]: generating deploy overlay initrd", img.Name, img.OSVersion)
-	if err := generateDeployOverlay(filepath.Join(netbootDir, "deploy-initrd.img")); err != nil {
-		return fmt.Errorf("generate deploy overlay: %w", err)
-	}
-
 	// Create rootfs tarball.
 	log.Printf("Image build [%s v%s]: creating rootfs tarball", img.Name, img.OSVersion)
 
@@ -271,7 +270,7 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 	// Set DEBIAN_FRONTEND to avoid interactive prompts.
 	debEnv := []string{"DEBIAN_FRONTEND=noninteractive"}
 
-	basePkgs := []string{"linux-image-amd64", "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown"}
+	basePkgs := []string{"linux-image-amd64", "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChrootEnv(rootfsDir, debEnv, "apt-get", "update"); err != nil {
@@ -341,117 +340,29 @@ LABEL linux
 `, kernelFile, initrdFile)
 	os.WriteFile(filepath.Join(rootfsDir, "boot/extlinux.conf"), []byte(extlinuxConf), 0o644)
 
-	// Run custom scripts.
-	for i, script := range img.Scripts {
-		log.Printf("Image build [%s v%s]: running custom script %d", img.Name, img.OSVersion, i+1)
-		if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", script); err != nil {
-			return fmt.Errorf("custom script %d: %w", i+1, err)
-		}
-	}
+	// Install initramfs-tools hook and premount script for PXE deploy.
+	// The hook copies deploy tools (wget, fdisk, mkfs.ext4, tar) into the initrd.
+	// The premount script runs during PXE boot to partition, format, and extract rootfs.
+	// On normal disk boots, the premount script detects no fw4ai params and exits.
+	log.Printf("Image build [%s v%s]: adding deploy support to initrd", img.Name, img.OSVersion)
+	os.MkdirAll(filepath.Join(rootfsDir, "etc/initramfs-tools/hooks"), 0o755)
+	os.MkdirAll(filepath.Join(rootfsDir, "etc/initramfs-tools/scripts/init-premount"), 0o755)
 
-	// Export kernel + initrd for netboot/kexec use.
-	log.Printf("Image build [%s v%s]: exporting kernel and initrd for netboot", img.Name, img.OSVersion)
-	netbootDir := filepath.Join(filepath.Dir(rootfsPath), "netboot")
-	if err := os.MkdirAll(netbootDir, 0o755); err != nil {
-		return fmt.Errorf("create netboot dir: %w", err)
-	}
+	deployHook := `#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+. /usr/share/initramfs-tools/hook-functions
+copy_exec /usr/bin/wget
+copy_exec /sbin/fdisk
+copy_exec /sbin/mkfs.ext4
+copy_exec /bin/tar
+copy_exec /bin/gzip
+copy_exec /bin/dd
+copy_exec /usr/sbin/chroot
+`
+	os.WriteFile(filepath.Join(rootfsDir, "etc/initramfs-tools/hooks/fw4ai-deploy"), []byte(deployHook), 0o755)
 
-	if len(kernelGlob) > 0 {
-		if err := copyFile(kernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
-			return fmt.Errorf("export kernel: %w", err)
-		}
-	}
-	if len(initrdGlob) > 0 {
-		if err := copyFile(initrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
-			return fmt.Errorf("export initrd: %w", err)
-		}
-	}
-
-	// Generate deploy overlay initrd for PXE boot.
-	log.Printf("Image build [%s v%s]: generating deploy overlay initrd", img.Name, img.OSVersion)
-	if err := generateDeployOverlay(filepath.Join(netbootDir, "deploy-initrd.img")); err != nil {
-		return fmt.Errorf("generate deploy overlay: %w", err)
-	}
-
-	// Create rootfs tarball.
-	log.Printf("Image build [%s v%s]: creating rootfs tarball", img.Name, img.OSVersion)
-
-	run("umount", "-l", filepath.Join(rootfsDir, "dev"))
-	run("umount", "-l", filepath.Join(rootfsDir, "sys"))
-	run("umount", "-l", filepath.Join(rootfsDir, "proc"))
-
-	tmpTar := rootfsPath + ".tmp"
-	if err := run("tar", "czf", tmpTar, "-C", rootfsDir, "."); err != nil {
-		return fmt.Errorf("create tarball: %w", err)
-	}
-	if err := os.Rename(tmpTar, rootfsPath); err != nil {
-		return fmt.Errorf("rename tarball: %w", err)
-	}
-
-	log.Printf("Image build [%s v%s]: build complete", img.Name, img.OSVersion)
-	return nil
-}
-
-// run executes a command and returns an error if it fails.
-func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// runChroot runs a command inside a chroot.
-func runChroot(rootfs, name string, args ...string) error {
-	chrootArgs := append([]string{rootfs, name}, args...)
-	cmd := exec.Command("chroot", chrootArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// runChrootEnv runs a command inside a chroot with extra environment variables.
-func runChrootEnv(rootfs string, env []string, name string, args ...string) error {
-	// Use env to set variables, then chroot.
-	// Build: env VAR1=val1 VAR2=val2 chroot rootfs name args...
-	envArgs := append(env, "chroot", rootfs, name)
-	envArgs = append(envArgs, args...)
-	cmd := exec.Command("env", envArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// copyFile copies a file from src to dst atomically.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	tmpPath := dst + ".tmp"
-	out, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	out.Close()
-
-	return os.Rename(tmpPath, dst)
-}
-
-// generateDeployOverlay creates a cpio.gz initrd overlay containing a
-// premount deploy script. When loaded alongside the image's initrd during
-// PXE boot, the premount script runs after module loading and network
-// configuration but before root mount. It partitions the disk, downloads
-// the rootfs tarball, and extracts it so that the normal initrd init can
-// mount root and switch_root seamlessly.
-func generateDeployOverlay(outputPath string) error {
 	deployScript := `#!/bin/sh
 # Firewall4AI: Deploy premount script
 # Runs inside initramfs before root is mounted.
@@ -560,38 +471,120 @@ umount /mnt/target
 
 echo "=== Firewall4AI Deploy done, continuing boot ==="
 `
+	os.WriteFile(filepath.Join(rootfsDir, "etc/initramfs-tools/scripts/init-premount/fw4ai-deploy"), []byte(deployScript), 0o755)
 
-	// Create overlay directory structure.
-	overlayDir, err := os.MkdirTemp("", "fw4ai-deploy-overlay-")
-	if err != nil {
-		return fmt.Errorf("create overlay temp dir: %w", err)
-	}
-	defer os.RemoveAll(overlayDir)
-
-	// Create premount script.
-	scriptDir := filepath.Join(overlayDir, "scripts", "init-premount")
-	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(scriptDir, "deploy"), []byte(deployScript), 0o755); err != nil {
-		return err
+	// Rebuild initrd with deploy tools included.
+	log.Printf("Image build [%s v%s]: rebuilding initrd with deploy tools", img.Name, img.OSVersion)
+	if err := runChrootEnv(rootfsDir, debEnv, "update-initramfs", "-u"); err != nil {
+		return fmt.Errorf("update-initramfs: %w", err)
 	}
 
-	// Convert outputPath to absolute before cd changes the working directory.
-	absOutput, err := filepath.Abs(outputPath)
-	if err != nil {
-		return fmt.Errorf("resolve output path: %w", err)
+	// Re-read initrd glob after rebuild.
+	initrdGlob, _ = filepath.Glob(filepath.Join(rootfsDir, "boot/initrd.img-*"))
+	if len(initrdGlob) > 0 {
+		initrdFile = filepath.Base(initrdGlob[0])
 	}
 
-	// Create cpio.gz archive.
-	if err := run("sh", "-c", fmt.Sprintf(
-		"cd %s && find . | cpio -o -H newc 2>/dev/null | gzip > %s",
-		overlayDir, absOutput)); err != nil {
-		return fmt.Errorf("create cpio.gz: %w", err)
+	// Run custom scripts.
+	for i, script := range img.Scripts {
+		log.Printf("Image build [%s v%s]: running custom script %d", img.Name, img.OSVersion, i+1)
+		if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", script); err != nil {
+			return fmt.Errorf("custom script %d: %w", i+1, err)
+		}
 	}
 
+	// Export kernel + initrd for netboot use.
+	// The initrd already contains the deploy hook and premount script,
+	// so no separate deploy overlay is needed.
+	log.Printf("Image build [%s v%s]: exporting kernel and initrd for netboot", img.Name, img.OSVersion)
+	netbootDir := filepath.Join(filepath.Dir(rootfsPath), "netboot")
+	if err := os.MkdirAll(netbootDir, 0o755); err != nil {
+		return fmt.Errorf("create netboot dir: %w", err)
+	}
+
+	if len(kernelGlob) > 0 {
+		if err := copyFile(kernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
+			return fmt.Errorf("export kernel: %w", err)
+		}
+	}
+	if len(initrdGlob) > 0 {
+		if err := copyFile(initrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
+			return fmt.Errorf("export initrd: %w", err)
+		}
+	}
+
+	// Create rootfs tarball.
+	log.Printf("Image build [%s v%s]: creating rootfs tarball", img.Name, img.OSVersion)
+
+	run("umount", "-l", filepath.Join(rootfsDir, "dev"))
+	run("umount", "-l", filepath.Join(rootfsDir, "sys"))
+	run("umount", "-l", filepath.Join(rootfsDir, "proc"))
+
+	tmpTar := rootfsPath + ".tmp"
+	if err := run("tar", "czf", tmpTar, "-C", rootfsDir, "."); err != nil {
+		return fmt.Errorf("create tarball: %w", err)
+	}
+	if err := os.Rename(tmpTar, rootfsPath); err != nil {
+		return fmt.Errorf("rename tarball: %w", err)
+	}
+
+	log.Printf("Image build [%s v%s]: build complete", img.Name, img.OSVersion)
 	return nil
 }
+
+// run executes a command and returns an error if it fails.
+func run(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// runChroot runs a command inside a chroot.
+func runChroot(rootfs, name string, args ...string) error {
+	chrootArgs := append([]string{rootfs, name}, args...)
+	cmd := exec.Command("chroot", chrootArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// runChrootEnv runs a command inside a chroot with extra environment variables.
+func runChrootEnv(rootfs string, env []string, name string, args ...string) error {
+	// Use env to set variables, then chroot.
+	// Build: env VAR1=val1 VAR2=val2 chroot rootfs name args...
+	envArgs := append(env, "chroot", rootfs, name)
+	envArgs = append(envArgs, args...)
+	cmd := exec.Command("env", envArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// copyFile copies a file from src to dst atomically.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	tmpPath := dst + ".tmp"
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	out.Close()
+
+	return os.Rename(tmpPath, dst)
+}
+
 
 func downloadFile(url, dest string) error {
 	resp, err := http.Get(url)
