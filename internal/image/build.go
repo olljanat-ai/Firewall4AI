@@ -388,6 +388,7 @@ copy_exec /bin/tar
 copy_exec /bin/gzip
 copy_exec /bin/dd
 copy_exec /usr/sbin/chroot
+copy_exec /sbin/blockdev
 `
 	os.WriteFile(filepath.Join(rootfsDir, "etc/initramfs-tools/hooks/fw4ai-deploy"), []byte(deployHook), 0o755)
 
@@ -449,12 +450,27 @@ echo "-> Image: $IMAGE_URL"
 # Partition disk: single partition, entire disk, bootable.
 echo "-> Partitioning ${DISK}..."
 echo -e "o\nn\np\n1\n\n\na\n1\nw" | fdisk ${DISK} 2>/dev/null || true
-sleep 1
+
+# Force kernel to re-read the partition table and wait for device node.
+blockdev --rereadpt ${DISK} 2>/dev/null || true
 
 # Detect partition name (sda1 vs vda1 vs nvme0n1p1).
 PART="${DISK}1"
 if echo "$DISK" | grep -q "nvme"; then
     PART="${DISK}p1"
+fi
+
+# Wait for partition device to appear (udev may be slow in initramfs).
+echo "-> Waiting for ${PART}..."
+i=0
+while [ ! -b "${PART}" ] && [ "$i" -lt 10 ]; do
+    sleep 1
+    i=$((i + 1))
+done
+if [ ! -b "${PART}" ]; then
+    echo "ERROR: ${PART} did not appear after partitioning"
+    wget -qO /dev/null "${API}/boot/status/${FW4AI_AGENT}?status=error&msg=partition+not+found" 2>/dev/null || true
+    exit 0
 fi
 
 # Format partition.
