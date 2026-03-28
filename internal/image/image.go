@@ -32,6 +32,16 @@ type ImageVersion struct {
 	BuiltAt   time.Time   `json:"built_at"`
 }
 
+// AITool represents a pre-configured AI coding tool that can be installed.
+type AITool string
+
+const (
+	AIToolOpenCode      AITool = "opencode"
+	AIToolGitHubCopilot AITool = "github_copilot"
+	AIToolClaudeCode    AITool = "claude_code"
+	AIToolOpenAICodex   AITool = "openai_codex"
+)
+
 // DiskImage represents a disk image configuration and its built versions.
 type DiskImage struct {
 	ID        string         `json:"id"`
@@ -39,6 +49,7 @@ type DiskImage struct {
 	OS        agent.OSType   `json:"os"`         // alpine, debian, ubuntu
 	OSVersion string         `json:"os_version"` // e.g., "3.23", "13"
 	Packages  []string       `json:"packages"`   // packages to install in rootfs
+	AITools   []AITool       `json:"ai_tools"`   // pre-configured AI coding tools to install
 	Scripts   []string       `json:"scripts"`    // custom shell script steps to run during build
 	Versions  []ImageVersion `json:"versions"`
 	CreatedAt time.Time      `json:"created_at"`

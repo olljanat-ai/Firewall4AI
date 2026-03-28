@@ -2368,12 +2368,23 @@ async function loadDiskImages() {
     const tbody = document.getElementById('disk-images-tbody');
     tbody.innerHTML = '';
     if (!currentDiskImages || currentDiskImages.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
       return;
     }
+
+    const aiToolLabels = {
+      'opencode': 'OpenCode',
+      'github_copilot': 'GitHub Copilot',
+      'claude_code': 'Claude Code',
+      'openai_codex': 'OpenAI Codex'
+    };
+
     currentDiskImages.forEach(img => {
       const osLabel = (osLabels[img.os] || img.os) + ' ' + (img.os_version || '');
       const pkgs = (img.packages && img.packages.length > 0) ? esc(img.packages.join(', ')) : '<span class="muted">none</span>';
+      const aiTools = (img.ai_tools && img.ai_tools.length > 0)
+        ? img.ai_tools.map(t => esc(aiToolLabels[t] || t)).join(', ')
+        : '<span class="muted">none</span>';
 
       // Build versions display.
       let versionsHTML = '';
@@ -2392,6 +2403,7 @@ async function loadDiskImages() {
         <td><strong>${esc(img.name)}</strong></td>
         <td>${esc(osLabel)}</td>
         <td>${pkgs}</td>
+        <td>${aiTools}</td>
         <td>${versionsHTML}</td>
         <td>
           <button class="btn btn-primary btn-sm" onclick="buildDiskImage('${esc(img.id)}')">Build</button>
@@ -2431,6 +2443,10 @@ function showCreateDiskImage() {
   document.getElementById('disk-image-os-version').value = '';
   document.getElementById('disk-image-os-version').placeholder = osVersionDefaults['alpine'];
   document.getElementById('disk-image-packages').value = '';
+  document.getElementById('disk-image-ai-opencode').checked = false;
+  document.getElementById('disk-image-ai-github-copilot').checked = false;
+  document.getElementById('disk-image-ai-claude-code').checked = false;
+  document.getElementById('disk-image-ai-openai-codex').checked = false;
   document.getElementById('disk-image-scripts').value = '';
   document.getElementById('modal-disk-image').classList.add('active');
 }
@@ -2454,6 +2470,11 @@ function editDiskImage(id) {
   document.getElementById('disk-image-os').value = img.os || 'alpine';
   document.getElementById('disk-image-os-version').value = img.os_version || '';
   document.getElementById('disk-image-packages').value = (img.packages || []).join(', ');
+  const aiTools = img.ai_tools || [];
+  document.getElementById('disk-image-ai-opencode').checked = aiTools.includes('opencode');
+  document.getElementById('disk-image-ai-github-copilot').checked = aiTools.includes('github_copilot');
+  document.getElementById('disk-image-ai-claude-code').checked = aiTools.includes('claude_code');
+  document.getElementById('disk-image-ai-openai-codex').checked = aiTools.includes('openai_codex');
   document.getElementById('disk-image-scripts').value = (img.scripts || []).join('\n');
   document.getElementById('modal-disk-image').classList.add('active');
 }
@@ -2464,6 +2485,11 @@ async function submitDiskImage() {
   const osVersion = document.getElementById('disk-image-os-version').value.trim() || osVersionDefaults[os] || '';
   const packagesStr = document.getElementById('disk-image-packages').value.trim();
   const packages = packagesStr ? packagesStr.split(',').map(p => p.trim()).filter(p => p) : [];
+  const ai_tools = [];
+  if (document.getElementById('disk-image-ai-opencode').checked) ai_tools.push('opencode');
+  if (document.getElementById('disk-image-ai-github-copilot').checked) ai_tools.push('github_copilot');
+  if (document.getElementById('disk-image-ai-claude-code').checked) ai_tools.push('claude_code');
+  if (document.getElementById('disk-image-ai-openai-codex').checked) ai_tools.push('openai_codex');
   const scriptsStr = document.getElementById('disk-image-scripts').value.trim();
   const scripts = scriptsStr ? scriptsStr.split('\n').filter(s => s.trim()) : [];
 
@@ -2475,11 +2501,11 @@ async function submitDiskImage() {
   try {
     if (editingDiskImageID) {
       await api('PUT', '/api/disk-images', {
-        id: editingDiskImageID, name, os, os_version: osVersion, packages, scripts
+        id: editingDiskImageID, name, os, os_version: osVersion, packages, ai_tools, scripts
       });
     } else {
       await api('POST', '/api/disk-images', {
-        name, os, os_version: osVersion, packages, scripts
+        name, os, os_version: osVersion, packages, ai_tools, scripts
       });
     }
     hideDiskImageModal();

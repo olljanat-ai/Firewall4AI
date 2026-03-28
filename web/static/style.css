@@ -242,6 +242,9 @@ tr:hover td { background: var(--surface2); }
 .markdown-body a:hover { text-decoration: underline; }
 .markdown-body img { max-width: 100%; }
 .checkbox-list { max-height: 150px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
+.checkbox-group { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 8px 0; }
+.checkbox-label { display: flex !important; align-items: center; gap: 6px; font-size: 13px !important; color: var(--text) !important; text-transform: none !important; letter-spacing: normal !important; cursor: pointer; }
+.checkbox-label input[type="checkbox"] { width: auto; margin: 0; cursor: pointer; }
 
 /* Toolbar */
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }

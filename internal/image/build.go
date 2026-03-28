@@ -198,6 +198,11 @@ LABEL alpine
 `, kernelFile, initrdFile)
 	os.WriteFile(filepath.Join(rootfsDir, "boot/extlinux.conf"), []byte(extlinuxConf), 0o644)
 
+	// Install AI tools.
+	if err := installAITools(img, rootfsDir, false, nil); err != nil {
+		return fmt.Errorf("install AI tools: %w", err)
+	}
+
 	// Run custom scripts.
 	for i, script := range img.Scripts {
 		log.Printf("Image build [%s v%s]: running custom script %d", img.Name, img.OSVersion, i+1)
@@ -537,6 +542,11 @@ echo "=== Firewall4AI Deploy done, continuing boot ==="
 		initrdFile = filepath.Base(initrdGlob[0])
 	}
 
+	// Install AI tools.
+	if err := installAITools(img, rootfsDir, true, debEnv); err != nil {
+		return fmt.Errorf("install AI tools: %w", err)
+	}
+
 	// Run custom scripts.
 	for i, script := range img.Scripts {
 		log.Printf("Image build [%s v%s]: running custom script %d", img.Name, img.OSVersion, i+1)
@@ -663,6 +673,90 @@ func downloadFile(url, dest string) error {
 	f.Close()
 
 	return os.Rename(tmpPath, dest)
+}
+
+// installAITools installs the selected AI coding tools into the rootfs.
+// It handles installing prerequisites (Node.js, npm, gh CLI) as needed.
+func installAITools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []string) error {
+	if len(img.AITools) == 0 {
+		return nil
+	}
+
+	log.Printf("Image build [%s v%s]: installing AI tools", img.Name, img.OSVersion)
+
+	needsNodeJS := false
+	needsGH := false
+	for _, tool := range img.AITools {
+		switch tool {
+		case AIToolOpenCode, AIToolClaudeCode, AIToolOpenAICodex:
+			needsNodeJS = true
+		case AIToolGitHubCopilot:
+			needsGH = true
+		}
+	}
+
+	// Install prerequisites.
+	if isDebian {
+		if needsNodeJS {
+			log.Printf("Image build [%s v%s]: installing Node.js (prerequisite for AI tools)", img.Name, img.OSVersion)
+			if err := runChrootEnv(rootfsDir, debEnv, "apt-get", "install", "-y", "nodejs", "npm"); err != nil {
+				return fmt.Errorf("install nodejs/npm: %w", err)
+			}
+		}
+		if needsGH {
+			log.Printf("Image build [%s v%s]: installing GitHub CLI (prerequisite for GitHub Copilot)", img.Name, img.OSVersion)
+			// Install gh from official apt repository.
+			installGHScript := `curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && apt-get update && apt-get install -y gh`
+			if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", installGHScript); err != nil {
+				return fmt.Errorf("install gh CLI: %w", err)
+			}
+		}
+	} else {
+		// Alpine
+		if needsNodeJS {
+			log.Printf("Image build [%s v%s]: installing Node.js (prerequisite for AI tools)", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "apk", "add", "nodejs", "npm"); err != nil {
+				return fmt.Errorf("install nodejs/npm: %w", err)
+			}
+		}
+		if needsGH {
+			log.Printf("Image build [%s v%s]: installing GitHub CLI (prerequisite for GitHub Copilot)", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "apk", "add", "github-cli"); err != nil {
+				return fmt.Errorf("install gh CLI: %w", err)
+			}
+		}
+	}
+
+	// Install each AI tool.
+	for _, tool := range img.AITools {
+		switch tool {
+		case AIToolOpenCode:
+			log.Printf("Image build [%s v%s]: installing OpenCode", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "npm", "install", "-g", "opencode-ai"); err != nil {
+				return fmt.Errorf("install OpenCode: %w", err)
+			}
+
+		case AIToolClaudeCode:
+			log.Printf("Image build [%s v%s]: installing Claude Code", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "npm", "install", "-g", "@anthropic-ai/claude-code"); err != nil {
+				return fmt.Errorf("install Claude Code: %w", err)
+			}
+
+		case AIToolOpenAICodex:
+			log.Printf("Image build [%s v%s]: installing OpenAI Codex", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "npm", "install", "-g", "@openai/codex"); err != nil {
+				return fmt.Errorf("install OpenAI Codex: %w", err)
+			}
+
+		case AIToolGitHubCopilot:
+			log.Printf("Image build [%s v%s]: installing GitHub Copilot CLI", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "gh", "extension", "install", "github/gh-copilot"); err != nil {
+				return fmt.Errorf("install GitHub Copilot: %w", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func debianCodename(version string) string {

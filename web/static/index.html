@@ -58,9 +58,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>Versions</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tools</th><th>Versions</th><th>Actions</th></tr></thead>
             <tbody id="disk-images-tbody">
-              <tr><td colspan="5" class="empty-state">No disk images configured. Create one to get started.</td></tr>
+              <tr><td colspan="6" class="empty-state">No disk images configured. Create one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -853,6 +853,15 @@
       <div class="form-group">
         <label>Extra Packages (comma-separated)</label>
         <input type="text" id="disk-image-packages" placeholder="e.g., curl, vim, htop">
+      </div>
+      <div class="form-group">
+        <label>AI Coding Tools</label>
+        <div class="checkbox-group">
+          <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-opencode" value="opencode"> OpenCode</label>
+          <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-github-copilot" value="github_copilot"> GitHub Copilot</label>
+          <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-claude-code" value="claude_code"> Claude Code</label>
+          <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-openai-codex" value="openai_codex"> OpenAI Codex</label>
+        </div>
       </div>
       <div class="form-group">
         <label>Custom Scripts (one per line, run in chroot during build)</label>
