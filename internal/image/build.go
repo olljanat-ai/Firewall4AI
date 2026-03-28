@@ -380,6 +380,7 @@ LABEL linux
 	log.Printf("Image build [%s v%s]: adding deploy support to initrd", img.Name, img.OSVersion)
 	os.MkdirAll(filepath.Join(rootfsDir, "etc/initramfs-tools/hooks"), 0o755)
 	os.MkdirAll(filepath.Join(rootfsDir, "etc/initramfs-tools/scripts/init-premount"), 0o755)
+	os.WriteFile(filepath.Join(rootfsDir, "etc/initramfs-tools/modules"), []byte("ext4"), 0o644)
 
 	deployHook := `#!/bin/sh
 PREREQ=""
@@ -389,6 +390,8 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 copy_exec /usr/bin/wget
 copy_exec /sbin/fdisk
 copy_exec /sbin/mkfs.ext4
+copy_exec /sbin/fsck.vfat
+copy_exec /sbin/mke2fs
 copy_exec /bin/tar
 copy_exec /bin/gzip
 copy_exec /bin/dd
@@ -646,7 +649,6 @@ func copyFile(src, dst string) error {
 
 	return os.Rename(tmpPath, dst)
 }
-
 
 func downloadFile(url, dest string) error {
 	resp, err := http.Get(url)
