@@ -685,13 +685,13 @@ func installAITools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []st
 	log.Printf("Image build [%s v%s]: installing AI tools", img.Name, img.OSVersion)
 
 	needsNodeJS := false
-	needsGH := false
+	needsCurl := false
 	for _, tool := range img.AITools {
 		switch tool {
 		case AIToolOpenCode, AIToolClaudeCode, AIToolOpenAICodex:
 			needsNodeJS = true
 		case AIToolGitHubCopilot:
-			needsGH = true
+			needsCurl = true
 		}
 	}
 
@@ -703,12 +703,10 @@ func installAITools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []st
 				return fmt.Errorf("install nodejs/npm: %w", err)
 			}
 		}
-		if needsGH {
-			log.Printf("Image build [%s v%s]: installing GitHub CLI (prerequisite for GitHub Copilot)", img.Name, img.OSVersion)
-			// Install gh from official apt repository.
-			installGHScript := `curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && apt-get update && apt-get install -y gh`
-			if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", installGHScript); err != nil {
-				return fmt.Errorf("install gh CLI: %w", err)
+		if needsCurl {
+			log.Printf("Image build [%s v%s]: installing curl (prerequisite for GitHub Copilot)", img.Name, img.OSVersion)
+			if err := runChrootEnv(rootfsDir, debEnv, "apt-get", "install", "-y", "curl"); err != nil {
+				return fmt.Errorf("install curl: %w", err)
 			}
 		}
 	} else {
@@ -719,10 +717,10 @@ func installAITools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []st
 				return fmt.Errorf("install nodejs/npm: %w", err)
 			}
 		}
-		if needsGH {
-			log.Printf("Image build [%s v%s]: installing GitHub CLI (prerequisite for GitHub Copilot)", img.Name, img.OSVersion)
-			if err := runChroot(rootfsDir, "apk", "add", "github-cli"); err != nil {
-				return fmt.Errorf("install gh CLI: %w", err)
+		if needsCurl {
+			log.Printf("Image build [%s v%s]: installing curl (prerequisite for GitHub Copilot)", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "apk", "add", "curl"); err != nil {
+				return fmt.Errorf("install curl: %w", err)
 			}
 		}
 	}
@@ -750,7 +748,7 @@ func installAITools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []st
 
 		case AIToolGitHubCopilot:
 			log.Printf("Image build [%s v%s]: installing GitHub Copilot CLI", img.Name, img.OSVersion)
-			if err := runChroot(rootfsDir, "gh", "extension", "install", "github/gh-copilot"); err != nil {
+			if err := runChroot(rootfsDir, "sh", "-c", "curl -fsSL https://gh.io/copilot-install | bash"); err != nil {
 				return fmt.Errorf("install GitHub Copilot: %w", err)
 			}
 		}
