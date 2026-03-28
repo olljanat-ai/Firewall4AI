@@ -354,6 +354,7 @@ func main() {
 		ImageApprovals:   imageApprovals,
 		PackageApprovals: packageApprovals,
 		LibraryApprovals: libraryApprovals,
+		Skills:           skills,
 		CACertPEM:        ca.CertPEM,
 		DatabaseManager:  dbMgr,
 		AgentManager:     agentMgr,

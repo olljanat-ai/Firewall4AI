@@ -2221,6 +2221,7 @@ let currentDiskImages = [];
 let editingDiskImageID = null;
 
 async function loadAgents() {
+  await loadSkills();
   await loadDiskImages();
   await loadAgentVMs();
 }
@@ -2380,7 +2381,7 @@ async function loadAgentVMs() {
     const tbody = document.getElementById('agents-tbody');
     tbody.innerHTML = '';
     if (!currentAgents || currentAgents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No agents configured. Add one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>';
       return;
     }
     currentAgents.forEach(a => {
@@ -2391,11 +2392,21 @@ async function loadAgentVMs() {
       const img = currentDiskImages.find(x => x.id === a.image_id);
       const imgLabel = img ? esc(img.name) + (a.image_version ? ' v' + a.image_version : ' (latest)') : '<span class="muted">none</span>';
 
+      // Show allocated skills.
+      let skillsHTML = '<span class="muted">none</span>';
+      if (a.skill_ids && a.skill_ids.length > 0) {
+        skillsHTML = a.skill_ids.map(sid => {
+          const sk = (currentSkills || []).find(s => s.id === sid);
+          return `<span class="badge-status approved">${esc(sk ? sk.name : sid)}</span>`;
+        }).join(' ');
+      }
+
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.hostname)}</strong></td>
         <td><code>${esc(a.mac)}</code></td>
         <td>${a.ip ? esc(a.ip) : '<span class="muted">auto</span>'}</td>
         <td>${imgLabel}</td>
+        <td>${skillsHTML}</td>
         <td><span class="badge-status ${statusClass}">${esc(statusLabel)}</span></td>
         <td>
           <button class="btn btn-outline btn-sm" onclick="editAgent('${esc(a.id)}')">Edit</button>
@@ -2431,6 +2442,36 @@ function populateAgentImageSelect(selectedID) {
   });
 }
 
+function populateAgentSkillsList(selectedIDs) {
+  const container = document.getElementById('agent-skills-list');
+  container.innerHTML = '';
+  const skills = currentSkills || [];
+  if (skills.length === 0) {
+    container.innerHTML = '<span class="muted">No skills available. Create skills in the Skills Library first.</span>';
+    return;
+  }
+  const selected = new Set(selectedIDs || []);
+  skills.forEach(s => {
+    const label = document.createElement('label');
+    label.style.display = 'block';
+    label.style.padding = '4px 0';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = s.id;
+    cb.checked = selected.has(s.id);
+    cb.style.marginRight = '8px';
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(s.name + (s.active ? '' : ' (inactive)')));
+    container.appendChild(label);
+  });
+}
+
+function getSelectedAgentSkillIDs() {
+  const container = document.getElementById('agent-skills-list');
+  const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
+  return Array.from(checkboxes).map(cb => cb.value);
+}
+
 function showCreateAgent() {
   editingAgentID = null;
   document.getElementById('modal-agent-title').textContent = 'Add Agent';
@@ -2441,6 +2482,7 @@ function showCreateAgent() {
   document.getElementById('agent-image-version').value = '0';
   document.getElementById('agent-disk').value = '/dev/sda';
   populateAgentImageSelect('');
+  populateAgentSkillsList([]);
   document.getElementById('modal-agent').classList.add('active');
 }
 
@@ -2460,6 +2502,7 @@ function editAgent(id) {
   document.getElementById('agent-image-version').value = a.image_version || 0;
   document.getElementById('agent-disk').value = a.disk_device || '/dev/sda';
   populateAgentImageSelect(a.image_id || '');
+  populateAgentSkillsList(a.skill_ids || []);
   document.getElementById('modal-agent').classList.add('active');
 }
 
@@ -2470,6 +2513,7 @@ async function submitAgent() {
   const image_id = document.getElementById('agent-image-id').value;
   const image_version = parseInt(document.getElementById('agent-image-version').value) || 0;
   const disk = document.getElementById('agent-disk').value.trim() || '/dev/sda';
+  const skill_ids = getSelectedAgentSkillIDs();
 
   if (!mac || !hostname) {
     alert('MAC address and hostname are required');
@@ -2483,11 +2527,11 @@ async function submitAgent() {
   try {
     if (editingAgentID) {
       await api('PUT', '/api/agents', {
-        id: editingAgentID, mac, hostname, ip, image_id, image_version, disk_device: disk
+        id: editingAgentID, mac, hostname, ip, image_id, image_version, disk_device: disk, skill_ids
       });
     } else {
       await api('POST', '/api/agents', {
-        mac, hostname, ip, image_id, image_version, disk_device: disk
+        mac, hostname, ip, image_id, image_version, disk_device: disk, skill_ids
       });
     }
     hideAgentModal();

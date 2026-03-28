@@ -11,6 +11,7 @@ import (
 
 	"github.com/olljanat-ai/firewall4ai/internal/agent"
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
+	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/database"
 	"github.com/olljanat-ai/firewall4ai/internal/image"
@@ -26,6 +27,7 @@ type AgentHandler struct {
 	ImageApprovals   *approval.Manager
 	PackageApprovals *approval.Manager
 	LibraryApprovals *approval.Manager
+	Skills           *auth.SkillStore
 	CACertPEM        []byte // PEM-encoded CA certificate
 	AgentManager     *agent.Manager
 	NetbootManager   *netboot.Manager
@@ -36,6 +38,7 @@ type AgentHandler struct {
 // RegisterAgentRoutes sets up the agent API routes.
 func (h *AgentHandler) RegisterAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/policy", h.getPolicy)
+	mux.HandleFunc("GET /v1/skills", h.getSkills)
 	mux.HandleFunc("GET /ca.crt", h.getCACert)
 
 	// Deploy boot endpoints.
@@ -158,6 +161,55 @@ func (h *AgentHandler) getPolicy(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// agentSkill describes a skill allocated to an agent in the API response.
+type agentSkill struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Token        string   `json:"token"`
+	AllowedHosts []string `json:"allowed_hosts,omitempty"`
+}
+
+func (h *AgentHandler) getSkills(w http.ResponseWriter, r *http.Request) {
+	if h.AgentManager == nil || h.Skills == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]agentSkill{})
+		return
+	}
+
+	// Identify the calling agent by source IP.
+	sourceIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		sourceIP = host
+	}
+
+	ag, ok := h.AgentManager.GetByIP(sourceIP)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]agentSkill{})
+		return
+	}
+
+	var skills []agentSkill
+	for _, sid := range ag.SkillIDs {
+		sk, ok := h.Skills.GetSkill(sid)
+		if !ok || !sk.Active {
+			continue
+		}
+		skills = append(skills, agentSkill{
+			ID:           sk.ID,
+			Name:         sk.Name,
+			Token:        sk.Token,
+			AllowedHosts: sk.AllowedHost,
+		})
+	}
+	if skills == nil {
+		skills = []agentSkill{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(skills)
+}
+
 // collectApproved returns the list of approved package names for a given type prefix.
 func collectApproved(mgr *approval.Manager, typePrefix string) []string {
 	var approved []string
@@ -248,6 +300,7 @@ func (h *AgentHandler) index(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Endpoints:")
 	fmt.Fprintln(w, "  GET  /v1/policy               - Get firewall policy")
+	fmt.Fprintln(w, "  GET  /v1/skills               - Get allocated skills")
 	fmt.Fprintln(w, "  POST /v1/db/{name}/query       - Execute SQL query")
 	fmt.Fprintln(w, "  GET  /ca.crt                   - Download CA certificate")
 	fmt.Fprintln(w, "  GET  /boot/ipxe?mac=XX         - iPXE boot script for deploy")

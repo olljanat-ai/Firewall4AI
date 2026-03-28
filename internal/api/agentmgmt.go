@@ -25,12 +25,13 @@ func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAgentRequest struct {
-	MAC          string `json:"mac"`
-	Hostname     string `json:"hostname"`
-	IP           string `json:"ip"`
-	ImageID      string `json:"image_id"`
-	ImageVersion int    `json:"image_version"`
-	DiskDevice   string `json:"disk_device"`
+	MAC          string   `json:"mac"`
+	Hostname     string   `json:"hostname"`
+	IP           string   `json:"ip"`
+	ImageID      string   `json:"image_id"`
+	ImageVersion int      `json:"image_version"`
+	DiskDevice   string   `json:"disk_device"`
+	SkillIDs     []string `json:"skill_ids"`
 }
 
 func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +70,14 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		req.DiskDevice = agent.DefaultDiskDevice()
 	}
 
+	// Validate skill IDs exist.
+	for _, sid := range req.SkillIDs {
+		if _, ok := h.Skills.GetSkill(sid); !ok {
+			http.Error(w, fmt.Sprintf("skill %q not found", sid), http.StatusBadRequest)
+			return
+		}
+	}
+
 	a := agent.Agent{
 		ID:           auth.GenerateGUID(),
 		MAC:          req.MAC,
@@ -77,6 +86,7 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		ImageID:      req.ImageID,
 		ImageVersion: req.ImageVersion,
 		DiskDevice:   req.DiskDevice,
+		SkillIDs:     req.SkillIDs,
 		Status:       agent.StatusNew,
 	}
 
@@ -96,13 +106,14 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID           string `json:"id"`
-		MAC          string `json:"mac"`
-		Hostname     string `json:"hostname"`
-		IP           string `json:"ip"`
-		ImageID      string `json:"image_id"`
-		ImageVersion int    `json:"image_version"`
-		DiskDevice   string `json:"disk_device"`
+		ID           string   `json:"id"`
+		MAC          string   `json:"mac"`
+		Hostname     string   `json:"hostname"`
+		IP           string   `json:"ip"`
+		ImageID      string   `json:"image_id"`
+		ImageVersion int      `json:"image_version"`
+		DiskDevice   string   `json:"disk_device"`
+		SkillIDs     []string `json:"skill_ids"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -148,6 +159,16 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DiskDevice != "" {
 		existing.DiskDevice = req.DiskDevice
+	}
+	if req.SkillIDs != nil {
+		// Validate skill IDs exist.
+		for _, sid := range req.SkillIDs {
+			if _, ok := h.Skills.GetSkill(sid); !ok {
+				http.Error(w, fmt.Sprintf("skill %q not found", sid), http.StatusBadRequest)
+				return
+			}
+		}
+		existing.SkillIDs = req.SkillIDs
 	}
 
 	if err := h.AgentManager.Update(*existing); err != nil {

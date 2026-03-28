@@ -205,7 +205,8 @@ tr:hover td { background: var(--surface2); }
 }
 .modal h3 { font-size: 18px; margin-bottom: 16px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
- 
+.checkbox-list { max-height: 150px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
+
 /* Toolbar */
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
  

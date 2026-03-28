@@ -39,6 +39,7 @@ type Agent struct {
 	ImageID      string    `json:"image_id"`      // References a DiskImage
 	ImageVersion int       `json:"image_version"` // Which image version to deploy (0 = latest ready)
 	DiskDevice   string    `json:"disk_device"`   // e.g., "/dev/vda" or "/dev/sda"
+	SkillIDs     []string  `json:"skill_ids"`     // Allocated skills from the skills library
 	Status       Status    `json:"status"`
 	StatusMsg    string    `json:"status_msg"` // Additional status detail (e.g., error message)
 	CreatedAt    time.Time `json:"created_at"`
@@ -50,6 +51,7 @@ type Manager struct {
 	mu     sync.RWMutex
 	agents map[string]*Agent // ID -> Agent
 	byMAC  map[string]string // MAC -> ID (lowercase MAC)
+	byIP   map[string]string // IP -> ID
 }
 
 // NewManager creates a new agent manager.
@@ -57,6 +59,7 @@ func NewManager() *Manager {
 	return &Manager{
 		agents: make(map[string]*Agent),
 		byMAC:  make(map[string]string),
+		byIP:   make(map[string]string),
 	}
 }
 
@@ -68,6 +71,9 @@ func (m *Manager) LoadAgents(agents []Agent) {
 		a := agents[i]
 		m.agents[a.ID] = &a
 		m.byMAC[normalizeMAC(a.MAC)] = a.ID
+		if a.IP != "" {
+			m.byIP[a.IP] = a.ID
+		}
 	}
 }
 
@@ -104,6 +110,9 @@ func (m *Manager) Add(a Agent) error {
 	}
 	m.agents[a.ID] = &a
 	m.byMAC[mac] = a.ID
+	if a.IP != "" {
+		m.byIP[a.IP] = a.ID
+	}
 	return nil
 }
 
@@ -128,6 +137,14 @@ func (m *Manager) Update(a Agent) error {
 		m.byMAC[newMAC] = a.ID
 	}
 
+	// If IP changed, update the IP index.
+	if existing.IP != "" && existing.IP != a.IP {
+		delete(m.byIP, existing.IP)
+	}
+	if a.IP != "" {
+		m.byIP[a.IP] = a.ID
+	}
+
 	a.MAC = newMAC
 	a.CreatedAt = existing.CreatedAt
 	a.UpdatedAt = time.Now()
@@ -145,6 +162,9 @@ func (m *Manager) Delete(id string) error {
 		return fmt.Errorf("agent %q not found", id)
 	}
 	delete(m.byMAC, normalizeMAC(a.MAC))
+	if a.IP != "" {
+		delete(m.byIP, a.IP)
+	}
 	delete(m.agents, id)
 	return nil
 }
@@ -166,6 +186,19 @@ func (m *Manager) GetByMAC(mac string) (*Agent, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	id, ok := m.byMAC[normalizeMAC(mac)]
+	if !ok {
+		return nil, false
+	}
+	a := m.agents[id]
+	cp := *a
+	return &cp, true
+}
+
+// GetByIP returns an agent by IP address.
+func (m *Manager) GetByIP(ip string) (*Agent, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	id, ok := m.byIP[ip]
 	if !ok {
 		return nil, false
 	}

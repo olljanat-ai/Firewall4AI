@@ -18,7 +18,7 @@
         <a href="#" data-page="images">&#x1f4e6; Container Images <span id="image-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="packages">&#x1f4e6; OS Packages <span id="package-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="libraries">&#x1f4da; Code Libraries <span id="library-badge" class="badge" style="display:none">0</span></a>
-        <a href="#" data-page="skills">&#x26a1; Skills</a>
+        <a href="#" data-page="skills">&#x26a1; Skills Library</a>
         <a href="#" data-page="credentials">&#x1f511; Credentials</a>
         <a href="#" data-page="logs">&#x1f4cb; Logs</a>
         <a href="#" data-page="system">&#x2699; System</a>
@@ -71,9 +71,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Skills</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="agents-tbody">
-              <tr><td colspan="6" class="empty-state">No agents configured. Add one to get started.</td></tr>
+              <tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -257,10 +257,10 @@
         </div>
       </div>
 
-      <!-- Skills -->
+      <!-- Skills Library -->
       <div id="page-skills" class="page">
         <div class="toolbar">
-          <h2>Skills</h2>
+          <h2>Skills Library</h2>
           <button class="btn btn-primary" onclick="showCreateSkill()">+ New Skill</button>
         </div>
         <div class="card">
@@ -893,6 +893,10 @@
       <div class="form-group">
         <label>Disk Device</label>
         <input type="text" id="agent-disk" value="/dev/sda" placeholder="/dev/sda">
+      </div>
+      <div class="form-group">
+        <label>Skills</label>
+        <div id="agent-skills-list" class="checkbox-list"></div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideAgentModal()">Cancel</button>
