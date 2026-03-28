@@ -186,6 +186,22 @@ if [ -n "$HOSTNAME" ]; then
     echo "$HOSTNAME" > /mnt/target/etc/hostname
 fi
 
+# Setup SSH authorized keys (if provided).
+SSH_KEYS=$(grep '^ssh_key=' /tmp/deploy-info.txt | cut -d= -f2-)
+if [ -n "$SSH_KEYS" ]; then
+    echo "-> Configuring SSH access..."
+    mkdir -p /mnt/target/root/.ssh
+    chmod 700 /mnt/target/root/.ssh
+    grep '^ssh_key=' /tmp/deploy-info.txt | cut -d= -f2- > /mnt/target/root/.ssh/authorized_keys
+    chmod 600 /mnt/target/root/.ssh/authorized_keys
+    # Enable sshd on boot (Alpine).
+    chroot /mnt/target rc-update add sshd default 2>/dev/null || true
+    # Configure sshd to allow root login with keys only.
+    if [ -f /mnt/target/etc/ssh/sshd_config ]; then
+        sed -i 's/^#*PermitRootLogin .*/PermitRootLogin prohibit-password/' /mnt/target/etc/ssh/sshd_config
+    fi
+fi
+
 # Download CA certificate.
 echo "-> Installing CA certificate..."
 mkdir -p /mnt/target/usr/local/share/ca-certificates

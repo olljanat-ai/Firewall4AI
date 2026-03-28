@@ -28,7 +28,8 @@ type ImageVersion struct {
 	Version   int         `json:"version"`
 	Status    BuildStatus `json:"status"`
 	StatusMsg string      `json:"status_msg"`
-	Size      int64       `json:"size"` // rootfs tarball size in bytes
+	Size      int64       `json:"size"`      // rootfs tarball size in bytes
+	BuildLog  string      `json:"build_log"` // captured build output
 	BuiltAt   time.Time   `json:"built_at"`
 }
 
@@ -42,18 +43,28 @@ const (
 	AIToolOpenAICodex   AITool = "openai_codex"
 )
 
+// ContainerTool represents a container runtime that can be installed.
+type ContainerTool string
+
+const (
+	ContainerToolDocker     ContainerTool = "docker"
+	ContainerToolNomad      ContainerTool = "nomad"
+	ContainerToolKubernetes ContainerTool = "kubernetes"
+)
+
 // DiskImage represents a disk image configuration and its built versions.
 type DiskImage struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	OS        agent.OSType   `json:"os"`         // alpine, debian, ubuntu
-	OSVersion string         `json:"os_version"` // e.g., "3.23", "13"
-	Packages  []string       `json:"packages"`   // packages to install in rootfs
-	AITools   []AITool       `json:"ai_tools"`   // pre-configured AI coding tools to install
-	Scripts   []string       `json:"scripts"`    // custom shell script steps to run during build
-	Versions  []ImageVersion `json:"versions"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	OS             agent.OSType    `json:"os"`              // alpine, debian, ubuntu
+	OSVersion      string          `json:"os_version"`      // e.g., "3.23", "13"
+	Packages       []string        `json:"packages"`        // packages to install in rootfs
+	AITools        []AITool        `json:"ai_tools"`        // pre-configured AI coding tools to install
+	ContainerTools []ContainerTool `json:"container_tools"` // container runtimes to install
+	Scripts        []string        `json:"scripts"`         // custom shell script steps to run during build
+	Versions       []ImageVersion  `json:"versions"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // LatestReadyVersion returns the highest version number with BuildStatusReady, or 0 if none.
@@ -252,6 +263,23 @@ func (m *Manager) SetVersionStatus(id string, version int, status BuildStatus, m
 		}
 	}
 	img.UpdatedAt = time.Now()
+}
+
+// SetVersionBuildLog sets the build log for a specific version.
+func (m *Manager) SetVersionBuildLog(id string, version int, log string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	img, ok := m.images[id]
+	if !ok {
+		return
+	}
+	for i := range img.Versions {
+		if img.Versions[i].Version == version {
+			img.Versions[i].BuildLog = log
+			break
+		}
+	}
 }
 
 // DeleteVersion removes a specific version from an image.

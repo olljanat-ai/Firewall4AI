@@ -1,6 +1,7 @@
 package image
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -9,14 +10,51 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/olljanat-ai/firewall4ai/internal/agent"
 )
 
+// BuildLogger captures build output for later viewing.
+type BuildLogger struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// NewBuildLogger creates a new build logger.
+func NewBuildLogger() *BuildLogger {
+	return &BuildLogger{}
+}
+
+// Write implements io.Writer, capturing output.
+func (bl *BuildLogger) Write(p []byte) (n int, err error) {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	return bl.buf.Write(p)
+}
+
+// String returns all captured output.
+func (bl *BuildLogger) String() string {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	return bl.buf.String()
+}
+
+// BuildSettings holds global settings applied during image builds.
+type BuildSettings struct {
+	Keyboard string // keyboard layout, e.g. "us", "fi"
+	Timezone string // timezone, e.g. "UTC", "Europe/Helsinki"
+}
+
 // BuildImage builds a new version of a disk image by creating a rootfs tarball.
 // This runs as a long-running operation and should be called in a goroutine.
 // The serverIP is the firewall's agent-facing IP (e.g., 10.255.255.1).
-func (m *Manager) BuildImage(img *DiskImage, version int, serverIP string) error {
+// If bl is non-nil, build output is captured to it.
+func (m *Manager) BuildImage(img *DiskImage, version int, serverIP string, settings BuildSettings, bl *BuildLogger) error {
+	if bl != nil {
+		setBuildLogger(bl)
+		defer setBuildLogger(nil)
+	}
 	versionDir := m.VersionDir(img.ID, version)
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		return fmt.Errorf("create version dir: %w", err)
@@ -26,18 +64,18 @@ func (m *Manager) BuildImage(img *DiskImage, version int, serverIP string) error
 
 	switch img.OS {
 	case agent.OSAlpine:
-		return m.buildAlpine(img, rootfsPath, serverIP)
+		return m.buildAlpine(img, rootfsPath, serverIP, settings, bl)
 	case agent.OSDebian:
-		return m.buildDebian(img, rootfsPath, serverIP, "debian")
+		return m.buildDebian(img, rootfsPath, serverIP, "debian", settings, bl)
 	case agent.OSUbuntu:
-		return m.buildDebian(img, rootfsPath, serverIP, "ubuntu")
+		return m.buildDebian(img, rootfsPath, serverIP, "ubuntu", settings, bl)
 	default:
 		return fmt.Errorf("unsupported OS type: %s", img.OS)
 	}
 }
 
 // buildAlpine builds an Alpine Linux rootfs tarball.
-func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error {
+func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, settings BuildSettings, _ *BuildLogger) error {
 	// Download Alpine minirootfs.
 	minirootfsURL := fmt.Sprintf("https://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/alpine-minirootfs-%s.0-x86_64.tar.gz",
 		img.OSVersion, img.OSVersion)
@@ -99,7 +137,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	// Install base packages + kernel + bootloader.
 	log.Printf("Image build [%s v%s]: installing packages", img.Name, img.OSVersion)
 
-	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates"}
+	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates", "openssh"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChroot(rootfsDir, "apk", append([]string{"update"})...); err != nil {
@@ -198,6 +236,29 @@ LABEL alpine
 `, kernelFile, initrdFile)
 	os.WriteFile(filepath.Join(rootfsDir, "boot/extlinux.conf"), []byte(extlinuxConf), 0o644)
 
+	// Configure keyboard layout.
+	if settings.Keyboard != "" {
+		log.Printf("Image build [%s v%s]: configuring keyboard layout: %s", img.Name, img.OSVersion, settings.Keyboard)
+		runChroot(rootfsDir, "apk", "add", "kbd-bkeymaps")
+		kbConf := fmt.Sprintf("KEYMAPOPTS=\"%s %s\"\n", settings.Keyboard, settings.Keyboard)
+		os.WriteFile(filepath.Join(rootfsDir, "etc/conf.d/loadkmap"), []byte(kbConf), 0o644)
+		runChroot(rootfsDir, "rc-update", "add", "loadkmap", "boot")
+	}
+
+	// Configure timezone.
+	if settings.Timezone != "" {
+		log.Printf("Image build [%s v%s]: configuring timezone: %s", img.Name, img.OSVersion, settings.Timezone)
+		runChroot(rootfsDir, "apk", "add", "tzdata")
+		os.MkdirAll(filepath.Join(rootfsDir, "etc/zoneinfo"), 0o755)
+		runChroot(rootfsDir, "sh", "-c", fmt.Sprintf("cp /usr/share/zoneinfo/%s /etc/localtime", settings.Timezone))
+		os.WriteFile(filepath.Join(rootfsDir, "etc/timezone"), []byte(settings.Timezone+"\n"), 0o644)
+	}
+
+	// Install container tools.
+	if err := installContainerTools(img, rootfsDir, false, nil); err != nil {
+		return fmt.Errorf("install container tools: %w", err)
+	}
+
 	// Install AI tools.
 	if err := installAITools(img, rootfsDir, false, nil); err != nil {
 		return fmt.Errorf("install AI tools: %w", err)
@@ -251,7 +312,7 @@ LABEL alpine
 }
 
 // buildDebian builds a Debian or Ubuntu rootfs tarball using debootstrap.
-func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro string) error {
+func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro string, settings BuildSettings, _ *BuildLogger) error {
 	codename := debianCodename(img.OSVersion)
 	mirror := "http://deb.debian.org/debian"
 	if distro == "ubuntu" {
@@ -303,7 +364,7 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 		kernelPkg = "linux-image-generic"
 	}
 
-	basePkgs := []string{kernelPkg, "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs"}
+	basePkgs := []string{kernelPkg, "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs", "openssh-server"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChrootEnv(rootfsDir, debEnv, "apt-get", "update"); err != nil {
@@ -496,6 +557,27 @@ if [ -n "$HOSTNAME" ]; then
     echo "$HOSTNAME" > /mnt/target/etc/hostname
 fi
 
+# Setup SSH authorized keys (if provided).
+SSH_KEYS=$(grep '^ssh_key=' /tmp/deploy-info.txt | cut -d= -f2-)
+if [ -n "$SSH_KEYS" ]; then
+    echo "-> Configuring SSH access..."
+    mkdir -p /mnt/target/root/.ssh
+    chmod 700 /mnt/target/root/.ssh
+    grep '^ssh_key=' /tmp/deploy-info.txt | cut -d= -f2- > /mnt/target/root/.ssh/authorized_keys
+    chmod 600 /mnt/target/root/.ssh/authorized_keys
+    # Enable SSH server on first boot.
+    if [ -d /mnt/target/etc/systemd ]; then
+        chroot /mnt/target systemctl enable ssh 2>/dev/null || true
+    fi
+    if [ -f /mnt/target/etc/conf.d/sshd ] || [ -x /mnt/target/usr/sbin/sshd ]; then
+        chroot /mnt/target rc-update add sshd default 2>/dev/null || true
+    fi
+    # Configure sshd to allow root login with keys only.
+    if [ -f /mnt/target/etc/ssh/sshd_config ]; then
+        sed -i 's/^#*PermitRootLogin .*/PermitRootLogin prohibit-password/' /mnt/target/etc/ssh/sshd_config
+    fi
+fi
+
 # Download CA certificate.
 echo "-> Installing CA certificate..."
 mkdir -p /mnt/target/usr/local/share/ca-certificates
@@ -543,6 +625,27 @@ echo "=== Firewall4AI Deploy done, continuing boot ==="
 	initrdGlob, _ = filepath.Glob(filepath.Join(rootfsDir, "boot/initrd.img-*"))
 	if len(initrdGlob) > 0 {
 		initrdFile = filepath.Base(initrdGlob[0])
+	}
+
+	// Configure keyboard layout.
+	if settings.Keyboard != "" {
+		log.Printf("Image build [%s v%s]: configuring keyboard layout: %s", img.Name, img.OSVersion, settings.Keyboard)
+		kbDefault := fmt.Sprintf("keyboard-configuration\tkeyboard-configuration/layoutcode\tstring\t%s\n", settings.Keyboard)
+		runChrootEnv(rootfsDir, debEnv, "sh", "-c", fmt.Sprintf("echo '%s' | debconf-set-selections", kbDefault))
+		runChrootEnv(rootfsDir, debEnv, "apt-get", "install", "-y", "keyboard-configuration", "console-setup")
+	}
+
+	// Configure timezone.
+	if settings.Timezone != "" {
+		log.Printf("Image build [%s v%s]: configuring timezone: %s", img.Name, img.OSVersion, settings.Timezone)
+		os.WriteFile(filepath.Join(rootfsDir, "etc/timezone"), []byte(settings.Timezone+"\n"), 0o644)
+		runChrootEnv(rootfsDir, debEnv, "ln", "-sf", "/usr/share/zoneinfo/"+settings.Timezone, "/etc/localtime")
+		runChrootEnv(rootfsDir, debEnv, "dpkg-reconfigure", "-f", "noninteractive", "tzdata")
+	}
+
+	// Install container tools.
+	if err := installContainerTools(img, rootfsDir, true, debEnv); err != nil {
+		return fmt.Errorf("install container tools: %w", err)
 	}
 
 	// Install AI tools.
@@ -598,10 +701,35 @@ echo "=== Firewall4AI Deploy done, continuing boot ==="
 }
 
 // run executes a command and returns an error if it fails.
+// activeBuildLogger holds the current build logger (if any) for capturing output.
+var activeBuildLogger struct {
+	mu sync.Mutex
+	bl *BuildLogger
+}
+
+func setBuildLogger(bl *BuildLogger) {
+	activeBuildLogger.mu.Lock()
+	activeBuildLogger.bl = bl
+	activeBuildLogger.mu.Unlock()
+}
+
+func getBuildLogger() *BuildLogger {
+	activeBuildLogger.mu.Lock()
+	defer activeBuildLogger.mu.Unlock()
+	return activeBuildLogger.bl
+}
+
+func cmdOutput() (io.Writer, io.Writer) {
+	bl := getBuildLogger()
+	if bl != nil {
+		return io.MultiWriter(os.Stdout, bl), io.MultiWriter(os.Stderr, bl)
+	}
+	return os.Stdout, os.Stderr
+}
+
 func run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }
 
@@ -609,20 +737,17 @@ func run(name string, args ...string) error {
 func runChroot(rootfs, name string, args ...string) error {
 	chrootArgs := append([]string{rootfs, name}, args...)
 	cmd := exec.Command("chroot", chrootArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }
 
 // runChrootEnv runs a command inside a chroot with extra environment variables.
 func runChrootEnv(rootfs string, env []string, name string, args ...string) error {
 	// Use env to set variables, then chroot.
-	// Build: env VAR1=val1 VAR2=val2 chroot rootfs name args...
 	envArgs := append(env, "chroot", rootfs, name)
 	envArgs = append(envArgs, args...)
 	cmd := exec.Command("env", envArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }
 
@@ -752,6 +877,82 @@ func installAITools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []st
 			log.Printf("Image build [%s v%s]: installing GitHub Copilot CLI", img.Name, img.OSVersion)
 			if err := runChroot(rootfsDir, "sh", "-c", "curl -fsSL https://gh.io/copilot-install | bash"); err != nil {
 				return fmt.Errorf("install GitHub Copilot: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// installContainerTools installs the selected container runtimes into the rootfs.
+func installContainerTools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []string) error {
+	if len(img.ContainerTools) == 0 {
+		return nil
+	}
+
+	log.Printf("Image build [%s v%s]: installing container tools", img.Name, img.OSVersion)
+
+	// Docker is automatically included when Nomad is selected.
+	needsDocker := false
+	for _, tool := range img.ContainerTools {
+		if tool == ContainerToolDocker || tool == ContainerToolNomad {
+			needsDocker = true
+		}
+	}
+
+	if isDebian {
+		if needsDocker {
+			log.Printf("Image build [%s v%s]: installing Docker", img.Name, img.OSVersion)
+			if err := runChrootEnv(rootfsDir, debEnv, "apt-get", "install", "-y", "docker.io"); err != nil {
+				return fmt.Errorf("install docker: %w", err)
+			}
+		}
+		for _, tool := range img.ContainerTools {
+			switch tool {
+			case ContainerToolNomad:
+				log.Printf("Image build [%s v%s]: installing Nomad", img.Name, img.OSVersion)
+				// Install Nomad from HashiCorp APT repo.
+				if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c",
+					"apt-get install -y gpg && "+
+						"wget -qO- https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg && "+
+						"echo \"deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main\" > /etc/apt/sources.list.d/hashicorp.list && "+
+						"apt-get update && apt-get install -y nomad",
+				); err != nil {
+					return fmt.Errorf("install nomad: %w", err)
+				}
+			case ContainerToolKubernetes:
+				log.Printf("Image build [%s v%s]: installing Kubernetes", img.Name, img.OSVersion)
+				if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c",
+					"apt-get install -y apt-transport-https ca-certificates curl gpg && "+
+						"curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg && "+
+						"echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /' > /etc/apt/sources.list.d/kubernetes.list && "+
+						"apt-get update && apt-get install -y kubelet kubeadm kubectl",
+				); err != nil {
+					return fmt.Errorf("install kubernetes: %w", err)
+				}
+			}
+		}
+	} else {
+		// Alpine
+		if needsDocker {
+			log.Printf("Image build [%s v%s]: installing Docker", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "apk", "add", "docker", "docker-cli-compose"); err != nil {
+				return fmt.Errorf("install docker: %w", err)
+			}
+			runChroot(rootfsDir, "rc-update", "add", "docker", "default")
+		}
+		for _, tool := range img.ContainerTools {
+			switch tool {
+			case ContainerToolNomad:
+				log.Printf("Image build [%s v%s]: installing Nomad", img.Name, img.OSVersion)
+				if err := runChroot(rootfsDir, "apk", "add", "nomad"); err != nil {
+					return fmt.Errorf("install nomad: %w", err)
+				}
+			case ContainerToolKubernetes:
+				log.Printf("Image build [%s v%s]: installing Kubernetes", img.Name, img.OSVersion)
+				if err := runChroot(rootfsDir, "apk", "add", "kubelet", "kubeadm", "kubectl"); err != nil {
+					return fmt.Errorf("install kubernetes: %w", err)
+				}
 			}
 		}
 	}

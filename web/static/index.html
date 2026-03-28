@@ -18,6 +18,7 @@
         <a href="#" data-page="images">&#x1f4e6; Container Images <span id="image-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="packages">&#x1f4e6; OS Packages <span id="package-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="libraries">&#x1f4da; Code Libraries <span id="library-badge" class="badge" style="display:none">0</span></a>
+        <a href="#" data-page="templates">&#x1f4cb; Templates</a>
         <a href="#" data-page="skills">&#x26a1; Skills Library</a>
         <a href="#" data-page="credentials">&#x1f511; Credentials</a>
         <a href="#" data-page="logs">&#x1f4cb; Logs</a>
@@ -58,9 +59,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tools</th><th>Versions</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tools</th><th>Container Tools</th><th>Versions</th><th>Actions</th></tr></thead>
             <tbody id="disk-images-tbody">
-              <tr><td colspan="6" class="empty-state">No disk images configured. Create one to get started.</td></tr>
+              <tr><td colspan="7" class="empty-state">No disk images configured. Create one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -71,9 +72,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Skills</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Skills</th><th>Status</th><th>Last Seen</th><th>Actions</th></tr></thead>
             <tbody id="agents-tbody">
-              <tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>
+              <tr><td colspan="8" class="empty-state">No agents configured. Add one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -99,7 +100,7 @@
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
-            <option value="pending">Pending</option>
+            <option value="pending" selected>Pending</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('url')">Clear</button>
         </div>
@@ -142,7 +143,7 @@
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
-            <option value="pending">Pending</option>
+            <option value="pending" selected>Pending</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('image')">Clear</button>
         </div>
@@ -188,7 +189,7 @@
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
-            <option value="pending">Pending</option>
+            <option value="pending" selected>Pending</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('package')">Clear</button>
         </div>
@@ -234,7 +235,7 @@
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
-            <option value="pending">Pending</option>
+            <option value="pending" selected>Pending</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('library')">Clear</button>
         </div>
@@ -254,6 +255,22 @@
             </tbody>
           </table>
           <div id="pager-library" class="pager" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Approval Templates -->
+      <div id="page-templates" class="page">
+        <div class="toolbar">
+          <h2>Approval Templates</h2>
+          <button class="btn btn-primary" onclick="showCreateTemplate()">+ New Template</button>
+        </div>
+        <div class="card">
+          <table>
+            <thead><tr><th>Name</th><th>Rules</th><th>Actions</th></tr></thead>
+            <tbody id="templates-tbody">
+              <tr><td colspan="3" class="empty-state">No templates configured. Create one to get started.</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -358,6 +375,24 @@
           <pre id="service-log-output" style="background:var(--bg-secondary);padding:12px;border-radius:6px;max-height:400px;overflow-y:auto;font-size:12px;white-space:pre-wrap;word-break:break-all;margin-top:8px">Loading...</pre>
         </div>
         <div class="card">
+          <h3>DHCP Leases</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Current IP Assignments</div>
+              <div class="setting-desc">Shows all active DHCP leases on the agent network.</div>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-outline btn-sm" onclick="loadDHCPLeases()">Refresh</button>
+            </div>
+          </div>
+          <table style="margin-top:8px">
+            <thead><tr><th>MAC Address</th><th>IP Address</th><th>Hostname</th><th>Expiry</th></tr></thead>
+            <tbody id="dhcp-leases-tbody">
+              <tr><td colspan="4" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
           <h3>Categories</h3>
           <div class="setting-row">
             <div class="setting-info">
@@ -405,6 +440,64 @@
           <div id="distros-list" style="padding-top:8px"></div>
         </div>
         <div class="card">
+          <h3>Agent VM Settings</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Keyboard Layout</div>
+              <div class="setting-desc">Keyboard layout for all Agent VMs (e.g., us, fi, de, gb).</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" id="vm-keyboard" placeholder="us" style="width:100px">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Timezone</div>
+              <div class="setting-desc">Timezone for all Agent VMs (e.g., UTC, Europe/Helsinki, America/New_York).</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" id="vm-timezone" placeholder="UTC" style="width:200px">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">SSH Authorized Keys</div>
+              <div class="setting-desc">SSH public keys for root login on all Agent VMs. One key per line. SSH server is automatically enabled when keys are configured.</div>
+            </div>
+            <div class="setting-control" style="flex-direction:column;align-items:stretch">
+              <textarea id="vm-ssh-keys" rows="4" style="width:100%;font-family:monospace;font-size:12px" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info"></div>
+            <div class="setting-control">
+              <button class="btn btn-primary btn-sm" onclick="saveVMSettings()">Save VM Settings</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Backup &amp; Restore</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Export Backup</div>
+              <div class="setting-desc">Download the current configuration as a JSON file.</div>
+            </div>
+            <div class="setting-control">
+              <a href="/api/backup" class="btn btn-primary btn-sm" download="firewall4ai-backup.json">Download Backup</a>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Import Backup</div>
+              <div class="setting-desc">Restore configuration from a previously exported backup file. This will replace all current settings. A page reload is required after restore.</div>
+            </div>
+            <div class="setting-control">
+              <input type="file" id="restore-file" accept=".json" style="display:none" onchange="doRestore(this)">
+              <button class="btn btn-danger btn-sm" onclick="document.getElementById('restore-file').click()">Upload &amp; Restore</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
           <h3>SSH Access</h3>
           <div class="setting-row">
             <div class="setting-info">
@@ -448,8 +541,14 @@
     <div class="modal">
       <h3 id="modal-rule-title">Add URL Rule</h3>
       <div class="form-group">
-        <label>Host Pattern (supports wildcards like *.example.com)</label>
-        <input type="text" id="rule-host" placeholder="e.g., api.example.com or *.example.com">
+        <label>Host Pattern</label>
+        <input type="text" id="rule-host" placeholder="e.g., api.example.com or *.example.com" oninput="updateWildcardHint()">
+        <div class="wildcard-helpers">
+          <span class="helper-label">Quick patterns:</span>
+          <button type="button" class="btn btn-outline btn-xs" onclick="applyWildcardPrefix()">*.domain</button>
+          <button type="button" class="btn btn-outline btn-xs" onclick="insertWildcard('*')">All hosts (*)</button>
+        </div>
+        <div id="wildcard-hint" class="field-hint" style="display:none"></div>
       </div>
       <div class="form-group">
         <label>Path Prefix (optional, leave empty for all paths)</label>
@@ -729,8 +828,12 @@
         </select>
       </div>
       <div class="form-group">
-        <label>Package Name (e.g., curl or lib* for wildcard)</label>
-        <input type="text" id="package-rule-host" placeholder="e.g., curl">
+        <label>Package Name</label>
+        <input type="text" id="package-rule-host" placeholder="e.g., curl or lib* for wildcard">
+        <div class="wildcard-helpers">
+          <span class="helper-label">Quick patterns:</span>
+          <button type="button" class="btn btn-outline btn-xs" onclick="document.getElementById('package-rule-host').value='*';document.getElementById('package-rule-host').focus()">All packages (*)</button>
+        </div>
       </div>
       <div class="form-group">
         <label>Level</label>
@@ -819,6 +922,71 @@
     </div>
   </div>
 
+  <!-- Template Modal -->
+  <div id="modal-template" class="modal-overlay">
+    <div class="modal" style="max-width:700px">
+      <h3 id="modal-template-title">Create Template</h3>
+      <div class="form-group">
+        <label>Template Name</label>
+        <input type="text" id="template-name" placeholder="e.g., GitHub Access, Python Dev">
+      </div>
+      <div class="form-group">
+        <label>Rules <button class="btn btn-outline btn-xs" onclick="addTemplateRule()">+ Add Rule</button></label>
+        <div id="template-rules-list"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideTemplateModal()">Cancel</button>
+        <button class="btn btn-primary" id="modal-template-submit" onclick="submitTemplate()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Apply Template Modal -->
+  <div id="modal-apply-template" class="modal-overlay">
+    <div class="modal">
+      <h3>Apply Template</h3>
+      <div class="form-group">
+        <label>Template</label>
+        <select id="apply-template-id"></select>
+      </div>
+      <div class="form-group">
+        <label>Level</label>
+        <select id="apply-template-level" onchange="updateApplyTemplateFields()">
+          <option value="global">Global (all agents, all VMs)</option>
+          <option value="vm">VM-specific (by source IP)</option>
+          <option value="skill">Skill-specific (by skill ID)</option>
+        </select>
+      </div>
+      <div id="apply-template-vm-fields" style="display:none">
+        <div class="form-group">
+          <label>Source IP</label>
+          <input type="text" id="apply-template-source-ip" placeholder="e.g., 10.255.255.10">
+        </div>
+      </div>
+      <div id="apply-template-skill-fields" style="display:none">
+        <div class="form-group">
+          <label>Skill ID</label>
+          <input type="text" id="apply-template-skill-id" placeholder="Skill ID">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideApplyTemplate()">Cancel</button>
+        <button class="btn btn-primary" onclick="doApplyTemplate()">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Build Log Modal -->
+  <div id="modal-build-log" class="modal-overlay">
+    <div class="modal" style="max-width:800px;max-height:80vh;overflow-y:auto">
+      <h3>Build Log</h3>
+      <pre id="build-log-content" style="background:var(--bg-secondary);padding:12px;border-radius:6px;max-height:60vh;overflow-y:auto;font-size:12px;white-space:pre-wrap;word-break:break-all"></pre>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideBuildLog()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Log Detail Modal -->
   <div id="modal-log-detail" class="modal-overlay">
     <div class="modal" style="max-width:700px;max-height:80vh;overflow-y:auto">
@@ -861,6 +1029,15 @@
           <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-github-copilot" value="github_copilot"> GitHub Copilot</label>
           <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-claude-code" value="claude_code"> Claude Code</label>
           <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-openai-codex" value="openai_codex"> OpenAI Codex</label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Container Tools</label>
+        <div class="checkbox-group">
+          <label class="checkbox-label"><input type="radio" name="disk-image-container-tools" id="disk-image-ct-none" value="none" checked> None</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-container-tools" id="disk-image-ct-docker" value="docker"> Docker</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-container-tools" id="disk-image-ct-nomad" value="nomad"> Nomad (includes Docker)</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-container-tools" id="disk-image-ct-kubernetes" value="kubernetes"> Kubernetes</label>
         </div>
       </div>
       <div class="form-group">

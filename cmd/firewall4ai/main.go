@@ -53,6 +53,10 @@ type storeData struct {
 	DiskImages        []image.DiskImage        `json:"disk_images"`
 	Agents            []agent.Agent            `json:"agents"`
 	DHCPLeases        []dhcp.Lease             `json:"dhcp_leases"`
+	Keyboard          string                   `json:"keyboard"`
+	Timezone          string                   `json:"timezone"`
+	SSHAuthorizedKeys []string                 `json:"ssh_authorized_keys"`
+	Templates         []api.ApprovalTemplate   `json:"templates"`
 }
 
 func main() {
@@ -92,7 +96,7 @@ func main() {
 	libraryApprovals := approval.NewManager()
 	creds := credentials.NewManager()
 	dbMgr := database.NewManager()
-	logger := proxylog.NewLogger(cfg.MaxLogEntries)
+	logger := proxylog.NewPersistentLogger(cfg.MaxLogEntries, filepath.Join(cfg.DataDir, "logs"))
 	agentMgr := agent.NewManager()
 
 	// Network configuration.
@@ -214,6 +218,8 @@ func main() {
 		AgentManager:     agentMgr,
 	}
 	apiHandler.LoadCategories(state.Categories)
+	apiHandler.LoadVMSettings(state.Keyboard, state.Timezone, state.SSHAuthorizedKeys)
+	apiHandler.LoadTemplates(state.Templates)
 
 	// Agent change callbacks.
 	apiHandler.OnAgentChange = func(a *agent.Agent) {
@@ -234,6 +240,23 @@ func main() {
 		}
 		return ""
 	}
+	apiHandler.GetDHCPLeases = func() []api.DHCPLeaseInfo {
+		leases := dhcpServer.ExportLeases()
+		out := make([]api.DHCPLeaseInfo, len(leases))
+		for i, l := range leases {
+			expiry := "permanent"
+			if !l.Expiry.IsZero() {
+				expiry = l.Expiry.Format(time.RFC3339)
+			}
+			out[i] = api.DHCPLeaseInfo{
+				MAC:      l.MAC,
+				IP:       l.IP,
+				Hostname: l.Hostname,
+				Expiry:   expiry,
+			}
+		}
+		return out
+	}
 
 	// Image build callback.
 	apiHandler.BuildImage = func(img *image.DiskImage, version int) {
@@ -242,12 +265,16 @@ func main() {
 			d.DiskImages = imageMgr.ExportImages()
 		})
 
-		if err := imageMgr.BuildImage(img, version, serverIP.String()); err != nil {
+		bl := image.NewBuildLogger()
+		keyboard, tz := apiHandler.GetVMSettings()
+		buildSettings := image.BuildSettings{Keyboard: keyboard, Timezone: tz}
+		if err := imageMgr.BuildImage(img, version, serverIP.String(), buildSettings, bl); err != nil {
 			log.Printf("Failed to build image %s v%d: %v", img.Name, version, err)
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusError, err.Error())
 		} else {
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusReady, "")
 		}
+		imageMgr.SetVersionBuildLog(img.ID, version, bl.String())
 
 		dataStore.Update(func(d *storeData) {
 			d.DiskImages = imageMgr.ExportImages()
@@ -272,9 +299,22 @@ func main() {
 			d.DiskImages = imageMgr.ExportImages()
 			d.Agents = agentMgr.ExportAgents()
 			d.DHCPLeases = dhcpServer.ExportLeases()
+			keyboard, tz := apiHandler.GetVMSettings()
+			d.Keyboard = keyboard
+			d.Timezone = tz
+			d.SSHAuthorizedKeys = apiHandler.GetSSHAuthorizedKeys()
+			d.Templates = apiHandler.ExportTemplates()
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
+	apiHandler.GetBackupData = func() ([]byte, error) {
+		// First save current state, then export.
+		saveFunc()
+		return dataStore.ExportJSON()
+	}
+	apiHandler.RestoreBackupData = func(data []byte) error {
+		return dataStore.ImportJSON(data)
+	}
 
 	// Setup proxy server with CA for MITM and registry awareness.
 	p := proxy.New(skills, approvals, creds, logger)
@@ -288,6 +328,9 @@ func main() {
 	p.LearningMode = config.Get().LearningMode
 	if p.LearningMode {
 		log.Printf("Learning mode is ENABLED — all connections will be allowed by default")
+	}
+	p.OnActivity = func(sourceIP string) {
+		agentMgr.SetLastSeen(sourceIP)
 	}
 	apiHandler.SetLearningModeFunc = func(enabled bool) {
 		p.LearningMode = enabled
@@ -324,6 +367,7 @@ func main() {
 	apiHandler.RegisterRoutes(adminMux)
 	apiHandler.RegisterAgentMgmtRoutes(adminMux)
 	apiHandler.RegisterImageMgmtRoutes(adminMux)
+	apiHandler.RegisterTemplateRoutes(adminMux)
 
 	// Serve CA certificate for download.
 	adminMux.HandleFunc("GET /ca.crt", func(w http.ResponseWriter, r *http.Request) {
@@ -366,6 +410,7 @@ func main() {
 		AgentManager:     agentMgr,
 		NetbootManager:   netbootMgr,
 		ImageManager:     imageMgr,
+		GetSSHKeys:       apiHandler.GetSSHAuthorizedKeys,
 	}
 	agentHandler.RegisterAgentRoutes(agentAPIMux)
 	agentAPIServer := &http.Server{

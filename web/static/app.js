@@ -59,6 +59,7 @@ function navigate(page) {
   if (page === 'images') loadImages();
   if (page === 'packages') loadPackages();
   if (page === 'libraries') loadLibraries();
+  if (page === 'templates') loadTemplates();
   if (page === 'skills') loadSkills();
   if (page === 'credentials') loadCredentials();
   if (page === 'logs') loadLogs();
@@ -633,7 +634,7 @@ async function loadApprovals() {
           : '<span class="badge-status" style="opacity:0.4">Normal</span>';
         rows.push(`<tr>
           <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('url',this)"></td>
-          <td><strong>${esc(a.host)}</strong></td>
+          <td><strong>${esc(a.host)}</strong>${a.host.includes('*') ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px">wildcard</span>' : ''}</td>
           <td>${pathDisplay}</td>
           <td>${categoryDisplay}</td>
           <td>${logModeDisplay}</td>
@@ -696,6 +697,48 @@ async function promoteToGlobal(host, sourceIP, pathPrefix, status) {
 }
 
 // --- URL Rule Modal ---
+// --- Wildcard pattern helpers ---
+function applyWildcardPrefix() {
+  const input = document.getElementById('rule-host');
+  const val = input.value.trim();
+  if (val && !val.startsWith('*.')) {
+    // Extract domain: e.g., "api.example.com" -> "*.example.com"
+    const parts = val.split('.');
+    if (parts.length >= 2) {
+      input.value = '*.' + parts.slice(parts.length >= 3 ? 1 : 0).join('.');
+    } else {
+      input.value = '*.' + val;
+    }
+  } else if (!val) {
+    input.value = '*.';
+    input.focus();
+  }
+  updateWildcardHint();
+}
+
+function insertWildcard(pattern) {
+  document.getElementById('rule-host').value = pattern;
+  updateWildcardHint();
+}
+
+function updateWildcardHint() {
+  const val = document.getElementById('rule-host').value.trim();
+  const hint = document.getElementById('wildcard-hint');
+  if (val.includes('*')) {
+    hint.style.display = 'block';
+    if (val === '*') {
+      hint.innerHTML = '<span class="wildcard-match">Matches ALL hosts</span> &mdash; this is very broad, consider using a more specific pattern.';
+    } else if (val.startsWith('*.')) {
+      const domain = val.substring(2);
+      hint.innerHTML = 'Matches any subdomain of <span class="wildcard-match">' + esc(domain) + '</span> (e.g., api.' + esc(domain) + ', cdn.' + esc(domain) + ')';
+    } else {
+      hint.innerHTML = 'Wildcard pattern: <span class="wildcard-match">' + esc(val) + '</span>';
+    }
+  } else {
+    hint.style.display = 'none';
+  }
+}
+
 function showAddRule() {
   editingRule = null;
   document.getElementById('modal-rule-title').textContent = 'Add URL Rule';
@@ -710,6 +753,7 @@ function showAddRule() {
   document.getElementById('rule-logging-mode').value = 'normal';
   document.getElementById('rule-note').value = '';
   updateRuleFields();
+  updateWildcardHint();
   document.getElementById('modal-rule').classList.add('active');
 }
 
@@ -736,6 +780,7 @@ function showEditRule(idx) {
   document.getElementById('rule-logging-mode').value = a.logging_mode || 'normal';
   document.getElementById('rule-note').value = a.note || '';
   updateRuleFields();
+  updateWildcardHint();
   document.getElementById('modal-rule').classList.add('active');
 }
 
@@ -845,7 +890,7 @@ async function loadImages() {
         }
         rows.push(`<tr>
           <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('image',this)"></td>
-          <td><strong>${esc(a.host)}</strong></td>
+          <td><strong>${esc(a.host)}</strong>${a.host.includes('*') ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px">wildcard</span>' : ''}</td>
           <td>${categoryDisplay}</td>
           <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
@@ -2130,10 +2175,38 @@ function timeAgo(ts) {
 }
 
 // --- System ---
+async function loadDHCPLeases() {
+  try {
+    const leases = await api('GET', '/api/dhcp/leases');
+    const tbody = document.getElementById('dhcp-leases-tbody');
+    if (!leases || leases.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No active DHCP leases</td></tr>';
+      return;
+    }
+    tbody.innerHTML = leases.map(l => `<tr>
+      <td><code>${esc(l.mac)}</code></td>
+      <td><code>${esc(l.ip)}</code></td>
+      <td>${l.hostname ? esc(l.hostname) : '<span class="muted">-</span>'}</td>
+      <td>${l.expiry === 'permanent' ? '<span class="badge-status approved">permanent</span>' : esc(l.expiry)}</td>
+    </tr>`).join('');
+  } catch (e) {
+    console.error('DHCP leases load error:', e);
+  }
+}
+
 async function loadSystem() {
   loadServiceLogs();
+  loadDHCPLeases();
   await refreshCategories();
   renderCategories();
+  try {
+    const vmData = await api('GET', '/api/settings/vm-settings');
+    document.getElementById('vm-keyboard').value = vmData.keyboard || '';
+    document.getElementById('vm-timezone').value = vmData.timezone || '';
+    document.getElementById('vm-ssh-keys').value = (vmData.ssh_authorized_keys || []).join('\n');
+  } catch (e) {
+    console.error('VM settings load error:', e);
+  }
   try {
     const data = await api('GET', '/api/settings/ssh');
     const statusEl = document.getElementById('ssh-status');
@@ -2291,6 +2364,19 @@ async function toggleSSH() {
   }
 }
 
+async function saveVMSettings() {
+  const keyboard = document.getElementById('vm-keyboard').value.trim();
+  const timezone = document.getElementById('vm-timezone').value.trim();
+  const sshKeysStr = document.getElementById('vm-ssh-keys').value.trim();
+  const ssh_authorized_keys = sshKeysStr ? sshKeysStr.split('\n').map(k => k.trim()).filter(k => k) : [];
+  try {
+    await api('POST', '/api/settings/vm-settings', { keyboard, timezone, ssh_authorized_keys });
+    alert('VM settings saved. SSH keys apply to new deployments. Keyboard and timezone apply to new image builds.');
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 async function doUpgrade() {
   const image = document.getElementById('upgrade-image').value.trim();
   if (!confirm('Upgrade to ' + image + '? The system will reboot after upgrade.')) return;
@@ -2300,6 +2386,33 @@ async function doUpgrade() {
   } catch (e) {
     alert('Error: ' + e.message);
   }
+}
+
+async function doRestore(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!confirm('Restore from backup? This will REPLACE all current settings. The page will reload after restore.')) {
+    input.value = '';
+    return;
+  }
+  try {
+    const text = await file.text();
+    JSON.parse(text); // validate JSON
+    const res = await fetch('/api/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: text,
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(err);
+    }
+    alert('Restore successful. Reloading page...');
+    location.reload();
+  } catch (e) {
+    alert('Restore failed: ' + e.message);
+  }
+  input.value = '';
 }
 
 async function doReboot() {
@@ -2369,7 +2482,7 @@ async function loadDiskImages() {
     const tbody = document.getElementById('disk-images-tbody');
     tbody.innerHTML = '';
     if (!currentDiskImages || currentDiskImages.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
       return;
     }
 
@@ -2379,12 +2492,20 @@ async function loadDiskImages() {
       'claude_code': 'Claude Code',
       'openai_codex': 'OpenAI Codex'
     };
+    const containerToolLabels = {
+      'docker': 'Docker',
+      'nomad': 'Nomad',
+      'kubernetes': 'Kubernetes'
+    };
 
     currentDiskImages.forEach(img => {
       const osLabel = (osLabels[img.os] || img.os) + ' ' + (img.os_version || '');
       const pkgs = (img.packages && img.packages.length > 0) ? esc(img.packages.join(', ')) : '<span class="muted">none</span>';
       const aiTools = (img.ai_tools && img.ai_tools.length > 0)
         ? img.ai_tools.map(t => esc(aiToolLabels[t] || t)).join(', ')
+        : '<span class="muted">none</span>';
+      const ctTools = (img.container_tools && img.container_tools.length > 0)
+        ? img.container_tools.map(t => esc(containerToolLabels[t] || t)).join(', ')
         : '<span class="muted">none</span>';
 
       // Build versions display.
@@ -2394,7 +2515,8 @@ async function loadDiskImages() {
           const cls = imageVersionStatusClass(v.status);
           const sizeStr = v.size ? ' (' + formatBytes(v.size) + ')' : '';
           const label = 'v' + v.version + ': ' + v.status + (v.status_msg ? ' - ' + v.status_msg : '') + sizeStr;
-          return `<span class="badge-status ${cls}">${esc(label)}</span>`;
+          const logBtn = v.build_log ? ` <button class="btn btn-outline btn-xs" onclick="showBuildLog('${esc(img.id)}',${v.version})" title="View build log">Log</button>` : '';
+          return `<span class="badge-status ${cls}">${esc(label)}</span>${logBtn}`;
         }).join(' ');
       } else {
         versionsHTML = '<span class="muted">no builds</span>';
@@ -2405,6 +2527,7 @@ async function loadDiskImages() {
         <td>${esc(osLabel)}</td>
         <td>${pkgs}</td>
         <td>${aiTools}</td>
+        <td>${ctTools}</td>
         <td>${versionsHTML}</td>
         <td>
           <button class="btn btn-primary btn-sm" onclick="buildDiskImage('${esc(img.id)}')">Build</button>
@@ -2448,6 +2571,7 @@ function showCreateDiskImage() {
   document.getElementById('disk-image-ai-github-copilot').checked = false;
   document.getElementById('disk-image-ai-claude-code').checked = false;
   document.getElementById('disk-image-ai-openai-codex').checked = false;
+  document.getElementById('disk-image-ct-none').checked = true;
   document.getElementById('disk-image-scripts').value = '';
   document.getElementById('modal-disk-image').classList.add('active');
 }
@@ -2476,6 +2600,11 @@ function editDiskImage(id) {
   document.getElementById('disk-image-ai-github-copilot').checked = aiTools.includes('github_copilot');
   document.getElementById('disk-image-ai-claude-code').checked = aiTools.includes('claude_code');
   document.getElementById('disk-image-ai-openai-codex').checked = aiTools.includes('openai_codex');
+  const ctTools = img.container_tools || [];
+  if (ctTools.includes('nomad')) document.getElementById('disk-image-ct-nomad').checked = true;
+  else if (ctTools.includes('kubernetes')) document.getElementById('disk-image-ct-kubernetes').checked = true;
+  else if (ctTools.includes('docker')) document.getElementById('disk-image-ct-docker').checked = true;
+  else document.getElementById('disk-image-ct-none').checked = true;
   document.getElementById('disk-image-scripts').value = (img.scripts || []).join('\n');
   document.getElementById('modal-disk-image').classList.add('active');
 }
@@ -2491,6 +2620,11 @@ async function submitDiskImage() {
   if (document.getElementById('disk-image-ai-github-copilot').checked) ai_tools.push('github_copilot');
   if (document.getElementById('disk-image-ai-claude-code').checked) ai_tools.push('claude_code');
   if (document.getElementById('disk-image-ai-openai-codex').checked) ai_tools.push('openai_codex');
+  const container_tools = [];
+  const ctValue = document.querySelector('input[name="disk-image-container-tools"]:checked')?.value || 'none';
+  if (ctValue === 'docker') container_tools.push('docker');
+  else if (ctValue === 'nomad') { container_tools.push('docker'); container_tools.push('nomad'); }
+  else if (ctValue === 'kubernetes') container_tools.push('kubernetes');
   const scriptsStr = document.getElementById('disk-image-scripts').value.trim();
   const scripts = scriptsStr ? scriptsStr.split('\n').filter(s => s.trim()) : [];
 
@@ -2502,11 +2636,11 @@ async function submitDiskImage() {
   try {
     if (editingDiskImageID) {
       await api('PUT', '/api/disk-images', {
-        id: editingDiskImageID, name, os, os_version: osVersion, packages, ai_tools, scripts
+        id: editingDiskImageID, name, os, os_version: osVersion, packages, ai_tools, container_tools, scripts
       });
     } else {
       await api('POST', '/api/disk-images', {
-        name, os, os_version: osVersion, packages, ai_tools, scripts
+        name, os, os_version: osVersion, packages, ai_tools, container_tools, scripts
       });
     }
     hideDiskImageModal();
@@ -2536,6 +2670,20 @@ async function buildDiskImage(id) {
   }
 }
 
+async function showBuildLog(imageId, version) {
+  try {
+    const result = await api('GET', `/api/disk-images/build-log?id=${encodeURIComponent(imageId)}&version=${version}`);
+    document.getElementById('build-log-content').textContent = result.log || '(no log captured)';
+    document.getElementById('modal-build-log').classList.add('active');
+  } catch (e) {
+    alert('Error loading build log: ' + e.message);
+  }
+}
+
+function hideBuildLog() {
+  document.getElementById('modal-build-log').classList.remove('active');
+}
+
 // --- Agent VMs ---
 
 async function loadAgentVMs() {
@@ -2544,7 +2692,7 @@ async function loadAgentVMs() {
     const tbody = document.getElementById('agents-tbody');
     tbody.innerHTML = '';
     if (!currentAgents || currentAgents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No agents configured. Add one to get started.</td></tr>';
       return;
     }
     currentAgents.forEach(a => {
@@ -2564,13 +2712,35 @@ async function loadAgentVMs() {
         }).join(' ');
       }
 
+      // Build hostname display: link to VS Code Remote SSH when IP is available.
+      let hostnameDisplay;
+      const sshTarget = a.ip || a.hostname;
+      if (sshTarget) {
+        const vscodeURI = 'vscode://vscode-remote/ssh-remote+root@' + encodeURIComponent(sshTarget) + '/root';
+        hostnameDisplay = `<a href="${vscodeURI}" title="Open in VS Code via Remote SSH"><strong>${esc(a.hostname)}</strong></a>`;
+      } else {
+        hostnameDisplay = `<strong>${esc(a.hostname)}</strong>`;
+      }
+
+      // Last seen / health indicator.
+      let lastSeenHTML = '<span class="muted">never</span>';
+      if (a.last_seen && a.last_seen !== '0001-01-01T00:00:00Z') {
+        const ago = timeAgo(a.last_seen);
+        const seenDate = new Date(a.last_seen);
+        const minutesAgo = (Date.now() - seenDate.getTime()) / 60000;
+        const healthClass = minutesAgo < 5 ? 'approved' : minutesAgo < 30 ? 'pending' : 'denied';
+        const healthLabel = minutesAgo < 5 ? 'online' : minutesAgo < 30 ? 'idle' : 'offline';
+        lastSeenHTML = `<span class="badge-status ${healthClass}" title="${ago}">${healthLabel}</span> ${ago}`;
+      }
+
       tbody.innerHTML += `<tr>
-        <td><strong>${esc(a.hostname)}</strong></td>
+        <td>${hostnameDisplay}</td>
         <td><code>${esc(a.mac)}</code></td>
         <td>${a.ip ? '<code>' + esc(a.ip) + '</code>' : '<span class="muted">pending</span>'}</td>
         <td>${imgLabel}</td>
         <td>${skillsHTML}</td>
         <td><span class="badge-status ${statusClass}">${esc(statusLabel)}</span></td>
+        <td>${lastSeenHTML}</td>
         <td>
           <button class="btn btn-outline btn-sm" onclick="editAgent('${esc(a.id)}')">Edit</button>
           <button class="btn btn-danger btn-sm" onclick="deleteAgent('${esc(a.id)}','${esc(a.hostname)}')">Delete</button>
@@ -2733,3 +2903,165 @@ document.addEventListener('DOMContentLoaded', () => {
   startPolling();
   loadVersion();
 });
+
+// --- Approval Templates ---
+
+let currentTemplates = [];
+let editingTemplateID = null;
+let templateRules = [];
+
+async function loadTemplates() {
+  try {
+    currentTemplates = await api('GET', '/api/templates');
+    const tbody = document.getElementById('templates-tbody');
+    if (!currentTemplates || currentTemplates.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No templates configured. Create one to get started.</td></tr>';
+      return;
+    }
+    const typeLabels = { url: 'URL', image: 'Image', package: 'Package', library: 'Library' };
+    tbody.innerHTML = currentTemplates.map(t => {
+      const rulesSummary = (t.rules || []).map(r =>
+        `<span class="badge-status ${r.status === 'approved' ? 'approved' : 'denied'}" style="font-size:10px">${esc(typeLabels[r.type] || r.type)}: ${esc(r.host)}${r.path_prefix ? r.path_prefix : ''}</span>`
+      ).join(' ');
+      return `<tr>
+        <td><strong>${esc(t.name)}</strong></td>
+        <td>${rulesSummary || '<span class="muted">no rules</span>'}</td>
+        <td>
+          <button class="btn btn-success btn-sm" onclick="showApplyTemplate('${esc(t.id)}')">Apply</button>
+          <button class="btn btn-outline btn-sm" onclick="editTemplate('${esc(t.id)}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteTemplate('${esc(t.id)}','${esc(t.name)}')">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    console.error('Templates load error:', e);
+  }
+}
+
+function showCreateTemplate() {
+  editingTemplateID = null;
+  document.getElementById('modal-template-title').textContent = 'Create Template';
+  document.getElementById('modal-template-submit').textContent = 'Create';
+  document.getElementById('template-name').value = '';
+  templateRules = [];
+  renderTemplateRules();
+  document.getElementById('modal-template').classList.add('active');
+}
+
+function editTemplate(id) {
+  const t = currentTemplates.find(t => t.id === id);
+  if (!t) return;
+  editingTemplateID = id;
+  document.getElementById('modal-template-title').textContent = 'Edit Template';
+  document.getElementById('modal-template-submit').textContent = 'Save';
+  document.getElementById('template-name').value = t.name;
+  templateRules = (t.rules || []).map(r => ({...r}));
+  renderTemplateRules();
+  document.getElementById('modal-template').classList.add('active');
+}
+
+function hideTemplateModal() {
+  document.getElementById('modal-template').classList.remove('active');
+  editingTemplateID = null;
+}
+
+function addTemplateRule() {
+  templateRules.push({ type: 'url', host: '', path_prefix: '', status: 'approved', category: '', note: '' });
+  renderTemplateRules();
+}
+
+function removeTemplateRule(idx) {
+  templateRules.splice(idx, 1);
+  renderTemplateRules();
+}
+
+function renderTemplateRules() {
+  const container = document.getElementById('template-rules-list');
+  if (templateRules.length === 0) {
+    container.innerHTML = '<div class="muted" style="padding:8px">No rules added yet. Click "+ Add Rule" to add one.</div>';
+    return;
+  }
+  container.innerHTML = templateRules.map((r, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;padding:8px;background:var(--surface2);border-radius:var(--radius)">
+      <select onchange="templateRules[${i}].type=this.value" style="width:100px">
+        <option value="url" ${r.type === 'url' ? 'selected' : ''}>URL</option>
+        <option value="image" ${r.type === 'image' ? 'selected' : ''}>Image</option>
+        <option value="package" ${r.type === 'package' ? 'selected' : ''}>Package</option>
+        <option value="library" ${r.type === 'library' ? 'selected' : ''}>Library</option>
+      </select>
+      <input type="text" value="${esc(r.host)}" placeholder="Host/name" onchange="templateRules[${i}].host=this.value" style="flex:1">
+      <input type="text" value="${esc(r.path_prefix || '')}" placeholder="Path prefix" onchange="templateRules[${i}].path_prefix=this.value" style="width:120px">
+      <select onchange="templateRules[${i}].status=this.value" style="width:100px">
+        <option value="approved" ${r.status === 'approved' ? 'selected' : ''}>Approve</option>
+        <option value="denied" ${r.status === 'denied' ? 'selected' : ''}>Deny</option>
+      </select>
+      <button class="btn btn-danger btn-xs" onclick="removeTemplateRule(${i})">X</button>
+    </div>
+  `).join('');
+}
+
+async function submitTemplate() {
+  const name = document.getElementById('template-name').value.trim();
+  if (!name) { alert('Template name is required'); return; }
+  const body = { name, rules: templateRules };
+  try {
+    if (editingTemplateID) {
+      body.id = editingTemplateID;
+      await api('PUT', '/api/templates', body);
+    } else {
+      await api('POST', '/api/templates', body);
+    }
+    hideTemplateModal();
+    loadTemplates();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteTemplate(id, name) {
+  if (!confirm('Delete template "' + name + '"?')) return;
+  try {
+    await api('DELETE', '/api/templates?id=' + encodeURIComponent(id));
+    loadTemplates();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function showApplyTemplate(id) {
+  document.getElementById('apply-template-id').innerHTML =
+    currentTemplates.map(t =>
+      `<option value="${esc(t.id)}" ${t.id === id ? 'selected' : ''}>${esc(t.name)}</option>`
+    ).join('');
+  document.getElementById('apply-template-level').value = 'global';
+  document.getElementById('apply-template-source-ip').value = '';
+  document.getElementById('apply-template-skill-id').value = '';
+  updateApplyTemplateFields();
+  document.getElementById('modal-apply-template').classList.add('active');
+}
+
+function hideApplyTemplate() {
+  document.getElementById('modal-apply-template').classList.remove('active');
+}
+
+function updateApplyTemplateFields() {
+  const level = document.getElementById('apply-template-level').value;
+  document.getElementById('apply-template-vm-fields').style.display = (level === 'vm' || level === 'skill') ? 'block' : 'none';
+  document.getElementById('apply-template-skill-fields').style.display = level === 'skill' ? 'block' : 'none';
+}
+
+async function doApplyTemplate() {
+  const id = document.getElementById('apply-template-id').value;
+  const level = document.getElementById('apply-template-level').value;
+  let sourceIP = '', skillID = '';
+  if (level === 'vm' || level === 'skill') sourceIP = document.getElementById('apply-template-source-ip').value.trim();
+  if (level === 'skill') skillID = document.getElementById('apply-template-skill-id').value.trim();
+  try {
+    const result = await api('POST', '/api/templates/apply', { id, source_ip: sourceIP, skill_id: skillID });
+    alert('Applied ' + result.applied + ' rules successfully.');
+    hideApplyTemplate();
+    loadApprovals();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}

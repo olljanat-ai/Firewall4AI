@@ -162,6 +162,11 @@ tr:hover td { background: var(--surface2); }
 .btn-danger { background: var(--red); color: white; }
 .btn-danger:hover { opacity: 0.85; }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-xs { padding: 2px 8px; font-size: 11px; }
+.wildcard-helpers { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.wildcard-helpers .helper-label { font-size: 11px; color: var(--text-dim); }
+.field-hint { font-size: 12px; margin-top: 4px; padding: 6px 10px; background: var(--surface2); border-radius: var(--radius); color: var(--text-dim); }
+.field-hint .wildcard-match { color: var(--green); }
 .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
 .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
  

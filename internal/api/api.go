@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"sort"
@@ -36,6 +37,8 @@ type Handler struct {
 	SetDisabledLanguagesFunc func([]string) // called to update disabled languages
 	SetDisabledDistrosFunc   func([]string) // called to update disabled distros
 	Version                string          // build version string
+	GetBackupData          func() ([]byte, error) // returns state.json contents for backup
+	RestoreBackupData      func([]byte) error     // restores state from backup data
 
 	// Database management.
 	DatabaseManager   *database.Manager
@@ -48,10 +51,19 @@ type Handler struct {
 	AgentManager      *agent.Manager
 	OnAgentChange     func(a *agent.Agent) // called when agent is created/updated
 	OnAgentDelete     func(a *agent.Agent) // called when agent is deleted
-	GetLeaseIP        func(mac string) string // returns DHCP lease IP for a MAC address
+	GetLeaseIP        func(mac string) string   // returns DHCP lease IP for a MAC address
+	GetDHCPLeases     func() []DHCPLeaseInfo   // returns all current DHCP leases
 
 	catMu      sync.RWMutex
 	categories []string
+
+	templates templateStore
+
+	// Global VM settings.
+	vmSettingsMu     sync.RWMutex
+	keyboard         string   // keyboard layout, e.g. "us", "fi"
+	timezone         string   // timezone, e.g. "UTC", "Europe/Helsinki"
+	sshAuthorizedKeys []string // SSH public keys for root login on all agent VMs
 }
 
 // RegisterRoutes sets up all API routes on the given mux.
@@ -134,9 +146,18 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/languages", h.setDisabledLanguages)
 	mux.HandleFunc("GET /api/settings/distros", h.getDisabledDistros)
 	mux.HandleFunc("POST /api/settings/distros", h.setDisabledDistros)
+	mux.HandleFunc("GET /api/settings/vm-settings", h.getVMSettings)
+	mux.HandleFunc("POST /api/settings/vm-settings", h.setVMSettings)
 	mux.HandleFunc("GET /api/system/logs", h.systemLogs)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
+
+	// DHCP leases
+	mux.HandleFunc("GET /api/dhcp/leases", h.listDHCPLeases)
+
+	// Backup/Restore
+	mux.HandleFunc("GET /api/backup", h.downloadBackup)
+	mux.HandleFunc("POST /api/restore", h.uploadRestore)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -842,6 +863,70 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// --- DHCP Leases ---
+
+// DHCPLeaseInfo represents a DHCP lease for the admin UI.
+type DHCPLeaseInfo struct {
+	MAC      string `json:"mac"`
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
+	Expiry   string `json:"expiry"` // formatted expiry or "permanent"
+}
+
+func (h *Handler) listDHCPLeases(w http.ResponseWriter, r *http.Request) {
+	if h.GetDHCPLeases == nil {
+		writeJSON(w, http.StatusOK, []DHCPLeaseInfo{})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.GetDHCPLeases())
+}
+
+// --- Backup/Restore ---
+
+func (h *Handler) downloadBackup(w http.ResponseWriter, r *http.Request) {
+	if h.GetBackupData == nil {
+		http.Error(w, "backup not available", http.StatusInternalServerError)
+		return
+	}
+	data, err := h.GetBackupData()
+	if err != nil {
+		http.Error(w, "backup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=firewall4ai-backup.json")
+	w.Write(data)
+}
+
+func (h *Handler) uploadRestore(w http.ResponseWriter, r *http.Request) {
+	if h.RestoreBackupData == nil {
+		http.Error(w, "restore not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Limit body to 50MB.
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate it's valid JSON.
+	if !json.Valid(data) {
+		http.Error(w, "invalid JSON data", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.RestoreBackupData(data); err != nil {
+		http.Error(w, "restore failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"result": "restored"})
+}
+
 // --- Categories ---
 
 // LoadCategories loads persisted categories at startup.
@@ -1082,6 +1167,62 @@ func (h *Handler) setDisabledDistros(w http.ResponseWriter, r *http.Request) {
 	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string][]string{"disabled": req.Disabled})
+}
+
+// LoadVMSettings restores VM settings from persisted state.
+func (h *Handler) LoadVMSettings(keyboard, timezone string, sshKeys []string) {
+	h.vmSettingsMu.Lock()
+	defer h.vmSettingsMu.Unlock()
+	h.keyboard = keyboard
+	h.timezone = timezone
+	h.sshAuthorizedKeys = sshKeys
+}
+
+// GetVMSettings returns the current keyboard and timezone settings.
+func (h *Handler) GetVMSettings() (keyboard, timezone string) {
+	h.vmSettingsMu.RLock()
+	defer h.vmSettingsMu.RUnlock()
+	return h.keyboard, h.timezone
+}
+
+// GetSSHAuthorizedKeys returns the global SSH authorized keys.
+func (h *Handler) GetSSHAuthorizedKeys() []string {
+	h.vmSettingsMu.RLock()
+	defer h.vmSettingsMu.RUnlock()
+	return append([]string{}, h.sshAuthorizedKeys...)
+}
+
+func (h *Handler) getVMSettings(w http.ResponseWriter, r *http.Request) {
+	h.vmSettingsMu.RLock()
+	defer h.vmSettingsMu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"keyboard":            h.keyboard,
+		"timezone":            h.timezone,
+		"ssh_authorized_keys": h.sshAuthorizedKeys,
+	})
+}
+
+func (h *Handler) setVMSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Keyboard          string   `json:"keyboard"`
+		Timezone          string   `json:"timezone"`
+		SSHAuthorizedKeys []string `json:"ssh_authorized_keys"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	h.vmSettingsMu.Lock()
+	h.keyboard = req.Keyboard
+	h.timezone = req.Timezone
+	h.sshAuthorizedKeys = req.SSHAuthorizedKeys
+	h.vmSettingsMu.Unlock()
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"keyboard":            req.Keyboard,
+		"timezone":            req.Timezone,
+		"ssh_authorized_keys": req.SSHAuthorizedKeys,
+	})
 }
 
 func (h *Handler) save() {

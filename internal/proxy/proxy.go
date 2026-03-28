@@ -49,6 +49,7 @@ type Proxy struct {
 	CA               *certgen.CA
 	ApprovalTimeout  time.Duration
 	LearningMode     bool // when true, allow all traffic by default (still logged)
+	OnActivity       func(sourceIP string) // called on each request with the source IP
 }
 
 // New creates a new Proxy with the given dependencies.
@@ -362,6 +363,9 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	host := extractHost(r)
 	sourceIP := extractSourceIP(r.RemoteAddr)
+	if p.OnActivity != nil {
+		p.OnActivity(sourceIP)
+	}
 
 	skill, err := p.authenticateOptional(r)
 	if err != nil {
@@ -483,6 +487,9 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		host = h
 	}
 	sourceIP := extractSourceIP(r.RemoteAddr)
+	if p.OnActivity != nil {
+		p.OnActivity(sourceIP)
+	}
 
 	skill, err := p.authenticateOptional(r)
 	if err != nil {
@@ -779,6 +786,9 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	}
 
 	sourceIP := extractSourceIP(clientConn.RemoteAddr().String())
+	if p.OnActivity != nil {
+		p.OnActivity(sourceIP)
+	}
 	var sniHost string
 
 	tlsConfig := &tls.Config{
