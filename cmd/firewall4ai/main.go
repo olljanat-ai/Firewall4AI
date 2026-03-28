@@ -240,6 +240,23 @@ func main() {
 		}
 		return ""
 	}
+	apiHandler.GetDHCPLeases = func() []api.DHCPLeaseInfo {
+		leases := dhcpServer.ExportLeases()
+		out := make([]api.DHCPLeaseInfo, len(leases))
+		for i, l := range leases {
+			expiry := "permanent"
+			if !l.Expiry.IsZero() {
+				expiry = l.Expiry.Format(time.RFC3339)
+			}
+			out[i] = api.DHCPLeaseInfo{
+				MAC:      l.MAC,
+				IP:       l.IP,
+				Hostname: l.Hostname,
+				Expiry:   expiry,
+			}
+		}
+		return out
+	}
 
 	// Image build callback.
 	apiHandler.BuildImage = func(img *image.DiskImage, version int) {
