@@ -59,6 +59,7 @@ function navigate(page) {
   if (page === 'images') loadImages();
   if (page === 'packages') loadPackages();
   if (page === 'libraries') loadLibraries();
+  if (page === 'templates') loadTemplates();
   if (page === 'skills') loadSkills();
   if (page === 'credentials') loadCredentials();
   if (page === 'logs') loadLogs();
@@ -2843,3 +2844,165 @@ document.addEventListener('DOMContentLoaded', () => {
   startPolling();
   loadVersion();
 });
+
+// --- Approval Templates ---
+
+let currentTemplates = [];
+let editingTemplateID = null;
+let templateRules = [];
+
+async function loadTemplates() {
+  try {
+    currentTemplates = await api('GET', '/api/templates');
+    const tbody = document.getElementById('templates-tbody');
+    if (!currentTemplates || currentTemplates.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No templates configured. Create one to get started.</td></tr>';
+      return;
+    }
+    const typeLabels = { url: 'URL', image: 'Image', package: 'Package', library: 'Library' };
+    tbody.innerHTML = currentTemplates.map(t => {
+      const rulesSummary = (t.rules || []).map(r =>
+        `<span class="badge-status ${r.status === 'approved' ? 'approved' : 'denied'}" style="font-size:10px">${esc(typeLabels[r.type] || r.type)}: ${esc(r.host)}${r.path_prefix ? r.path_prefix : ''}</span>`
+      ).join(' ');
+      return `<tr>
+        <td><strong>${esc(t.name)}</strong></td>
+        <td>${rulesSummary || '<span class="muted">no rules</span>'}</td>
+        <td>
+          <button class="btn btn-success btn-sm" onclick="showApplyTemplate('${esc(t.id)}')">Apply</button>
+          <button class="btn btn-outline btn-sm" onclick="editTemplate('${esc(t.id)}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteTemplate('${esc(t.id)}','${esc(t.name)}')">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    console.error('Templates load error:', e);
+  }
+}
+
+function showCreateTemplate() {
+  editingTemplateID = null;
+  document.getElementById('modal-template-title').textContent = 'Create Template';
+  document.getElementById('modal-template-submit').textContent = 'Create';
+  document.getElementById('template-name').value = '';
+  templateRules = [];
+  renderTemplateRules();
+  document.getElementById('modal-template').classList.add('active');
+}
+
+function editTemplate(id) {
+  const t = currentTemplates.find(t => t.id === id);
+  if (!t) return;
+  editingTemplateID = id;
+  document.getElementById('modal-template-title').textContent = 'Edit Template';
+  document.getElementById('modal-template-submit').textContent = 'Save';
+  document.getElementById('template-name').value = t.name;
+  templateRules = (t.rules || []).map(r => ({...r}));
+  renderTemplateRules();
+  document.getElementById('modal-template').classList.add('active');
+}
+
+function hideTemplateModal() {
+  document.getElementById('modal-template').classList.remove('active');
+  editingTemplateID = null;
+}
+
+function addTemplateRule() {
+  templateRules.push({ type: 'url', host: '', path_prefix: '', status: 'approved', category: '', note: '' });
+  renderTemplateRules();
+}
+
+function removeTemplateRule(idx) {
+  templateRules.splice(idx, 1);
+  renderTemplateRules();
+}
+
+function renderTemplateRules() {
+  const container = document.getElementById('template-rules-list');
+  if (templateRules.length === 0) {
+    container.innerHTML = '<div class="muted" style="padding:8px">No rules added yet. Click "+ Add Rule" to add one.</div>';
+    return;
+  }
+  container.innerHTML = templateRules.map((r, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;padding:8px;background:var(--surface2);border-radius:var(--radius)">
+      <select onchange="templateRules[${i}].type=this.value" style="width:100px">
+        <option value="url" ${r.type === 'url' ? 'selected' : ''}>URL</option>
+        <option value="image" ${r.type === 'image' ? 'selected' : ''}>Image</option>
+        <option value="package" ${r.type === 'package' ? 'selected' : ''}>Package</option>
+        <option value="library" ${r.type === 'library' ? 'selected' : ''}>Library</option>
+      </select>
+      <input type="text" value="${esc(r.host)}" placeholder="Host/name" onchange="templateRules[${i}].host=this.value" style="flex:1">
+      <input type="text" value="${esc(r.path_prefix || '')}" placeholder="Path prefix" onchange="templateRules[${i}].path_prefix=this.value" style="width:120px">
+      <select onchange="templateRules[${i}].status=this.value" style="width:100px">
+        <option value="approved" ${r.status === 'approved' ? 'selected' : ''}>Approve</option>
+        <option value="denied" ${r.status === 'denied' ? 'selected' : ''}>Deny</option>
+      </select>
+      <button class="btn btn-danger btn-xs" onclick="removeTemplateRule(${i})">X</button>
+    </div>
+  `).join('');
+}
+
+async function submitTemplate() {
+  const name = document.getElementById('template-name').value.trim();
+  if (!name) { alert('Template name is required'); return; }
+  const body = { name, rules: templateRules };
+  try {
+    if (editingTemplateID) {
+      body.id = editingTemplateID;
+      await api('PUT', '/api/templates', body);
+    } else {
+      await api('POST', '/api/templates', body);
+    }
+    hideTemplateModal();
+    loadTemplates();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteTemplate(id, name) {
+  if (!confirm('Delete template "' + name + '"?')) return;
+  try {
+    await api('DELETE', '/api/templates?id=' + encodeURIComponent(id));
+    loadTemplates();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function showApplyTemplate(id) {
+  document.getElementById('apply-template-id').innerHTML =
+    currentTemplates.map(t =>
+      `<option value="${esc(t.id)}" ${t.id === id ? 'selected' : ''}>${esc(t.name)}</option>`
+    ).join('');
+  document.getElementById('apply-template-level').value = 'global';
+  document.getElementById('apply-template-source-ip').value = '';
+  document.getElementById('apply-template-skill-id').value = '';
+  updateApplyTemplateFields();
+  document.getElementById('modal-apply-template').classList.add('active');
+}
+
+function hideApplyTemplate() {
+  document.getElementById('modal-apply-template').classList.remove('active');
+}
+
+function updateApplyTemplateFields() {
+  const level = document.getElementById('apply-template-level').value;
+  document.getElementById('apply-template-vm-fields').style.display = (level === 'vm' || level === 'skill') ? 'block' : 'none';
+  document.getElementById('apply-template-skill-fields').style.display = level === 'skill' ? 'block' : 'none';
+}
+
+async function doApplyTemplate() {
+  const id = document.getElementById('apply-template-id').value;
+  const level = document.getElementById('apply-template-level').value;
+  let sourceIP = '', skillID = '';
+  if (level === 'vm' || level === 'skill') sourceIP = document.getElementById('apply-template-source-ip').value.trim();
+  if (level === 'skill') skillID = document.getElementById('apply-template-skill-id').value.trim();
+  try {
+    const result = await api('POST', '/api/templates/apply', { id, source_ip: sourceIP, skill_id: skillID });
+    alert('Applied ' + result.applied + ' rules successfully.');
+    hideApplyTemplate();
+    loadApprovals();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}

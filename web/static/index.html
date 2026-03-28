@@ -18,6 +18,7 @@
         <a href="#" data-page="images">&#x1f4e6; Container Images <span id="image-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="packages">&#x1f4e6; OS Packages <span id="package-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="libraries">&#x1f4da; Code Libraries <span id="library-badge" class="badge" style="display:none">0</span></a>
+        <a href="#" data-page="templates">&#x1f4cb; Templates</a>
         <a href="#" data-page="skills">&#x26a1; Skills Library</a>
         <a href="#" data-page="credentials">&#x1f511; Credentials</a>
         <a href="#" data-page="logs">&#x1f4cb; Logs</a>
@@ -254,6 +255,22 @@
             </tbody>
           </table>
           <div id="pager-library" class="pager" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Approval Templates -->
+      <div id="page-templates" class="page">
+        <div class="toolbar">
+          <h2>Approval Templates</h2>
+          <button class="btn btn-primary" onclick="showCreateTemplate()">+ New Template</button>
+        </div>
+        <div class="card">
+          <table>
+            <thead><tr><th>Name</th><th>Rules</th><th>Actions</th></tr></thead>
+            <tbody id="templates-tbody">
+              <tr><td colspan="3" class="empty-state">No templates configured. Create one to get started.</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -861,6 +878,60 @@
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideLibraryRuleModal()">Cancel</button>
         <button class="btn btn-primary" id="modal-library-submit" onclick="submitLibraryRule()">Add Rule</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template Modal -->
+  <div id="modal-template" class="modal-overlay">
+    <div class="modal" style="max-width:700px">
+      <h3 id="modal-template-title">Create Template</h3>
+      <div class="form-group">
+        <label>Template Name</label>
+        <input type="text" id="template-name" placeholder="e.g., GitHub Access, Python Dev">
+      </div>
+      <div class="form-group">
+        <label>Rules <button class="btn btn-outline btn-xs" onclick="addTemplateRule()">+ Add Rule</button></label>
+        <div id="template-rules-list"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideTemplateModal()">Cancel</button>
+        <button class="btn btn-primary" id="modal-template-submit" onclick="submitTemplate()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Apply Template Modal -->
+  <div id="modal-apply-template" class="modal-overlay">
+    <div class="modal">
+      <h3>Apply Template</h3>
+      <div class="form-group">
+        <label>Template</label>
+        <select id="apply-template-id"></select>
+      </div>
+      <div class="form-group">
+        <label>Level</label>
+        <select id="apply-template-level" onchange="updateApplyTemplateFields()">
+          <option value="global">Global (all agents, all VMs)</option>
+          <option value="vm">VM-specific (by source IP)</option>
+          <option value="skill">Skill-specific (by skill ID)</option>
+        </select>
+      </div>
+      <div id="apply-template-vm-fields" style="display:none">
+        <div class="form-group">
+          <label>Source IP</label>
+          <input type="text" id="apply-template-source-ip" placeholder="e.g., 10.255.255.10">
+        </div>
+      </div>
+      <div id="apply-template-skill-fields" style="display:none">
+        <div class="form-group">
+          <label>Skill ID</label>
+          <input type="text" id="apply-template-skill-id" placeholder="Skill ID">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideApplyTemplate()">Cancel</button>
+        <button class="btn btn-primary" onclick="doApplyTemplate()">Apply</button>
       </div>
     </div>
   </div>

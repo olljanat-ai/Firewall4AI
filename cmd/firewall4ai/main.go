@@ -56,6 +56,7 @@ type storeData struct {
 	Keyboard          string                   `json:"keyboard"`
 	Timezone          string                   `json:"timezone"`
 	SSHAuthorizedKeys []string                 `json:"ssh_authorized_keys"`
+	Templates         []api.ApprovalTemplate   `json:"templates"`
 }
 
 func main() {
@@ -218,6 +219,7 @@ func main() {
 	}
 	apiHandler.LoadCategories(state.Categories)
 	apiHandler.LoadVMSettings(state.Keyboard, state.Timezone, state.SSHAuthorizedKeys)
+	apiHandler.LoadTemplates(state.Templates)
 
 	// Agent change callbacks.
 	apiHandler.OnAgentChange = func(a *agent.Agent) {
@@ -284,6 +286,7 @@ func main() {
 			d.Keyboard = keyboard
 			d.Timezone = tz
 			d.SSHAuthorizedKeys = apiHandler.GetSSHAuthorizedKeys()
+			d.Templates = apiHandler.ExportTemplates()
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
@@ -336,6 +339,7 @@ func main() {
 	apiHandler.RegisterRoutes(adminMux)
 	apiHandler.RegisterAgentMgmtRoutes(adminMux)
 	apiHandler.RegisterImageMgmtRoutes(adminMux)
+	apiHandler.RegisterTemplateRoutes(adminMux)
 
 	// Serve CA certificate for download.
 	adminMux.HandleFunc("GET /ca.crt", func(w http.ResponseWriter, r *http.Request) {
