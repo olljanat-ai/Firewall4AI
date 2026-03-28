@@ -375,6 +375,24 @@
           <pre id="service-log-output" style="background:var(--bg-secondary);padding:12px;border-radius:6px;max-height:400px;overflow-y:auto;font-size:12px;white-space:pre-wrap;word-break:break-all;margin-top:8px">Loading...</pre>
         </div>
         <div class="card">
+          <h3>DHCP Leases</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Current IP Assignments</div>
+              <div class="setting-desc">Shows all active DHCP leases on the agent network.</div>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-outline btn-sm" onclick="loadDHCPLeases()">Refresh</button>
+            </div>
+          </div>
+          <table style="margin-top:8px">
+            <thead><tr><th>MAC Address</th><th>IP Address</th><th>Hostname</th><th>Expiry</th></tr></thead>
+            <tbody id="dhcp-leases-tbody">
+              <tr><td colspan="4" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
           <h3>Categories</h3>
           <div class="setting-row">
             <div class="setting-info">

@@ -2175,8 +2175,28 @@ function timeAgo(ts) {
 }
 
 // --- System ---
+async function loadDHCPLeases() {
+  try {
+    const leases = await api('GET', '/api/dhcp/leases');
+    const tbody = document.getElementById('dhcp-leases-tbody');
+    if (!leases || leases.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No active DHCP leases</td></tr>';
+      return;
+    }
+    tbody.innerHTML = leases.map(l => `<tr>
+      <td><code>${esc(l.mac)}</code></td>
+      <td><code>${esc(l.ip)}</code></td>
+      <td>${l.hostname ? esc(l.hostname) : '<span class="muted">-</span>'}</td>
+      <td>${l.expiry === 'permanent' ? '<span class="badge-status approved">permanent</span>' : esc(l.expiry)}</td>
+    </tr>`).join('');
+  } catch (e) {
+    console.error('DHCP leases load error:', e);
+  }
+}
+
 async function loadSystem() {
   loadServiceLogs();
+  loadDHCPLeases();
   await refreshCategories();
   renderCategories();
   try {

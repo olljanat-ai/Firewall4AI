@@ -48,10 +48,13 @@ type Handler struct {
 	AgentManager      *agent.Manager
 	OnAgentChange     func(a *agent.Agent) // called when agent is created/updated
 	OnAgentDelete     func(a *agent.Agent) // called when agent is deleted
-	GetLeaseIP        func(mac string) string // returns DHCP lease IP for a MAC address
+	GetLeaseIP        func(mac string) string   // returns DHCP lease IP for a MAC address
+	GetDHCPLeases     func() []DHCPLeaseInfo   // returns all current DHCP leases
 
 	catMu      sync.RWMutex
 	categories []string
+
+	templates templateStore
 
 	// Global VM settings.
 	vmSettingsMu     sync.RWMutex
@@ -145,6 +148,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system/logs", h.systemLogs)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
+
+	// DHCP leases
+	mux.HandleFunc("GET /api/dhcp/leases", h.listDHCPLeases)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -848,6 +854,24 @@ func (h *Handler) getLogDetail(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// --- DHCP Leases ---
+
+// DHCPLeaseInfo represents a DHCP lease for the admin UI.
+type DHCPLeaseInfo struct {
+	MAC      string `json:"mac"`
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
+	Expiry   string `json:"expiry"` // formatted expiry or "permanent"
+}
+
+func (h *Handler) listDHCPLeases(w http.ResponseWriter, r *http.Request) {
+	if h.GetDHCPLeases == nil {
+		writeJSON(w, http.StatusOK, []DHCPLeaseInfo{})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.GetDHCPLeases())
 }
 
 // --- Categories ---
