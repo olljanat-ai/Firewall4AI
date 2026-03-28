@@ -522,8 +522,13 @@
         </select>
       </div>
       <div class="form-group form-group-fill">
-        <label>Description (provided to AI agents)</label>
-        <textarea id="skill-description" placeholder="Describe what this skill does, what tools it provides, and how the agent should use it..."></textarea>
+        <label>Description (provided to AI agents) &mdash; GitHub Markdown</label>
+        <div class="md-editor-tabs">
+          <button class="md-tab active" onclick="switchSkillTab('write')">Write</button>
+          <button class="md-tab" onclick="switchSkillTab('preview')">Preview</button>
+        </div>
+        <textarea id="skill-description" class="md-editor-write" placeholder="Describe what this skill does, what tools it provides, and how the agent should use it..."></textarea>
+        <div id="skill-description-preview" class="md-editor-preview markdown-body" style="display:none"></div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideSkillModal()">Cancel</button>

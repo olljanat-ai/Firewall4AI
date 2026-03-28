@@ -1393,6 +1393,159 @@ function showEditSkill(idx) {
 function hideSkillModal() {
   document.getElementById('modal-skill').classList.remove('active');
   editingSkillID = null;
+  // Reset to Write tab.
+  switchSkillTab('write');
+}
+
+function switchSkillTab(tab) {
+  const tabs = document.querySelectorAll('#modal-skill .md-tab');
+  const textarea = document.getElementById('skill-description');
+  const preview = document.getElementById('skill-description-preview');
+  tabs.forEach(t => t.classList.remove('active'));
+  if (tab === 'preview') {
+    tabs[1].classList.add('active');
+    textarea.style.display = 'none';
+    preview.style.display = 'block';
+    preview.innerHTML = renderMarkdown(textarea.value);
+  } else {
+    tabs[0].classList.add('active');
+    textarea.style.display = '';
+    preview.style.display = 'none';
+  }
+}
+
+// Lightweight GitHub-flavored Markdown renderer.
+function renderMarkdown(src) {
+  if (!src) return '<p style="color:var(--text-dim)">Nothing to preview</p>';
+  let html = '';
+  // Escape HTML first.
+  src = src.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Fenced code blocks.
+  src = src.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+    return '\x00PRE' + lang + '\x00' + code.replace(/\n$/, '') + '\x00/PRE\x00';
+  });
+  // Split into blocks by blank lines, preserving pre blocks.
+  const blocks = [];
+  let current = '';
+  src.split('\n').forEach(line => {
+    if (line.startsWith('\x00PRE')) {
+      if (current.trim()) { blocks.push(current); current = ''; }
+      current = line;
+    } else if (current.startsWith('\x00PRE') && !current.includes('\x00/PRE\x00')) {
+      current += '\n' + line;
+    } else if (current.startsWith('\x00PRE') && current.includes('\x00/PRE\x00')) {
+      blocks.push(current);
+      current = line;
+    } else if (line.trim() === '') {
+      if (current.trim()) { blocks.push(current); current = ''; }
+    } else {
+      current += (current ? '\n' : '') + line;
+    }
+  });
+  if (current.trim()) blocks.push(current);
+
+  for (const block of blocks) {
+    // Fenced code block.
+    if (block.startsWith('\x00PRE')) {
+      const m = block.match(/\x00PRE(\w*)\x00([\s\S]*?)\x00\/PRE\x00/);
+      if (m) { html += '<pre><code>' + m[2] + '</code></pre>'; continue; }
+    }
+    const lines = block.split('\n');
+    // Heading.
+    if (lines.length === 1 && /^#{1,6}\s/.test(lines[0])) {
+      const m = lines[0].match(/^(#{1,6})\s+(.*)/);
+      const level = m[1].length;
+      html += '<h' + level + '>' + inlineMarkdown(m[2]) + '</h' + level + '>';
+      continue;
+    }
+    // Horizontal rule.
+    if (lines.length === 1 && /^(-{3,}|\*{3,}|_{3,})$/.test(lines[0].trim())) {
+      html += '<hr>';
+      continue;
+    }
+    // Table.
+    if (lines.length >= 2 && lines[0].includes('|') && /^\|?[\s-:|]+\|?$/.test(lines[1])) {
+      html += renderTable(lines);
+      continue;
+    }
+    // Blockquote.
+    if (lines[0].startsWith('&gt; ') || lines[0] === '&gt;') {
+      const bqLines = lines.map(l => l.replace(/^&gt;\s?/, ''));
+      html += '<blockquote>' + renderMarkdown(bqLines.join('\n').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')) + '</blockquote>';
+      continue;
+    }
+    // Unordered list.
+    if (/^[\s]*[-*+]\s/.test(lines[0])) {
+      html += renderList(lines, 'ul');
+      continue;
+    }
+    // Ordered list.
+    if (/^[\s]*\d+\.\s/.test(lines[0])) {
+      html += renderList(lines, 'ol');
+      continue;
+    }
+    // Paragraph.
+    html += '<p>' + lines.map(l => inlineMarkdown(l)).join('<br>') + '</p>';
+  }
+  return html;
+}
+
+function inlineMarkdown(s) {
+  // Inline code.
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Images (before links).
+  s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">');
+  // Links.
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  // Bold+italic.
+  s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  // Bold.
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+  // Italic.
+  s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  s = s.replace(/_(.+?)_/g, '<em>$1</em>');
+  // Strikethrough.
+  s = s.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  return s;
+}
+
+function renderList(lines, tag) {
+  let html = '<' + tag + '>';
+  for (const line of lines) {
+    const text = line.replace(/^[\s]*[-*+]\s/, '').replace(/^[\s]*\d+\.\s/, '');
+    html += '<li>' + inlineMarkdown(text) + '</li>';
+  }
+  html += '</' + tag + '>';
+  return html;
+}
+
+function renderTable(lines) {
+  // Parse alignment from separator row.
+  const sepCells = lines[1].split('|').map(c => c.trim()).filter(c => c);
+  const aligns = sepCells.map(c => {
+    if (c.startsWith(':') && c.endsWith(':')) return 'center';
+    if (c.endsWith(':')) return 'right';
+    return 'left';
+  });
+  const parseRow = line => line.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+  let html = '<table><thead><tr>';
+  const headers = parseRow(lines[0]);
+  headers.forEach((h, i) => {
+    html += '<th style="text-align:' + (aligns[i] || 'left') + '">' + inlineMarkdown(h) + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+  for (let i = 2; i < lines.length; i++) {
+    if (!lines[i].includes('|')) continue;
+    html += '<tr>';
+    const cells = parseRow(lines[i]);
+    cells.forEach((c, j) => {
+      html += '<td style="text-align:' + (aligns[j] || 'left') + '">' + inlineMarkdown(c) + '</td>';
+    });
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  return html;
 }
 
 async function submitSkill() {
