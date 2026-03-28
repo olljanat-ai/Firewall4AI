@@ -96,7 +96,7 @@ func main() {
 	libraryApprovals := approval.NewManager()
 	creds := credentials.NewManager()
 	dbMgr := database.NewManager()
-	logger := proxylog.NewLogger(cfg.MaxLogEntries)
+	logger := proxylog.NewPersistentLogger(cfg.MaxLogEntries, filepath.Join(cfg.DataDir, "logs"))
 	agentMgr := agent.NewManager()
 
 	// Network configuration.

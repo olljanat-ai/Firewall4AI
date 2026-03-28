@@ -1,12 +1,24 @@
-// Package logging provides structured proxy request logging.
+// Package logging provides structured proxy request logging with optional
+// file persistence using JSONL format and log rotation.
 package logging
- 
+
 import (
+	"bufio"
+	"encoding/json"
 	"log"
+	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
- 
+
+const (
+	logFileName    = "requests.jsonl"
+	oldLogFileName = "requests.old.jsonl"
+	maxLogFileSize = 50 * 1024 * 1024 // 50MB
+)
+
 // FullDetail stores the complete request and response data captured
 // when an approval rule has logging mode set to "full".
 type FullDetail struct {
@@ -31,16 +43,22 @@ type Entry struct {
 	HasFullLog  bool        `json:"has_full_log,omitempty"`
 	FullDetail  *FullDetail `json:"-"` // excluded from list responses, served via detail endpoint
 }
- 
-// Logger stores log entries in memory with a configurable max size.
+
+// Logger stores log entries in memory with a configurable max size,
+// optionally persisting to disk in JSONL format with rotation.
 type Logger struct {
 	mu      sync.RWMutex
 	entries []Entry
 	nextID  int
 	maxSize int
+
+	// File persistence (optional).
+	logDir string
+	fileMu sync.Mutex
+	file   *os.File
 }
- 
-// NewLogger creates a new Logger with the given max entries.
+
+// NewLogger creates a new in-memory Logger with the given max entries.
 func NewLogger(maxSize int) *Logger {
 	if maxSize <= 0 {
 		maxSize = 10000
@@ -51,26 +69,148 @@ func NewLogger(maxSize int) *Logger {
 		maxSize: maxSize,
 	}
 }
- 
+
+// NewPersistentLogger creates a Logger that persists to disk in JSONL format.
+// Existing logs are loaded from disk on startup.
+func NewPersistentLogger(maxSize int, logDir string) *Logger {
+	l := NewLogger(maxSize)
+	if logDir == "" {
+		return l
+	}
+	l.logDir = logDir
+	os.MkdirAll(logDir, 0o755)
+	l.loadFromDisk()
+	l.openLogFile()
+	return l
+}
+
 // Add appends a new log entry and returns it.
 func (l *Logger) Add(e Entry) Entry {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	e.ID = l.nextID
 	l.nextID++
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now()
 	}
 	l.entries = append(l.entries, e)
- 
+
 	// Trim if over max size.
 	if len(l.entries) > l.maxSize {
 		excess := len(l.entries) - l.maxSize
 		l.entries = l.entries[excess:]
 	}
- 
+	l.mu.Unlock()
+
+	if l.logDir != "" {
+		l.appendToDisk(e)
+	}
+
 	log.Printf("[%s] %s %s%s -> %s (skill=%s)", e.Status, e.Method, e.Host, e.Path, e.Detail, e.SkillID)
 	return e
+}
+
+// Close closes the log file if persistence is enabled.
+func (l *Logger) Close() {
+	l.fileMu.Lock()
+	defer l.fileMu.Unlock()
+	if l.file != nil {
+		l.file.Close()
+		l.file = nil
+	}
+}
+
+func (l *Logger) loadFromDisk() {
+	path := filepath.Join(l.logDir, logFileName)
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	var entries []Entry
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	for scanner.Scan() {
+		var e Entry
+		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
+			continue
+		}
+		entries = append(entries, e)
+	}
+
+	if len(entries) == 0 {
+		return
+	}
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
+	if len(entries) > l.maxSize {
+		entries = entries[len(entries)-l.maxSize:]
+	}
+
+	l.mu.Lock()
+	l.entries = entries
+	l.nextID = entries[len(entries)-1].ID + 1
+	l.mu.Unlock()
+
+	log.Printf("Loaded %d log entries from disk", len(entries))
+}
+
+func (l *Logger) openLogFile() {
+	l.fileMu.Lock()
+	defer l.fileMu.Unlock()
+	path := filepath.Join(l.logDir, logFileName)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Printf("Warning: failed to open log file: %v", err)
+		return
+	}
+	l.file = f
+}
+
+func (l *Logger) appendToDisk(e Entry) {
+	l.fileMu.Lock()
+	defer l.fileMu.Unlock()
+	if l.file == nil {
+		return
+	}
+	data, err := json.Marshal(e)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+	l.file.Write(data)
+
+	if info, err := l.file.Stat(); err == nil && info.Size() > maxLogFileSize {
+		l.rotateLocked()
+	}
+}
+
+func (l *Logger) rotateLocked() {
+	if l.file != nil {
+		l.file.Close()
+		l.file = nil
+	}
+
+	path := filepath.Join(l.logDir, logFileName)
+	oldPath := filepath.Join(l.logDir, oldLogFileName)
+	os.Remove(oldPath)
+	os.Rename(path, oldPath)
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Printf("Warning: failed to open new log file after rotation: %v", err)
+		return
+	}
+	l.file = f
+
+	// Write current in-memory entries to the new file.
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	for _, e := range l.entries {
+		data, _ := json.Marshal(e)
+		data = append(data, '\n')
+		f.Write(data)
+	}
 }
  
 // Recent returns the last n entries (newest first).
