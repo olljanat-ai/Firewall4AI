@@ -507,16 +507,12 @@
   </div>
 
   <!-- Skill Modal -->
-  <div id="modal-skill" class="modal-overlay">
-    <div class="modal">
+  <div id="modal-skill" class="modal-overlay modal-fullscreen">
+    <div class="modal modal-full">
       <h3 id="modal-skill-title">Create Skill</h3>
       <div class="form-group">
         <label>Name</label>
         <input type="text" id="skill-name" placeholder="e.g., Web Scraper">
-      </div>
-      <div class="form-group">
-        <label>Description (provided to AI agents)</label>
-        <textarea id="skill-description" rows="8" placeholder="Describe what this skill does, what tools it provides, and how the agent should use it..."></textarea>
       </div>
       <div class="form-group" id="skill-active-group" style="display:none">
         <label>Status</label>
@@ -524,6 +520,10 @@
           <option value="true">Active</option>
           <option value="false">Inactive</option>
         </select>
+      </div>
+      <div class="form-group form-group-fill">
+        <label>Description (provided to AI agents)</label>
+        <textarea id="skill-description" placeholder="Describe what this skill does, what tools it provides, and how the agent should use it..."></textarea>
       </div>
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideSkillModal()">Cancel</button>
