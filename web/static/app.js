@@ -2566,7 +2566,7 @@ async function loadAgentVMs() {
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.hostname)}</strong></td>
         <td><code>${esc(a.mac)}</code></td>
-        <td>${a.ip ? esc(a.ip) : '<span class="muted">auto</span>'}</td>
+        <td>${a.ip ? '<code>' + esc(a.ip) + '</code>' : '<span class="muted">pending</span>'}</td>
         <td>${imgLabel}</td>
         <td>${skillsHTML}</td>
         <td><span class="badge-status ${statusClass}">${esc(statusLabel)}</span></td>
@@ -2640,7 +2640,6 @@ function showCreateAgent() {
   document.getElementById('modal-agent-submit').textContent = 'Add';
   document.getElementById('agent-mac').value = '';
   document.getElementById('agent-hostname').value = '';
-  document.getElementById('agent-ip').value = '';
   document.getElementById('agent-image-version').value = '0';
   document.getElementById('agent-disk').value = '/dev/sda';
   populateAgentImageSelect('');
@@ -2660,7 +2659,6 @@ function editAgent(id) {
   document.getElementById('modal-agent-submit').textContent = 'Save';
   document.getElementById('agent-mac').value = a.mac || '';
   document.getElementById('agent-hostname').value = a.hostname || '';
-  document.getElementById('agent-ip').value = a.ip || '';
   document.getElementById('agent-image-version').value = a.image_version || 0;
   document.getElementById('agent-disk').value = a.disk_device || '/dev/sda';
   populateAgentImageSelect(a.image_id || '');
@@ -2671,7 +2669,6 @@ function editAgent(id) {
 async function submitAgent() {
   const mac = document.getElementById('agent-mac').value.trim();
   const hostname = document.getElementById('agent-hostname').value.trim();
-  const ip = document.getElementById('agent-ip').value.trim();
   const image_id = document.getElementById('agent-image-id').value;
   const image_version = parseInt(document.getElementById('agent-image-version').value) || 0;
   const disk = document.getElementById('agent-disk').value.trim() || '/dev/sda';
@@ -2689,11 +2686,11 @@ async function submitAgent() {
   try {
     if (editingAgentID) {
       await api('PUT', '/api/agents', {
-        id: editingAgentID, mac, hostname, ip, image_id, image_version, disk_device: disk, skill_ids
+        id: editingAgentID, mac, hostname, image_id, image_version, disk_device: disk, skill_ids
       });
     } else {
       await api('POST', '/api/agents', {
-        mac, hostname, ip, image_id, image_version, disk_device: disk, skill_ids
+        mac, hostname, image_id, image_version, disk_device: disk, skill_ids
       });
     }
     hideAgentModal();

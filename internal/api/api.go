@@ -48,6 +48,7 @@ type Handler struct {
 	AgentManager      *agent.Manager
 	OnAgentChange     func(a *agent.Agent) // called when agent is created/updated
 	OnAgentDelete     func(a *agent.Agent) // called when agent is deleted
+	GetLeaseIP        func(mac string) string // returns DHCP lease IP for a MAC address
 
 	catMu      sync.RWMutex
 	categories []string

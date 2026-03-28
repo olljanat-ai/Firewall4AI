@@ -228,6 +228,12 @@ func main() {
 			dnsServer.RemoveHost(a.Hostname)
 		}
 	}
+	apiHandler.GetLeaseIP = func(mac string) string {
+		if l := dhcpServer.GetLeaseByMAC(mac); l != nil {
+			return l.IP
+		}
+		return ""
+	}
 
 	// Image build callback.
 	apiHandler.BuildImage = func(img *image.DiskImage, version int) {

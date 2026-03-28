@@ -21,7 +21,18 @@ func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []agent.Agent{})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.AgentManager.List())
+	agents := h.AgentManager.List()
+	// Enrich agents that have no configured IP with their DHCP lease IP.
+	if h.GetLeaseIP != nil {
+		for i := range agents {
+			if agents[i].IP == "" {
+				if leaseIP := h.GetLeaseIP(agents[i].MAC); leaseIP != "" {
+					agents[i].IP = leaseIP
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, agents)
 }
 
 type createAgentRequest struct {
