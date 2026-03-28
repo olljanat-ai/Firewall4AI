@@ -265,9 +265,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>ID</th><th>Name</th><th>Pre-approved Hosts</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="skills-tbody">
-              <tr><td colspan="5" class="empty-state">No skills configured. Create one to get started.</td></tr>
+              <tr><td colspan="4" class="empty-state">No skills configured. Create one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -510,17 +510,13 @@
   <div id="modal-skill" class="modal-overlay">
     <div class="modal">
       <h3 id="modal-skill-title">Create Skill</h3>
-      <div class="form-group" id="skill-id-group">
-        <label>Skill ID (optional, auto-generated if empty)</label>
-        <input type="text" id="skill-id" placeholder="auto-generated GUID if left empty">
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" id="skill-name" placeholder="e.g., Web Scraper">
       </div>
       <div class="form-group">
-        <label>Display Name</label>
-        <input type="text" id="skill-name" placeholder="e.g., Web Scraper Agent">
-      </div>
-      <div class="form-group">
-        <label>Pre-approved Hosts (one per line, supports wildcards like *.example.com)</label>
-        <textarea id="skill-hosts" rows="3" placeholder="api.example.com&#10;*.trusted.com"></textarea>
+        <label>Description (provided to AI agents)</label>
+        <textarea id="skill-description" rows="8" placeholder="Describe what this skill does, what tools it provides, and how the agent should use it..."></textarea>
       </div>
       <div class="form-group" id="skill-active-group" style="display:none">
         <label>Status</label>

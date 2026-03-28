@@ -1347,18 +1347,18 @@ async function loadSkills() {
     const tbody = document.getElementById('skills-tbody');
     tbody.innerHTML = '';
     if (currentSkills.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No skills configured. Create one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No skills configured. Create one to get started.</td></tr>';
       return;
     }
     currentSkills.forEach((s, idx) => {
+      const desc = s.description ? esc(s.description).substring(0, 120) + (s.description.length > 120 ? '...' : '') : '<span class="muted">none</span>';
       tbody.innerHTML += `<tr>
-        <td><strong>${esc(s.id)}</strong></td>
-        <td>${esc(s.name)}</td>
-        <td>${(s.allowed_hosts || []).map(h => `<span class="badge-status approved">${esc(h)}</span>`).join(' ') || '<span class="badge-status denied">none</span>'}</td>
+        <td><strong>${esc(s.name)}</strong></td>
+        <td>${desc}</td>
         <td><span class="badge-status ${s.active ? 'approved' : 'denied'}">${s.active ? 'active' : 'inactive'}</span></td>
         <td>
           <button class="btn btn-outline btn-sm" onclick="showEditSkill(${idx})">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteSkill('${esc(s.id)}')">Delete</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteSkill('${esc(s.id)}','${esc(s.name)}')">Delete</button>
         </td>
       </tr>`;
     });
@@ -1371,11 +1371,8 @@ function showCreateSkill() {
   editingSkillID = null;
   document.getElementById('modal-skill-title').textContent = 'Create Skill';
   document.getElementById('modal-skill-submit').textContent = 'Create';
-  document.getElementById('skill-id').value = '';
-  document.getElementById('skill-id').readOnly = false;
-  document.getElementById('skill-id-group').querySelector('label').textContent = 'Skill ID (optional, auto-generated if empty)';
   document.getElementById('skill-name').value = '';
-  document.getElementById('skill-hosts').value = '';
+  document.getElementById('skill-description').value = '';
   document.getElementById('skill-active-group').style.display = 'none';
   document.getElementById('modal-skill').classList.add('active');
 }
@@ -1386,11 +1383,8 @@ function showEditSkill(idx) {
   editingSkillID = s.id;
   document.getElementById('modal-skill-title').textContent = 'Edit Skill';
   document.getElementById('modal-skill-submit').textContent = 'Save';
-  document.getElementById('skill-id').value = s.id;
-  document.getElementById('skill-id').readOnly = true;
-  document.getElementById('skill-id-group').querySelector('label').textContent = 'Skill ID (read-only)';
   document.getElementById('skill-name').value = s.name;
-  document.getElementById('skill-hosts').value = (s.allowed_hosts || []).join('\n');
+  document.getElementById('skill-description').value = s.description || '';
   document.getElementById('skill-active-group').style.display = 'block';
   document.getElementById('skill-active').value = s.active ? 'true' : 'false';
   document.getElementById('modal-skill').classList.add('active');
@@ -1410,17 +1404,13 @@ async function submitSkill() {
 }
 
 async function createSkill() {
-  const id = document.getElementById('skill-id').value.trim();
   const name = document.getElementById('skill-name').value.trim();
-  const hosts = document.getElementById('skill-hosts').value.trim().split(/[\n,]+/).map(h => h.trim()).filter(Boolean);
+  const description = document.getElementById('skill-description').value.trim();
   if (!name) { alert('Name is required'); return; }
   try {
-    const body = { name, allowed_hosts: hosts };
-    if (id) body.id = id;
-    const result = await api('POST', '/api/skills', body);
+    await api('POST', '/api/skills', { name, description });
     hideSkillModal();
     loadSkills();
-    alert('Skill created!\n\nID: ' + result.id + '\nToken: ' + result.token);
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -1429,11 +1419,11 @@ async function createSkill() {
 async function updateSkill() {
   const id = editingSkillID;
   const name = document.getElementById('skill-name').value.trim();
-  const hosts = document.getElementById('skill-hosts').value.trim().split(/[\n,]+/).map(h => h.trim()).filter(Boolean);
+  const description = document.getElementById('skill-description').value.trim();
   const active = document.getElementById('skill-active').value === 'true';
   if (!name) { alert('Name is required'); return; }
   try {
-    await api('PUT', '/api/skills', { id, name, allowed_hosts: hosts, active, token: '' });
+    await api('PUT', '/api/skills', { id, name, description, active });
     hideSkillModal();
     loadSkills();
   } catch (e) {
@@ -1441,21 +1431,14 @@ async function updateSkill() {
   }
 }
 
-async function deleteSkill(id) {
-  if (!confirm(`Delete skill "${id}"?`)) return;
+async function deleteSkill(id, name) {
+  if (!confirm(`Delete skill "${name}"?`)) return;
   try {
     await api('DELETE', '/api/skills?id=' + encodeURIComponent(id));
     loadSkills();
   } catch (e) {
     alert('Error: ' + e.message);
   }
-}
-
-function copyToken(el) {
-  navigator.clipboard.writeText(el.textContent);
-  const orig = el.textContent;
-  el.textContent = 'Copied!';
-  setTimeout(() => { el.textContent = orig; }, 1000);
 }
 
 // --- Credentials ---

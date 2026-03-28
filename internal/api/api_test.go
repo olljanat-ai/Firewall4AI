@@ -53,51 +53,51 @@ func TestHealth(t *testing.T) {
 func TestSkills_CRUD(t *testing.T) {
 	_, mux := setupHandler(t)
 
-	// Create.
+	// Create (ID auto-generated, token internal).
 	w := doRequest(mux, "POST", "/api/skills", map[string]any{
-		"id": "test-skill", "name": "Test Skill", "allowed_hosts": []string{"example.com"},
+		"name": "Test Skill", "description": "A test skill for agents",
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var skill auth.Skill
-	json.NewDecoder(w.Body).Decode(&skill)
-	if skill.Token == "" {
-		t.Error("created skill should have a token")
+	var created struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Active      bool   `json:"active"`
+	}
+	json.NewDecoder(w.Body).Decode(&created)
+	if created.ID == "" {
+		t.Error("created skill should have an auto-generated ID")
+	}
+	if created.Description != "A test skill for agents" {
+		t.Error("description should be set")
 	}
 
-	// List (tokens should be masked).
+	// List (no tokens exposed).
 	w = doRequest(mux, "GET", "/api/skills", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("list: expected 200, got %d", w.Code)
 	}
-	var skills []auth.Skill
+	var skills []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
 	json.NewDecoder(w.Body).Decode(&skills)
 	if len(skills) != 1 {
 		t.Fatalf("expected 1 skill, got %d", len(skills))
 	}
-	if skills[0].Token != "********" {
-		t.Error("token should be masked in list response")
-	}
 
-	// Update (token preserved even though masked in request).
-	skill.Name = "Updated"
-	skill.Token = "********"
-	w = doRequest(mux, "PUT", "/api/skills", skill)
+	// Update.
+	w = doRequest(mux, "PUT", "/api/skills", map[string]any{
+		"id": created.ID, "name": "Updated", "description": "Updated description", "active": true,
+	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Duplicate create should fail.
-	w = doRequest(mux, "POST", "/api/skills", map[string]any{
-		"id": "test-skill", "name": "Duplicate",
-	})
-	if w.Code != http.StatusConflict {
-		t.Errorf("duplicate: expected 409, got %d", w.Code)
-	}
-
 	// Delete.
-	w = doRequest(mux, "DELETE", "/api/skills?id=test-skill", nil)
+	w = doRequest(mux, "DELETE", "/api/skills?id="+created.ID, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("delete: expected 200, got %d", w.Code)
 	}

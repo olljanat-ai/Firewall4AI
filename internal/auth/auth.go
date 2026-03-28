@@ -13,6 +13,7 @@ import (
 type Skill struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
+	Description string   `json:"description"`
 	Token       string   `json:"token"`
 	AllowedHost []string `json:"allowed_hosts"` // hosts pre-approved for this skill
 	Active      bool     `json:"active"`

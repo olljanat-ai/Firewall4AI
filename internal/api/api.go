@@ -308,18 +308,35 @@ func (h *Handler) setImageCategory(w http.ResponseWriter, r *http.Request) {
 
 // --- Skills ---
 
+// skillResponse is the admin API representation of a skill (no token, no internal ID).
+type skillResponse struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Active      bool   `json:"active"`
+}
+
+func toSkillResponse(s auth.Skill) skillResponse {
+	return skillResponse{
+		ID:          s.ID,
+		Name:        s.Name,
+		Description: s.Description,
+		Active:      s.Active,
+	}
+}
+
 func (h *Handler) listSkills(w http.ResponseWriter, r *http.Request) {
 	skills := h.Skills.ListSkills()
-	for i := range skills {
-		skills[i].Token = "********"
+	resp := make([]skillResponse, len(skills))
+	for i, s := range skills {
+		resp[i] = toSkillResponse(s)
 	}
-	writeJSON(w, http.StatusOK, skills)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type createSkillRequest struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	AllowedHost []string `json:"allowed_hosts"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 func (h *Handler) createSkill(w http.ResponseWriter, r *http.Request) {
@@ -328,19 +345,16 @@ func (h *Handler) createSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.ID == "" {
-		req.ID = auth.GenerateGUID()
-	}
 	token, err := auth.GenerateToken()
 	if err != nil {
 		http.Error(w, "failed to generate token", http.StatusInternalServerError)
 		return
 	}
 	skill := auth.Skill{
-		ID:          req.ID,
+		ID:          auth.GenerateGUID(),
 		Name:        req.Name,
+		Description: req.Description,
 		Token:       token,
-		AllowedHost: req.AllowedHost,
 		Active:      true,
 	}
 	if err := h.Skills.AddSkill(skill); err != nil {
@@ -348,30 +362,40 @@ func (h *Handler) createSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.save()
-	writeJSON(w, http.StatusCreated, skill)
+	writeJSON(w, http.StatusCreated, toSkillResponse(skill))
 }
 
 func (h *Handler) updateSkill(w http.ResponseWriter, r *http.Request) {
-	var skill auth.Skill
-	if err := readJSON(r, &skill); err != nil {
+	var req struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Active      bool   `json:"active"`
+	}
+	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	// Always preserve the existing token (never exposed via API).
-	existing, ok := h.Skills.GetSkill(skill.ID)
+	existing, ok := h.Skills.GetSkill(req.ID)
 	if !ok {
-		http.Error(w, fmt.Sprintf("skill %q not found", skill.ID), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("skill %q not found", req.ID), http.StatusNotFound)
 		return
 	}
-	skill.Token = existing.Token
-	if err := h.Skills.UpdateSkill(skill); err != nil {
+	// Preserve token and allowed hosts (internal fields).
+	updated := auth.Skill{
+		ID:          existing.ID,
+		Name:        req.Name,
+		Description: req.Description,
+		Token:       existing.Token,
+		AllowedHost: existing.AllowedHost,
+		Active:      req.Active,
+	}
+	if err := h.Skills.UpdateSkill(updated); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	h.save()
-	// Return masked token.
-	skill.Token = "********"
-	writeJSON(w, http.StatusOK, skill)
+	writeJSON(w, http.StatusOK, toSkillResponse(updated))
 }
 
 func (h *Handler) deleteSkill(w http.ResponseWriter, r *http.Request) {

@@ -163,10 +163,10 @@ func (h *AgentHandler) getPolicy(w http.ResponseWriter, r *http.Request) {
 
 // agentSkill describes a skill allocated to an agent in the API response.
 type agentSkill struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Token        string   `json:"token"`
-	AllowedHosts []string `json:"allowed_hosts,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Token       string `json:"token"`
 }
 
 func (h *AgentHandler) getSkills(w http.ResponseWriter, r *http.Request) {
@@ -196,10 +196,10 @@ func (h *AgentHandler) getSkills(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		skills = append(skills, agentSkill{
-			ID:           sk.ID,
-			Name:         sk.Name,
-			Token:        sk.Token,
-			AllowedHosts: sk.AllowedHost,
+			ID:          sk.ID,
+			Name:        sk.Name,
+			Description: sk.Description,
+			Token:       sk.Token,
 		})
 	}
 	if skills == nil {
