@@ -22,6 +22,7 @@ type Entry struct {
 	ID          int         `json:"id"`
 	Timestamp   time.Time   `json:"timestamp"`
 	SkillID     string      `json:"skill_id"`
+	SourceIP    string      `json:"source_ip,omitempty"`
 	Method      string      `json:"method"`
 	Host        string      `json:"host"`
 	Path        string      `json:"path"`
@@ -33,11 +34,16 @@ type Entry struct {
 }
  
 // Logger stores log entries in memory with a configurable max size.
+// EntryObserver is called asynchronously for each entry that has full detail data.
+// Implementations must be safe for concurrent use.
+type EntryObserver func(Entry)
+
 type Logger struct {
-	mu      sync.RWMutex
-	entries []Entry
-	nextID  int
-	maxSize int
+	mu       sync.RWMutex
+	entries  []Entry
+	nextID   int
+	maxSize  int
+	observer EntryObserver
 }
  
 // NewLogger creates a new Logger with the given max entries.
@@ -51,7 +57,15 @@ func NewLogger(maxSize int) *Logger {
 		maxSize: maxSize,
 	}
 }
- 
+
+// SetObserver sets a callback that is invoked asynchronously for each entry
+// that has full detail data. Used by the observability system.
+func (l *Logger) SetObserver(obs EntryObserver) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.observer = obs
+}
+
 // Add appends a new log entry and returns it.
 func (l *Logger) Add(e Entry) Entry {
 	l.mu.Lock()
@@ -62,14 +76,22 @@ func (l *Logger) Add(e Entry) Entry {
 		e.Timestamp = time.Now()
 	}
 	l.entries = append(l.entries, e)
- 
+
 	// Trim if over max size.
 	if len(l.entries) > l.maxSize {
 		excess := len(l.entries) - l.maxSize
 		l.entries = l.entries[excess:]
 	}
- 
+
 	log.Printf("[%s] %s %s%s -> %s (skill=%s)", e.Status, e.Method, e.Host, e.Path, e.Detail, e.SkillID)
+
+	// Notify observer asynchronously for entries with full detail.
+	if l.observer != nil && e.FullDetail != nil {
+		obs := l.observer
+		entry := e // copy for goroutine
+		go obs(entry)
+	}
+
 	return e
 }
  

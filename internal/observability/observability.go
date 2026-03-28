@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olljanat-ai/firewall4ai/internal/config"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
 
@@ -17,17 +18,8 @@ type Observer struct {
 	langfuse  *LangfuseClient
 }
 
-// Config holds the observability configuration.
-type Config struct {
-	Enabled          bool          `json:"enabled"`
-	LangfuseHost     string        `json:"langfuse_host"`
-	LangfusePublicKey string       `json:"langfuse_public_key"`
-	LangfuseSecretKey string       `json:"langfuse_secret_key"`
-	LLMEndpoints     []LLMEndpoint `json:"llm_endpoints"`
-}
-
-// New creates a new Observer from configuration. Returns nil if observability is disabled.
-func New(cfg Config) *Observer {
+// NewFromConfig creates a new Observer from the application config. Returns nil if observability is disabled.
+func NewFromConfig(cfg config.ObservabilityConfig) *Observer {
 	if !cfg.Enabled {
 		return nil
 	}
@@ -36,7 +28,14 @@ func New(cfg Config) *Observer {
 		return nil
 	}
 
-	endpoints := cfg.LLMEndpoints
+	endpoints := make([]LLMEndpoint, 0, len(cfg.LLMEndpoints))
+	for _, ep := range cfg.LLMEndpoints {
+		endpoints = append(endpoints, LLMEndpoint{
+			Host:       ep.Host,
+			PathPrefix: ep.PathPrefix,
+			Provider:   Provider(ep.Provider),
+		})
+	}
 	if len(endpoints) == 0 {
 		endpoints = DefaultEndpoints()
 	}
@@ -56,8 +55,8 @@ func (o *Observer) Close() {
 }
 
 // ProcessEntry checks if a log entry is an LLM API call and forwards it to Langfuse.
-// This should be called asynchronously (go o.ProcessEntry(...)) to avoid blocking the proxy.
-func (o *Observer) ProcessEntry(entry proxylog.Entry, sourceIP string) {
+// Called asynchronously by the Logger observer hook.
+func (o *Observer) ProcessEntry(entry proxylog.Entry) {
 	if o == nil || entry.FullDetail == nil {
 		return
 	}
@@ -102,7 +101,7 @@ func (o *Observer) ProcessEntry(entry proxylog.Entry, sourceIP string) {
 		traceID,
 		fmt.Sprintf("%s %s%s", entry.Method, entry.Host, entry.Path),
 		sessionID,
-		sourceIP,
+		entry.SourceIP,
 		startTime,
 		map[string]any{
 			"provider": string(ep.Provider),
@@ -128,14 +127,14 @@ func (o *Observer) ProcessEntry(entry proxylog.Entry, sourceIP string) {
 		Metadata: map[string]any{
 			"provider":      string(ep.Provider),
 			"finish_reason": finishReason,
-			"source_ip":     sourceIP,
+			"source_ip":     entry.SourceIP,
 			"skill_id":      entry.SkillID,
 			"duration_ms":   entry.Duration,
 		},
 	})
 
 	log.Printf("[observability] Forwarded LLM call: provider=%s model=%s tokens=%d/%d source=%s",
-		ep.Provider, model, inputTokens, outputTokens, sourceIP)
+		ep.Provider, model, inputTokens, outputTokens, entry.SourceIP)
 }
 
 // extractGeminiModel extracts the model name from a Gemini API path.

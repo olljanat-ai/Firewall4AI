@@ -455,6 +455,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	p.Logger.Add(proxylog.Entry{
 		SkillID:    sid,
+		SourceIP:   sourceIP,
 		Method:     r.Method,
 		Host:       host,
 		Path:       r.URL.Path,
@@ -710,6 +711,7 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 
 	p.Logger.Add(proxylog.Entry{
 		SkillID:    sid,
+		SourceIP:   sourceIP,
 		Method:     req.Method,
 		Host:       host,
 		Path:       req.URL.Path,

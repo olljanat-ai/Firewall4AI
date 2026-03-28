@@ -23,6 +23,22 @@ type PackageRepoConfig struct {
 	Hosts []string `json:"hosts"` // all hostnames associated with this repo
 }
 
+// ObservabilityConfig holds settings for LLM observability integration.
+type ObservabilityConfig struct {
+	Enabled          bool              `json:"enabled"`
+	LangfuseHost     string            `json:"langfuse_host"`
+	LangfusePublicKey string           `json:"langfuse_public_key"`
+	LangfuseSecretKey string           `json:"langfuse_secret_key"`
+	LLMEndpoints     []LLMEndpointConfig `json:"llm_endpoints"`
+}
+
+// LLMEndpointConfig defines a known LLM API endpoint pattern for detection.
+type LLMEndpointConfig struct {
+	Host       string `json:"host"`
+	PathPrefix string `json:"path_prefix"`
+	Provider   string `json:"provider"`
+}
+
 // Config holds the main application configuration.
 type Config struct {
 	ListenAddr         string              `json:"listen_addr"`
@@ -37,6 +53,7 @@ type Config struct {
 	OSPackages         []PackageRepoConfig `json:"os_packages"`
 	CodeLibraries      []PackageRepoConfig `json:"code_libraries"`
 	LearningMode       bool                `json:"learning_mode"`
+	Observability      ObservabilityConfig `json:"observability"`
 	DisabledLanguages  []string            `json:"-"` // runtime only, persisted in state.json
 	DisabledDistros    []string            `json:"-"` // runtime only, persisted in state.json
 }

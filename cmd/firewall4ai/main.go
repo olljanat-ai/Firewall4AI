@@ -28,6 +28,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/image"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 	"github.com/olljanat-ai/firewall4ai/internal/netboot"
+	"github.com/olljanat-ai/firewall4ai/internal/observability"
 	"github.com/olljanat-ai/firewall4ai/internal/proxy"
 	"github.com/olljanat-ai/firewall4ai/internal/store"
 	"github.com/olljanat-ai/firewall4ai/internal/tftp"
@@ -94,6 +95,14 @@ func main() {
 	dbMgr := database.NewManager()
 	logger := proxylog.NewLogger(cfg.MaxLogEntries)
 	agentMgr := agent.NewManager()
+
+	// Initialize LLM observability (Langfuse integration).
+	obs := observability.NewFromConfig(cfg.Observability)
+	if obs != nil {
+		logger.SetObserver(func(e proxylog.Entry) {
+			obs.ProcessEntry(e)
+		})
+	}
 
 	// Network configuration.
 	serverIP := net.ParseIP("10.255.255.1")
@@ -440,6 +449,9 @@ func main() {
 		log.Printf("Error saving state on shutdown: %v", err)
 	}
 
+	if obs != nil {
+		obs.Close()
+	}
 	dbMgr.Close()
 	transparentListener.Close()
 	proxyServer.Shutdown(ctx)
