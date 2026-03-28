@@ -1,6 +1,6 @@
 module github.com/olljanat-ai/firewall4ai
 
-go 1.26.1
+go 1.24.7
 
 require (
 	github.com/insomniacslk/dhcp v0.0.0-20260220084031-5adc3eb26f91
