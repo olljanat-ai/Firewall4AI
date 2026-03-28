@@ -2467,7 +2467,8 @@ async function loadDiskImages() {
           const cls = imageVersionStatusClass(v.status);
           const sizeStr = v.size ? ' (' + formatBytes(v.size) + ')' : '';
           const label = 'v' + v.version + ': ' + v.status + (v.status_msg ? ' - ' + v.status_msg : '') + sizeStr;
-          return `<span class="badge-status ${cls}">${esc(label)}</span>`;
+          const logBtn = v.build_log ? ` <button class="btn btn-outline btn-xs" onclick="showBuildLog('${esc(img.id)}',${v.version})" title="View build log">Log</button>` : '';
+          return `<span class="badge-status ${cls}">${esc(label)}</span>${logBtn}`;
         }).join(' ');
       } else {
         versionsHTML = '<span class="muted">no builds</span>';
@@ -2619,6 +2620,20 @@ async function buildDiskImage(id) {
   } catch (e) {
     alert('Error: ' + e.message);
   }
+}
+
+async function showBuildLog(imageId, version) {
+  try {
+    const result = await api('GET', `/api/disk-images/build-log?id=${encodeURIComponent(imageId)}&version=${version}`);
+    document.getElementById('build-log-content').textContent = result.log || '(no log captured)';
+    document.getElementById('modal-build-log').classList.add('active');
+  } catch (e) {
+    alert('Error loading build log: ' + e.message);
+  }
+}
+
+function hideBuildLog() {
+  document.getElementById('modal-build-log').classList.remove('active');
 }
 
 // --- Agent VMs ---

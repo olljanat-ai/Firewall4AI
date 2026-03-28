@@ -18,6 +18,7 @@ func (h *Handler) RegisterImageMgmtRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/disk-images", h.deleteDiskImage)
 	mux.HandleFunc("POST /api/disk-images/build", h.buildDiskImage)
 	mux.HandleFunc("DELETE /api/disk-images/version", h.deleteDiskImageVersion)
+	mux.HandleFunc("GET /api/disk-images/build-log", h.getDiskImageBuildLog)
 }
 
 func (h *Handler) listDiskImages(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +26,16 @@ func (h *Handler) listDiskImages(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []image.DiskImage{})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.ImageManager.List())
+	images := h.ImageManager.List()
+	// Strip build logs from list response (fetch individually via build-log endpoint).
+	for i := range images {
+		for j := range images[i].Versions {
+			if images[i].Versions[j].BuildLog != "" {
+				images[i].Versions[j].BuildLog = "(available)"
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, images)
 }
 
 type createDiskImageRequest struct {
@@ -224,4 +234,36 @@ func (h *Handler) deleteDiskImageVersion(w http.ResponseWriter, r *http.Request)
 
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) getDiskImageBuildLog(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	versionStr := r.URL.Query().Get("version")
+	if id == "" || versionStr == "" {
+		http.Error(w, "id and version parameters required", http.StatusBadRequest)
+		return
+	}
+
+	version, err := strconv.Atoi(versionStr)
+	if err != nil {
+		http.Error(w, "version must be a number", http.StatusBadRequest)
+		return
+	}
+
+	img, ok := h.ImageManager.Get(id)
+	if !ok {
+		http.Error(w, fmt.Sprintf("image %q not found", id), http.StatusNotFound)
+		return
+	}
+
+	for _, v := range img.Versions {
+		if v.Version == version {
+			writeJSON(w, http.StatusOK, map[string]string{
+				"log": v.BuildLog,
+			})
+			return
+		}
+	}
+
+	http.Error(w, "version not found", http.StatusNotFound)
 }

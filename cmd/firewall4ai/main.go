@@ -246,14 +246,16 @@ func main() {
 			d.DiskImages = imageMgr.ExportImages()
 		})
 
+		bl := image.NewBuildLogger()
 		keyboard, tz := apiHandler.GetVMSettings()
 		buildSettings := image.BuildSettings{Keyboard: keyboard, Timezone: tz}
-		if err := imageMgr.BuildImage(img, version, serverIP.String(), buildSettings); err != nil {
+		if err := imageMgr.BuildImage(img, version, serverIP.String(), buildSettings, bl); err != nil {
 			log.Printf("Failed to build image %s v%d: %v", img.Name, version, err)
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusError, err.Error())
 		} else {
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusReady, "")
 		}
+		imageMgr.SetVersionBuildLog(img.ID, version, bl.String())
 
 		dataStore.Update(func(d *storeData) {
 			d.DiskImages = imageMgr.ExportImages()

@@ -1,6 +1,7 @@
 package image
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -9,9 +10,35 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/olljanat-ai/firewall4ai/internal/agent"
 )
+
+// BuildLogger captures build output for later viewing.
+type BuildLogger struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// NewBuildLogger creates a new build logger.
+func NewBuildLogger() *BuildLogger {
+	return &BuildLogger{}
+}
+
+// Write implements io.Writer, capturing output.
+func (bl *BuildLogger) Write(p []byte) (n int, err error) {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	return bl.buf.Write(p)
+}
+
+// String returns all captured output.
+func (bl *BuildLogger) String() string {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	return bl.buf.String()
+}
 
 // BuildSettings holds global settings applied during image builds.
 type BuildSettings struct {
@@ -22,7 +49,12 @@ type BuildSettings struct {
 // BuildImage builds a new version of a disk image by creating a rootfs tarball.
 // This runs as a long-running operation and should be called in a goroutine.
 // The serverIP is the firewall's agent-facing IP (e.g., 10.255.255.1).
-func (m *Manager) BuildImage(img *DiskImage, version int, serverIP string, settings BuildSettings) error {
+// If bl is non-nil, build output is captured to it.
+func (m *Manager) BuildImage(img *DiskImage, version int, serverIP string, settings BuildSettings, bl *BuildLogger) error {
+	if bl != nil {
+		setBuildLogger(bl)
+		defer setBuildLogger(nil)
+	}
 	versionDir := m.VersionDir(img.ID, version)
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		return fmt.Errorf("create version dir: %w", err)
@@ -32,18 +64,18 @@ func (m *Manager) BuildImage(img *DiskImage, version int, serverIP string, setti
 
 	switch img.OS {
 	case agent.OSAlpine:
-		return m.buildAlpine(img, rootfsPath, serverIP, settings)
+		return m.buildAlpine(img, rootfsPath, serverIP, settings, bl)
 	case agent.OSDebian:
-		return m.buildDebian(img, rootfsPath, serverIP, "debian", settings)
+		return m.buildDebian(img, rootfsPath, serverIP, "debian", settings, bl)
 	case agent.OSUbuntu:
-		return m.buildDebian(img, rootfsPath, serverIP, "ubuntu", settings)
+		return m.buildDebian(img, rootfsPath, serverIP, "ubuntu", settings, bl)
 	default:
 		return fmt.Errorf("unsupported OS type: %s", img.OS)
 	}
 }
 
 // buildAlpine builds an Alpine Linux rootfs tarball.
-func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, settings BuildSettings) error {
+func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, settings BuildSettings, _ *BuildLogger) error {
 	// Download Alpine minirootfs.
 	minirootfsURL := fmt.Sprintf("https://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/alpine-minirootfs-%s.0-x86_64.tar.gz",
 		img.OSVersion, img.OSVersion)
@@ -280,7 +312,7 @@ LABEL alpine
 }
 
 // buildDebian builds a Debian or Ubuntu rootfs tarball using debootstrap.
-func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro string, settings BuildSettings) error {
+func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro string, settings BuildSettings, _ *BuildLogger) error {
 	codename := debianCodename(img.OSVersion)
 	mirror := "http://deb.debian.org/debian"
 	if distro == "ubuntu" {
@@ -669,10 +701,35 @@ echo "=== Firewall4AI Deploy done, continuing boot ==="
 }
 
 // run executes a command and returns an error if it fails.
+// activeBuildLogger holds the current build logger (if any) for capturing output.
+var activeBuildLogger struct {
+	mu sync.Mutex
+	bl *BuildLogger
+}
+
+func setBuildLogger(bl *BuildLogger) {
+	activeBuildLogger.mu.Lock()
+	activeBuildLogger.bl = bl
+	activeBuildLogger.mu.Unlock()
+}
+
+func getBuildLogger() *BuildLogger {
+	activeBuildLogger.mu.Lock()
+	defer activeBuildLogger.mu.Unlock()
+	return activeBuildLogger.bl
+}
+
+func cmdOutput() (io.Writer, io.Writer) {
+	bl := getBuildLogger()
+	if bl != nil {
+		return io.MultiWriter(os.Stdout, bl), io.MultiWriter(os.Stderr, bl)
+	}
+	return os.Stdout, os.Stderr
+}
+
 func run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }
 
@@ -680,20 +737,17 @@ func run(name string, args ...string) error {
 func runChroot(rootfs, name string, args ...string) error {
 	chrootArgs := append([]string{rootfs, name}, args...)
 	cmd := exec.Command("chroot", chrootArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }
 
 // runChrootEnv runs a command inside a chroot with extra environment variables.
 func runChrootEnv(rootfs string, env []string, name string, args ...string) error {
 	// Use env to set variables, then chroot.
-	// Build: env VAR1=val1 VAR2=val2 chroot rootfs name args...
 	envArgs := append(env, "chroot", rootfs, name)
 	envArgs = append(envArgs, args...)
 	cmd := exec.Command("env", envArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }
 

@@ -28,7 +28,8 @@ type ImageVersion struct {
 	Version   int         `json:"version"`
 	Status    BuildStatus `json:"status"`
 	StatusMsg string      `json:"status_msg"`
-	Size      int64       `json:"size"` // rootfs tarball size in bytes
+	Size      int64       `json:"size"`      // rootfs tarball size in bytes
+	BuildLog  string      `json:"build_log"` // captured build output
 	BuiltAt   time.Time   `json:"built_at"`
 }
 
@@ -262,6 +263,23 @@ func (m *Manager) SetVersionStatus(id string, version int, status BuildStatus, m
 		}
 	}
 	img.UpdatedAt = time.Now()
+}
+
+// SetVersionBuildLog sets the build log for a specific version.
+func (m *Manager) SetVersionBuildLog(id string, version int, log string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	img, ok := m.images[id]
+	if !ok {
+		return
+	}
+	for i := range img.Versions {
+		if img.Versions[i].Version == version {
+			img.Versions[i].BuildLog = log
+			break
+		}
+	}
 }
 
 // DeleteVersion removes a specific version from an image.
