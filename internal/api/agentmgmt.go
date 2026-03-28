@@ -36,14 +36,13 @@ func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAgentRequest struct {
-	MAC               string   `json:"mac"`
-	Hostname          string   `json:"hostname"`
-	IP                string   `json:"ip"`
-	ImageID           string   `json:"image_id"`
-	ImageVersion      int      `json:"image_version"`
-	DiskDevice        string   `json:"disk_device"`
-	SkillIDs          []string `json:"skill_ids"`
-	SSHAuthorizedKeys []string `json:"ssh_authorized_keys"`
+	MAC          string   `json:"mac"`
+	Hostname     string   `json:"hostname"`
+	IP           string   `json:"ip"`
+	ImageID      string   `json:"image_id"`
+	ImageVersion int      `json:"image_version"`
+	DiskDevice   string   `json:"disk_device"`
+	SkillIDs     []string `json:"skill_ids"`
 }
 
 func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
@@ -91,16 +90,15 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a := agent.Agent{
-		ID:                auth.GenerateGUID(),
-		MAC:               req.MAC,
-		Hostname:          req.Hostname,
-		IP:                req.IP,
-		ImageID:           req.ImageID,
-		ImageVersion:      req.ImageVersion,
-		DiskDevice:        req.DiskDevice,
-		SkillIDs:          req.SkillIDs,
-		SSHAuthorizedKeys: req.SSHAuthorizedKeys,
-		Status:            agent.StatusNew,
+		ID:           auth.GenerateGUID(),
+		MAC:          req.MAC,
+		Hostname:     req.Hostname,
+		IP:           req.IP,
+		ImageID:      req.ImageID,
+		ImageVersion: req.ImageVersion,
+		DiskDevice:   req.DiskDevice,
+		SkillIDs:     req.SkillIDs,
+		Status:       agent.StatusNew,
 	}
 
 	if err := h.AgentManager.Add(a); err != nil {
@@ -119,15 +117,14 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID                string   `json:"id"`
-		MAC               string   `json:"mac"`
-		Hostname          string   `json:"hostname"`
-		IP                string   `json:"ip"`
-		ImageID           string   `json:"image_id"`
-		ImageVersion      int      `json:"image_version"`
-		DiskDevice        string   `json:"disk_device"`
-		SkillIDs          []string `json:"skill_ids"`
-		SSHAuthorizedKeys []string `json:"ssh_authorized_keys"`
+		ID           string   `json:"id"`
+		MAC          string   `json:"mac"`
+		Hostname     string   `json:"hostname"`
+		IP           string   `json:"ip"`
+		ImageID      string   `json:"image_id"`
+		ImageVersion int      `json:"image_version"`
+		DiskDevice   string   `json:"disk_device"`
+		SkillIDs     []string `json:"skill_ids"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -183,9 +180,6 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		existing.SkillIDs = req.SkillIDs
-	}
-	if req.SSHAuthorizedKeys != nil {
-		existing.SSHAuthorizedKeys = req.SSHAuthorizedKeys
 	}
 
 	if err := h.AgentManager.Update(*existing); err != nil {

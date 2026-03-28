@@ -33,6 +33,7 @@ type AgentHandler struct {
 	NetbootManager   *netboot.Manager
 	ImageManager     *image.Manager
 	DatabaseManager  *database.Manager
+	GetSSHKeys       func() []string // returns global SSH authorized keys
 }
 
 // RegisterAgentRoutes sets up the agent API routes.
@@ -417,10 +418,12 @@ func (h *AgentHandler) getDeployInfo(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "hostname=%s\n", a.Hostname)
 	fmt.Fprintf(w, "agent_id=%s\n", a.ID)
 	fmt.Fprintf(w, "os_type=%s\n", img.OS)
-	// SSH authorized keys (one per line, prefixed with ssh_key=).
-	for _, key := range a.SSHAuthorizedKeys {
-		if key = strings.TrimSpace(key); key != "" {
-			fmt.Fprintf(w, "ssh_key=%s\n", key)
+	// Global SSH authorized keys (one per line, prefixed with ssh_key=).
+	if h.GetSSHKeys != nil {
+		for _, key := range h.GetSSHKeys() {
+			if key = strings.TrimSpace(key); key != "" {
+				fmt.Fprintf(w, "ssh_key=%s\n", key)
+			}
 		}
 	}
 }

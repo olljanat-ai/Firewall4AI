@@ -54,9 +54,10 @@ type Handler struct {
 	categories []string
 
 	// Global VM settings.
-	vmSettingsMu sync.RWMutex
-	keyboard     string // keyboard layout, e.g. "us", "fi"
-	timezone     string // timezone, e.g. "UTC", "Europe/Helsinki"
+	vmSettingsMu     sync.RWMutex
+	keyboard         string   // keyboard layout, e.g. "us", "fi"
+	timezone         string   // timezone, e.g. "UTC", "Europe/Helsinki"
+	sshAuthorizedKeys []string // SSH public keys for root login on all agent VMs
 }
 
 // RegisterRoutes sets up all API routes on the given mux.
@@ -1091,12 +1092,13 @@ func (h *Handler) setDisabledDistros(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string][]string{"disabled": req.Disabled})
 }
 
-// LoadVMSettings restores keyboard/timezone from persisted state.
-func (h *Handler) LoadVMSettings(keyboard, timezone string) {
+// LoadVMSettings restores VM settings from persisted state.
+func (h *Handler) LoadVMSettings(keyboard, timezone string, sshKeys []string) {
 	h.vmSettingsMu.Lock()
 	defer h.vmSettingsMu.Unlock()
 	h.keyboard = keyboard
 	h.timezone = timezone
+	h.sshAuthorizedKeys = sshKeys
 }
 
 // GetVMSettings returns the current keyboard and timezone settings.
@@ -1106,16 +1108,28 @@ func (h *Handler) GetVMSettings() (keyboard, timezone string) {
 	return h.keyboard, h.timezone
 }
 
+// GetSSHAuthorizedKeys returns the global SSH authorized keys.
+func (h *Handler) GetSSHAuthorizedKeys() []string {
+	h.vmSettingsMu.RLock()
+	defer h.vmSettingsMu.RUnlock()
+	return append([]string{}, h.sshAuthorizedKeys...)
+}
+
 func (h *Handler) getVMSettings(w http.ResponseWriter, r *http.Request) {
 	h.vmSettingsMu.RLock()
 	defer h.vmSettingsMu.RUnlock()
-	writeJSON(w, http.StatusOK, map[string]string{"keyboard": h.keyboard, "timezone": h.timezone})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"keyboard":            h.keyboard,
+		"timezone":            h.timezone,
+		"ssh_authorized_keys": h.sshAuthorizedKeys,
+	})
 }
 
 func (h *Handler) setVMSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Keyboard string `json:"keyboard"`
-		Timezone string `json:"timezone"`
+		Keyboard          string   `json:"keyboard"`
+		Timezone          string   `json:"timezone"`
+		SSHAuthorizedKeys []string `json:"ssh_authorized_keys"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -1124,9 +1138,14 @@ func (h *Handler) setVMSettings(w http.ResponseWriter, r *http.Request) {
 	h.vmSettingsMu.Lock()
 	h.keyboard = req.Keyboard
 	h.timezone = req.Timezone
+	h.sshAuthorizedKeys = req.SSHAuthorizedKeys
 	h.vmSettingsMu.Unlock()
 	h.save()
-	writeJSON(w, http.StatusOK, map[string]string{"keyboard": req.Keyboard, "timezone": req.Timezone})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"keyboard":            req.Keyboard,
+		"timezone":            req.Timezone,
+		"ssh_authorized_keys": req.SSHAuthorizedKeys,
+	})
 }
 
 func (h *Handler) save() {

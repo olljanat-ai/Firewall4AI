@@ -71,9 +71,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Skills</th><th>SSH Keys</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Skills</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="agents-tbody">
-              <tr><td colspan="8" class="empty-state">No agents configured. Add one to get started.</td></tr>
+              <tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -422,6 +422,15 @@
             </div>
             <div class="setting-control">
               <input type="text" id="vm-timezone" placeholder="UTC" style="width:200px">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">SSH Authorized Keys</div>
+              <div class="setting-desc">SSH public keys for root login on all Agent VMs. One key per line. SSH server is automatically enabled when keys are configured.</div>
+            </div>
+            <div class="setting-control" style="flex-direction:column;align-items:stretch">
+              <textarea id="vm-ssh-keys" rows="4" style="width:100%;font-family:monospace;font-size:12px" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
             </div>
           </div>
           <div class="setting-row">
@@ -939,10 +948,6 @@
       <div class="form-group">
         <label>Skills</label>
         <div id="agent-skills-list" class="checkbox-list"></div>
-      </div>
-      <div class="form-group">
-        <label>SSH Authorized Keys (one public key per line)</label>
-        <textarea id="agent-ssh-keys" rows="3" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
       </div>
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideAgentModal()">Cancel</button>

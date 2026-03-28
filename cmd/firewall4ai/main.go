@@ -55,6 +55,7 @@ type storeData struct {
 	DHCPLeases        []dhcp.Lease             `json:"dhcp_leases"`
 	Keyboard          string                   `json:"keyboard"`
 	Timezone          string                   `json:"timezone"`
+	SSHAuthorizedKeys []string                 `json:"ssh_authorized_keys"`
 }
 
 func main() {
@@ -216,7 +217,7 @@ func main() {
 		AgentManager:     agentMgr,
 	}
 	apiHandler.LoadCategories(state.Categories)
-	apiHandler.LoadVMSettings(state.Keyboard, state.Timezone)
+	apiHandler.LoadVMSettings(state.Keyboard, state.Timezone, state.SSHAuthorizedKeys)
 
 	// Agent change callbacks.
 	apiHandler.OnAgentChange = func(a *agent.Agent) {
@@ -280,6 +281,7 @@ func main() {
 			keyboard, tz := apiHandler.GetVMSettings()
 			d.Keyboard = keyboard
 			d.Timezone = tz
+			d.SSHAuthorizedKeys = apiHandler.GetSSHAuthorizedKeys()
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
@@ -374,6 +376,7 @@ func main() {
 		AgentManager:     agentMgr,
 		NetbootManager:   netbootMgr,
 		ImageManager:     imageMgr,
+		GetSSHKeys:       apiHandler.GetSSHAuthorizedKeys,
 	}
 	agentHandler.RegisterAgentRoutes(agentAPIMux)
 	agentAPIServer := &http.Server{

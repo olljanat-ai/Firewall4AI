@@ -2138,6 +2138,7 @@ async function loadSystem() {
     const vmData = await api('GET', '/api/settings/vm-settings');
     document.getElementById('vm-keyboard').value = vmData.keyboard || '';
     document.getElementById('vm-timezone').value = vmData.timezone || '';
+    document.getElementById('vm-ssh-keys').value = (vmData.ssh_authorized_keys || []).join('\n');
   } catch (e) {
     console.error('VM settings load error:', e);
   }
@@ -2301,9 +2302,11 @@ async function toggleSSH() {
 async function saveVMSettings() {
   const keyboard = document.getElementById('vm-keyboard').value.trim();
   const timezone = document.getElementById('vm-timezone').value.trim();
+  const sshKeysStr = document.getElementById('vm-ssh-keys').value.trim();
+  const ssh_authorized_keys = sshKeysStr ? sshKeysStr.split('\n').map(k => k.trim()).filter(k => k) : [];
   try {
-    await api('POST', '/api/settings/vm-settings', { keyboard, timezone });
-    alert('VM settings saved. Changes will apply to new image builds.');
+    await api('POST', '/api/settings/vm-settings', { keyboard, timezone, ssh_authorized_keys });
+    alert('VM settings saved. SSH keys apply to new deployments. Keyboard and timezone apply to new image builds.');
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -2582,7 +2585,7 @@ async function loadAgentVMs() {
     const tbody = document.getElementById('agents-tbody');
     tbody.innerHTML = '';
     if (!currentAgents || currentAgents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No agents configured. Add one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>';
       return;
     }
     currentAgents.forEach(a => {
@@ -2602,18 +2605,12 @@ async function loadAgentVMs() {
         }).join(' ');
       }
 
-      const sshKeyCount = (a.ssh_authorized_keys || []).length;
-      const sshDisplay = sshKeyCount > 0
-        ? `<span class="badge-status approved">${sshKeyCount} key${sshKeyCount > 1 ? 's' : ''}</span>`
-        : '<span class="muted">none</span>';
-
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.hostname)}</strong></td>
         <td><code>${esc(a.mac)}</code></td>
         <td>${a.ip ? '<code>' + esc(a.ip) + '</code>' : '<span class="muted">pending</span>'}</td>
         <td>${imgLabel}</td>
         <td>${skillsHTML}</td>
-        <td>${sshDisplay}</td>
         <td><span class="badge-status ${statusClass}">${esc(statusLabel)}</span></td>
         <td>
           <button class="btn btn-outline btn-sm" onclick="editAgent('${esc(a.id)}')">Edit</button>
@@ -2687,7 +2684,6 @@ function showCreateAgent() {
   document.getElementById('agent-hostname').value = '';
   document.getElementById('agent-image-version').value = '0';
   document.getElementById('agent-disk').value = '/dev/sda';
-  document.getElementById('agent-ssh-keys').value = '';
   populateAgentImageSelect('');
   populateAgentSkillsList([]);
   document.getElementById('modal-agent').classList.add('active');
@@ -2707,7 +2703,6 @@ function editAgent(id) {
   document.getElementById('agent-hostname').value = a.hostname || '';
   document.getElementById('agent-image-version').value = a.image_version || 0;
   document.getElementById('agent-disk').value = a.disk_device || '/dev/sda';
-  document.getElementById('agent-ssh-keys').value = (a.ssh_authorized_keys || []).join('\n');
   populateAgentImageSelect(a.image_id || '');
   populateAgentSkillsList(a.skill_ids || []);
   document.getElementById('modal-agent').classList.add('active');
@@ -2720,8 +2715,6 @@ async function submitAgent() {
   const image_version = parseInt(document.getElementById('agent-image-version').value) || 0;
   const disk = document.getElementById('agent-disk').value.trim() || '/dev/sda';
   const skill_ids = getSelectedAgentSkillIDs();
-  const sshKeysStr = document.getElementById('agent-ssh-keys').value.trim();
-  const ssh_authorized_keys = sshKeysStr ? sshKeysStr.split('\n').map(k => k.trim()).filter(k => k) : [];
 
   if (!mac || !hostname) {
     alert('MAC address and hostname are required');
@@ -2735,11 +2728,11 @@ async function submitAgent() {
   try {
     if (editingAgentID) {
       await api('PUT', '/api/agents', {
-        id: editingAgentID, mac, hostname, image_id, image_version, disk_device: disk, skill_ids, ssh_authorized_keys
+        id: editingAgentID, mac, hostname, image_id, image_version, disk_device: disk, skill_ids
       });
     } else {
       await api('POST', '/api/agents', {
-        mac, hostname, image_id, image_version, disk_device: disk, skill_ids, ssh_authorized_keys
+        mac, hostname, image_id, image_version, disk_device: disk, skill_ids
       });
     }
     hideAgentModal();

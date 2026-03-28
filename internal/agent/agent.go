@@ -39,9 +39,8 @@ type Agent struct {
 	ImageID           string    `json:"image_id"`            // References a DiskImage
 	ImageVersion      int       `json:"image_version"`       // Which image version to deploy (0 = latest ready)
 	DiskDevice        string    `json:"disk_device"`         // e.g., "/dev/vda" or "/dev/sda"
-	SkillIDs          []string  `json:"skill_ids"`           // Allocated skills from the skills library
-	SSHAuthorizedKeys []string  `json:"ssh_authorized_keys"` // SSH public keys for root login
-	Status            Status    `json:"status"`
+	SkillIDs     []string  `json:"skill_ids"`  // Allocated skills from the skills library
+	Status       Status    `json:"status"`
 	StatusMsg         string    `json:"status_msg"` // Additional status detail (e.g., error message)
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
