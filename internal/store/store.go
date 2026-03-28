@@ -65,3 +65,22 @@ func (s *JSONStore[T]) Update(fn func(*T)) error {
 	fn(&s.data)
 	return s.save()
 }
+
+// ExportJSON returns the current data serialized as JSON.
+func (s *JSONStore[T]) ExportJSON() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return json.MarshalIndent(s.data, "", "  ")
+}
+
+// ImportJSON replaces the data with the given JSON and persists it.
+func (s *JSONStore[T]) ImportJSON(data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var newData T
+	if err := json.Unmarshal(data, &newData); err != nil {
+		return err
+	}
+	s.data = newData
+	return s.save()
+}

@@ -476,6 +476,28 @@
           </div>
         </div>
         <div class="card">
+          <h3>Backup &amp; Restore</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Export Backup</div>
+              <div class="setting-desc">Download the current configuration as a JSON file.</div>
+            </div>
+            <div class="setting-control">
+              <a href="/api/backup" class="btn btn-primary btn-sm" download="firewall4ai-backup.json">Download Backup</a>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Import Backup</div>
+              <div class="setting-desc">Restore configuration from a previously exported backup file. This will replace all current settings. A page reload is required after restore.</div>
+            </div>
+            <div class="setting-control">
+              <input type="file" id="restore-file" accept=".json" style="display:none" onchange="doRestore(this)">
+              <button class="btn btn-danger btn-sm" onclick="document.getElementById('restore-file').click()">Upload &amp; Restore</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
           <h3>SSH Access</h3>
           <div class="setting-row">
             <div class="setting-info">

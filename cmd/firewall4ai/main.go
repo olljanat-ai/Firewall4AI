@@ -307,6 +307,14 @@ func main() {
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
+	apiHandler.GetBackupData = func() ([]byte, error) {
+		// First save current state, then export.
+		saveFunc()
+		return dataStore.ExportJSON()
+	}
+	apiHandler.RestoreBackupData = func(data []byte) error {
+		return dataStore.ImportJSON(data)
+	}
 
 	// Setup proxy server with CA for MITM and registry awareness.
 	p := proxy.New(skills, approvals, creds, logger)

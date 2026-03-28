@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"sort"
@@ -36,6 +37,8 @@ type Handler struct {
 	SetDisabledLanguagesFunc func([]string) // called to update disabled languages
 	SetDisabledDistrosFunc   func([]string) // called to update disabled distros
 	Version                string          // build version string
+	GetBackupData          func() ([]byte, error) // returns state.json contents for backup
+	RestoreBackupData      func([]byte) error     // restores state from backup data
 
 	// Database management.
 	DatabaseManager   *database.Manager
@@ -151,6 +154,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// DHCP leases
 	mux.HandleFunc("GET /api/dhcp/leases", h.listDHCPLeases)
+
+	// Backup/Restore
+	mux.HandleFunc("GET /api/backup", h.downloadBackup)
+	mux.HandleFunc("POST /api/restore", h.uploadRestore)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -872,6 +879,52 @@ func (h *Handler) listDHCPLeases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, h.GetDHCPLeases())
+}
+
+// --- Backup/Restore ---
+
+func (h *Handler) downloadBackup(w http.ResponseWriter, r *http.Request) {
+	if h.GetBackupData == nil {
+		http.Error(w, "backup not available", http.StatusInternalServerError)
+		return
+	}
+	data, err := h.GetBackupData()
+	if err != nil {
+		http.Error(w, "backup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=firewall4ai-backup.json")
+	w.Write(data)
+}
+
+func (h *Handler) uploadRestore(w http.ResponseWriter, r *http.Request) {
+	if h.RestoreBackupData == nil {
+		http.Error(w, "restore not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Limit body to 50MB.
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate it's valid JSON.
+	if !json.Valid(data) {
+		http.Error(w, "invalid JSON data", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.RestoreBackupData(data); err != nil {
+		http.Error(w, "restore failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"result": "restored"})
 }
 
 // --- Categories ---

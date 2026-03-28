@@ -2388,6 +2388,33 @@ async function doUpgrade() {
   }
 }
 
+async function doRestore(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!confirm('Restore from backup? This will REPLACE all current settings. The page will reload after restore.')) {
+    input.value = '';
+    return;
+  }
+  try {
+    const text = await file.text();
+    JSON.parse(text); // validate JSON
+    const res = await fetch('/api/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: text,
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(err);
+    }
+    alert('Restore successful. Reloading page...');
+    location.reload();
+  } catch (e) {
+    alert('Restore failed: ' + e.message);
+  }
+  input.value = '';
+}
+
 async function doReboot() {
   if (!confirm('Reboot the appliance now?')) return;
   try {
