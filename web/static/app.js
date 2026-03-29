@@ -24,6 +24,7 @@ let currentCategories = [];
 let currentLogs = [];
 let currentAgents = [];
 let currentDatabases = [];
+let currentSSHKeys = {};
 
 // Pagination state per page type
 const PAGE_SIZE = 50;
@@ -2203,7 +2204,8 @@ async function loadSystem() {
     const vmData = await api('GET', '/api/settings/vm-settings');
     document.getElementById('vm-keyboard').value = vmData.keyboard || '';
     document.getElementById('vm-timezone').value = vmData.timezone || '';
-    document.getElementById('vm-ssh-keys').value = (vmData.ssh_authorized_keys || []).join('\n');
+    currentSSHKeys = vmData.ssh_authorized_keys || {};
+    renderSSHKeys();
   } catch (e) {
     console.error('VM settings load error:', e);
   }
@@ -2388,13 +2390,55 @@ async function toggleSSH() {
 async function saveVMSettings() {
   const keyboard = document.getElementById('vm-keyboard').value.trim();
   const timezone = document.getElementById('vm-timezone').value.trim();
-  const sshKeysStr = document.getElementById('vm-ssh-keys').value.trim();
-  const ssh_authorized_keys = sshKeysStr ? sshKeysStr.split('\n').map(k => k.trim()).filter(k => k) : [];
   try {
-    await api('POST', '/api/settings/vm-settings', { keyboard, timezone, ssh_authorized_keys });
+    await api('POST', '/api/settings/vm-settings', { keyboard, timezone, ssh_authorized_keys: currentSSHKeys });
     alert('VM settings saved. SSH keys apply to new deployments. Keyboard and timezone apply to new image builds.');
   } catch (e) {
     alert('Error: ' + e.message);
+  }
+}
+ 
+function renderSSHKeys() {
+  const container = document.getElementById('ssh-keys-list');
+  if (!container) return;
+  const names = Object.keys(currentSSHKeys);
+  if (names.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">No SSH keys configured.</div>';
+    return;
+  }
+  container.innerHTML = names.map(name =>
+    `<span class="category-badge" style="margin:2px 4px;padding:4px 10px;font-size:12px" title="${esc(currentSSHKeys[name])}">${esc(name)} <span style="cursor:pointer;margin-left:6px;opacity:0.6" onclick="removeSSHKey('${esc(name)}')">&times;</span></span>`
+  ).join('');
+}
+ 
+async function addSSHKey() {
+  const nameInput = document.getElementById('ssh-key-name');
+  const keyInput = document.getElementById('ssh-key-value');
+  const name = nameInput.value.trim();
+  const key = keyInput.value.trim();
+  if (!name) { alert('Key name is required'); return; }
+  if (!key) { alert('SSH public key is required'); return; }
+  currentSSHKeys[name] = key;
+  nameInput.value = '';
+  keyInput.value = '';
+  renderSSHKeys();
+  await saveVMSettingsSilent();
+}
+ 
+async function removeSSHKey(name) {
+  if (!confirm(`Remove SSH key "${name}"?`)) return;
+  delete currentSSHKeys[name];
+  renderSSHKeys();
+  await saveVMSettingsSilent();
+}
+ 
+async function saveVMSettingsSilent() {
+  const keyboard = document.getElementById('vm-keyboard').value.trim();
+  const timezone = document.getElementById('vm-timezone').value.trim();
+  try {
+    await api('POST', '/api/settings/vm-settings', { keyboard, timezone, ssh_authorized_keys: currentSSHKeys });
+  } catch (e) {
+    alert('Error saving SSH keys: ' + e.message);
   }
 }
 

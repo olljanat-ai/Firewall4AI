@@ -56,7 +56,7 @@ type storeData struct {
 	DHCPLeases        []dhcp.Lease              `json:"dhcp_leases"`
 	Keyboard          string                    `json:"keyboard"`
 	Timezone          string                    `json:"timezone"`
-	SSHAuthorizedKeys []string                  `json:"ssh_authorized_keys"`
+	SSHAuthorizedKeys map[string]string         `json:"ssh_authorized_keys"`
 	Templates         []api.ApprovalTemplate    `json:"templates"`
 }
 
@@ -311,7 +311,7 @@ func main() {
 			keyboard, tz := apiHandler.GetVMSettings()
 			d.Keyboard = keyboard
 			d.Timezone = tz
-			d.SSHAuthorizedKeys = apiHandler.GetSSHAuthorizedKeys()
+			d.SSHAuthorizedKeys = apiHandler.GetSSHAuthorizedKeysMap()
 			d.Templates = apiHandler.ExportTemplates()
 		})
 	}

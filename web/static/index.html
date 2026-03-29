@@ -475,11 +475,14 @@
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label">SSH Authorized Keys</div>
-              <div class="setting-desc">SSH public keys for root login on all Agent VMs. One key per line. SSH server is automatically enabled when keys are configured.</div>
+              <div class="setting-desc">SSH public keys for root login on all Agent VMs. SSH server is automatically enabled when keys are configured.</div>
             </div>
-            <div class="setting-control" style="flex-direction:column;align-items:stretch">
-              <textarea id="vm-ssh-keys" rows="4" style="width:100%;font-family:monospace;font-size:12px" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
+            <div class="setting-control">
+              <input type="text" id="ssh-key-name" placeholder="Name (e.g. laptop)" style="width:120px">
+              <input type="text" id="ssh-key-value" placeholder="ssh-ed25519 AAAA..." style="width:300px;font-family:monospace;font-size:12px">
+              <button class="btn btn-primary btn-sm" onclick="addSSHKey()">Add</button>
             </div>
+          <div id="ssh-keys-list" style="padding-top:8px"></div>
           </div>
           <div class="setting-row">
             <div class="setting-info"></div>
