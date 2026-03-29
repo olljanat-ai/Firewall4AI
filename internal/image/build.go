@@ -80,7 +80,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 	minirootfsURL := fmt.Sprintf("https://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/alpine-minirootfs-%s.0-x86_64.tar.gz",
 		img.OSVersion, img.OSVersion)
 
-	tmpDir, err := os.MkdirTemp("", "fw4ai-build-alpine-")
+	tmpDir, err := os.MkdirTemp("/opt/firewall4ai", "fw4ai-build-alpine-")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
@@ -316,7 +316,8 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 		mirror = "http://archive.ubuntu.com/ubuntu"
 	}
 
-	tmpDir, err := os.MkdirTemp("", "fw4ai-build-debian-")
+	os.MkdirAll("/opt/firewall4ai", 0755)
+	tmpDir, err := os.MkdirTemp("/opt/firewall4ai", "fw4ai-build-debian-")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
