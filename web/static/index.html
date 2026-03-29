@@ -59,7 +59,7 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tools</th><th>Container Tools</th><th>Versions</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tool</th><th>Container Tools</th><th>Versions</th><th>Actions</th></tr></thead>
             <tbody id="disk-images-tbody">
               <tr><td colspan="7" class="empty-state">No disk images configured. Create one to get started.</td></tr>
             </tbody>
@@ -1025,12 +1025,13 @@
         <input type="text" id="disk-image-packages" placeholder="e.g., curl, vim, htop">
       </div>
       <div class="form-group">
-        <label>AI Coding Tools</label>
+        <label>AI Coding Tool</label>
         <div class="checkbox-group">
-          <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-opencode" value="opencode"> OpenCode</label>
-          <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-github-copilot" value="github_copilot"> GitHub Copilot</label>
-          <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-claude-code" value="claude_code"> Claude Code</label>
-          <label class="checkbox-label"><input type="checkbox" id="disk-image-ai-openai-codex" value="openai_codex"> OpenAI Codex</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-ai-tool" id="disk-image-ai-none" value="none" checked> None</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-ai-tool" id="disk-image-ai-opencode" value="opencode"> OpenCode</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-ai-tool" id="disk-image-ai-github-copilot" value="github_copilot"> GitHub Copilot</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-ai-tool" id="disk-image-ai-claude-code" value="claude_code"> Claude Code</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-ai-tool" id="disk-image-ai-openai-codex" value="openai_codex"> OpenAI Codex</label>
         </div>
       </div>
       <div class="form-group">
