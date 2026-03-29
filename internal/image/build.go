@@ -387,6 +387,7 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 
 	// Configure the system.
 	buildLog("Image build [%s v%s]: configuring system", img.Name, img.OSVersion)
+	os.WriteFile(filepath.Join(rootfsDir, "etc/motd"), []byte(""), 0o644)
 
 	// fstab.
 	fstab := "/dev/sda1\t/\text2\tdefaults,noatime\t0\t1\n"
