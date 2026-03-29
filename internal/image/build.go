@@ -917,7 +917,7 @@ func installContainerTools(img *DiskImage, rootfsDir string, isDebian bool, debE
 				buildLog("Image build [%s v%s]: installing Nomad", img.Name, img.OSVersion)
 				// Install Nomad from HashiCorp APT repo.
 				if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c",
-					"apt-get install -y gpg && "+
+					"apt-get install -y gpg lsb-release && "+
 						"wget -qO- https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg && "+
 						"echo \"deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main\" > /etc/apt/sources.list.d/hashicorp.list && "+
 						"apt-get update && apt-get install -y nomad",
