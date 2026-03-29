@@ -91,7 +91,7 @@ func (m *Manager) GenerateDeployIPXEScript(info DeployBootInfo) string {
 		// script baked in via initramfs-tools hooks. The premount script detects
 		// fw4ai_agent/fw4ai_server kernel params and handles partitioning,
 		// formatting, and rootfs extraction before root mount.
-		b.WriteString(fmt.Sprintf("kernel %s root=/dev/sda1 ip=dhcp fw4ai_agent=%s fw4ai_server=%s\n",
+		b.WriteString(fmt.Sprintf("kernel %s root=/dev/sda1 net.ifnames=0 biosdevname=0 ip=dhcp fw4ai_agent=%s fw4ai_server=%s\n",
 			kernelURL, info.AgentID, m.ServerIP))
 		b.WriteString(fmt.Sprintf("initrd %s\n", initrdURL))
 
@@ -239,7 +239,7 @@ sync
 
 KERNEL=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -n1)
 INITRD=$(ls /mnt/target/boot/initramfs-* 2>/dev/null | head -n1)
-APPEND="root=${PART} modules=ext2 quiet"
+APPEND="root=${PART} modules=ext2 net.ifnames=0 biosdevname=0"
 
 if [ -n "$KERNEL" ] && [ -n "$INITRD" ]; then
     echo "-> Loading installed kernel via kexec..."

@@ -227,7 +227,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 LABEL alpine
   LINUX /boot/%s
   INITRD /boot/%s
-  APPEND root=/dev/sda1 modules=ext2 quiet
+  APPEND root=/dev/sda1 modules=ext2 net.ifnames=0 biosdevname=0
 `, kernelFile, initrdFile)
 	os.WriteFile(filepath.Join(rootfsDir, "boot/extlinux.conf"), []byte(extlinuxConf), 0o644)
 
@@ -431,7 +431,7 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 LABEL linux
   LINUX /boot/%s
   INITRD /boot/%s
-  APPEND root=/dev/sda1 ro quiet
+  APPEND root=/dev/sda1 ro net.ifnames=0 biosdevname=0
 `, kernelFile, initrdFile)
 	os.WriteFile(filepath.Join(rootfsDir, "boot/extlinux.conf"), []byte(extlinuxConf), 0o644)
 
