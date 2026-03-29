@@ -2679,6 +2679,10 @@ async function showBuildLog(imageId, version, status) {
   document.getElementById('build-log-content').textContent = 'Loading...';
   document.getElementById('modal-build-log').classList.add('active');
 
+  // Hide delete button while build is active.
+  const deleteBtn = document.getElementById('build-log-delete-btn');
+  deleteBtn.style.display = (status === 'building' || status === 'pending') ? 'none' : '';
+
   await refreshBuildLog();
 
   // Auto-refresh while building.
@@ -2703,6 +2707,7 @@ async function refreshBuildLog() {
       const ver = (img.versions || []).find(v => v.version === buildLogVersion);
       if (ver && ver.status !== 'building' && ver.status !== 'pending') {
         stopBuildLogRefresh();
+        document.getElementById('build-log-delete-btn').style.display = '';
         loadDiskImages();
       }
     }
@@ -2723,6 +2728,31 @@ function hideBuildLog() {
   document.getElementById('modal-build-log').classList.remove('active');
   buildLogImageId = null;
   buildLogVersion = null;
+}
+
+function downloadBuildLog() {
+  const content = document.getElementById('build-log-content').textContent;
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `build-log-${buildLogImageId}-v${buildLogVersion}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function deleteVersionFromLog() {
+  if (!buildLogImageId || buildLogVersion == null) return;
+  if (!confirm(`Delete version ${buildLogVersion} of this disk image?`)) return;
+  try {
+    await api('DELETE', `/api/disk-images/version?id=${encodeURIComponent(buildLogImageId)}&version=${buildLogVersion}`);
+    hideBuildLog();
+    loadDiskImages();
+  } catch (e) {
+    alert('Failed to delete version: ' + e.message);
+  }
 }
 
 // --- Agent VMs ---

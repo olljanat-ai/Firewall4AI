@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -719,15 +718,14 @@ func getBuildLogger() *BuildLogger {
 func cmdOutput() (io.Writer, io.Writer) {
 	bl := getBuildLogger()
 	if bl != nil {
-		return io.MultiWriter(os.Stdout, bl), io.MultiWriter(os.Stderr, bl)
+		return bl, bl
 	}
-	return os.Stdout, os.Stderr
+	return io.Discard, io.Discard
 }
 
-// buildLog logs a message to both Go's standard logger and the active build logger.
+// buildLog logs a message to the active build logger only.
 func buildLog(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	log.Print(msg)
 	bl := getBuildLogger()
 	if bl != nil {
 		bl.mu.Lock()
