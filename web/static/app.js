@@ -3069,14 +3069,48 @@ async function deleteTemplate(id, name) {
   }
 }
 
-function showApplyTemplate(id) {
+async function showApplyTemplate(id) {
+  // Ensure agents and skills are loaded for dropdowns.
+  if (!currentAgents || currentAgents.length === 0) {
+    try { currentAgents = await api('GET', '/api/agents') || []; } catch (e) { currentAgents = []; }
+  }
+  if (!currentSkills || currentSkills.length === 0) {
+    try {
+      currentSkills = await api('GET', '/api/skills') || [];
+      currentSkills.sort((a, b) => a.name.localeCompare(b.name));
+    } catch (e) { currentSkills = []; }
+  }
+
   document.getElementById('apply-template-id').innerHTML =
     currentTemplates.map(t =>
       `<option value="${esc(t.id)}" ${t.id === id ? 'selected' : ''}>${esc(t.name)}</option>`
     ).join('');
   document.getElementById('apply-template-level').value = 'global';
-  document.getElementById('apply-template-source-ip').value = '';
-  document.getElementById('apply-template-skill-id').value = '';
+
+  // Populate agent checkboxes.
+  const agentsWithIP = (currentAgents || []).filter(a => a.ip);
+  const agentsList = document.getElementById('apply-template-agents-list');
+  if (agentsWithIP.length === 0) {
+    agentsList.innerHTML = '<span class="muted">No agents with assigned IPs found.</span>';
+  } else {
+    agentsList.innerHTML = agentsWithIP.map(a =>
+      `<label style="display:block;padding:4px 0;cursor:pointer">
+        <input type="checkbox" class="apply-template-agent-cb" value="${esc(a.ip)}" style="margin-right:8px">
+        ${esc(a.hostname)} (<code>${esc(a.ip)}</code>)
+      </label>`
+    ).join('');
+  }
+
+  // Populate skill dropdown.
+  const skillSelect = document.getElementById('apply-template-skill-id');
+  if (currentSkills.length === 0) {
+    skillSelect.innerHTML = '<option value="">No skills configured</option>';
+  } else {
+    skillSelect.innerHTML = currentSkills.map(s =>
+      `<option value="${esc(s.id)}">${esc(s.name)}</option>`
+    ).join('');
+  }
+
   updateApplyTemplateFields();
   document.getElementById('modal-apply-template').classList.add('active');
 }
@@ -3087,19 +3121,34 @@ function hideApplyTemplate() {
 
 function updateApplyTemplateFields() {
   const level = document.getElementById('apply-template-level').value;
-  document.getElementById('apply-template-vm-fields').style.display = (level === 'vm' || level === 'skill') ? 'block' : 'none';
+  document.getElementById('apply-template-vm-fields').style.display = level === 'vm' ? 'block' : 'none';
   document.getElementById('apply-template-skill-fields').style.display = level === 'skill' ? 'block' : 'none';
 }
 
 async function doApplyTemplate() {
   const id = document.getElementById('apply-template-id').value;
   const level = document.getElementById('apply-template-level').value;
-  let sourceIP = '', skillID = '';
-  if (level === 'vm' || level === 'skill') sourceIP = document.getElementById('apply-template-source-ip').value.trim();
-  if (level === 'skill') skillID = document.getElementById('apply-template-skill-id').value.trim();
   try {
-    const result = await api('POST', '/api/templates/apply', { id, source_ip: sourceIP, skill_id: skillID });
-    alert('Applied ' + result.applied + ' rules successfully.');
+    if (level === 'vm') {
+      // Apply to each selected agent.
+      const checked = document.querySelectorAll('.apply-template-agent-cb:checked');
+      if (checked.length === 0) { alert('Please select at least one agent.'); return; }
+      let totalApplied = 0;
+      for (const cb of checked) {
+        const result = await api('POST', '/api/templates/apply', { id, source_ip: cb.value, skill_id: '' });
+        totalApplied += result.applied;
+      }
+      alert('Applied ' + totalApplied + ' rules across ' + checked.length + ' agent(s) successfully.');
+    } else if (level === 'skill') {
+      const skillID = document.getElementById('apply-template-skill-id').value;
+      if (!skillID) { alert('Please select a skill.'); return; }
+      const result = await api('POST', '/api/templates/apply', { id, source_ip: '', skill_id: skillID });
+      alert('Applied ' + result.applied + ' rules successfully.');
+    } else {
+      // Global
+      const result = await api('POST', '/api/templates/apply', { id, source_ip: '', skill_id: '' });
+      alert('Applied ' + result.applied + ' rules successfully.');
+    }
     hideApplyTemplate();
     loadApprovals();
   } catch (e) {
