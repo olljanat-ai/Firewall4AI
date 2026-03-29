@@ -91,17 +91,59 @@ func (img *DiskImage) NextVersion() int {
 
 // Manager manages disk image configurations and their built versions.
 type Manager struct {
-	mu      sync.RWMutex
-	images  map[string]*DiskImage
-	dataDir string
+	mu           sync.RWMutex
+	images       map[string]*DiskImage
+	dataDir      string
+	activeLogsMu sync.RWMutex
+	activeLogs   map[string]*BuildLogger // key: "imageID/version"
 }
 
 // NewManager creates a new image manager.
 func NewManager(dataDir string) *Manager {
 	return &Manager{
-		images:  make(map[string]*DiskImage),
-		dataDir: dataDir,
+		images:     make(map[string]*DiskImage),
+		dataDir:    dataDir,
+		activeLogs: make(map[string]*BuildLogger),
 	}
+}
+
+// SetActiveBuildLog registers a live build logger for an in-progress build.
+func (m *Manager) SetActiveBuildLog(imageID string, version int, bl *BuildLogger) {
+	m.activeLogsMu.Lock()
+	defer m.activeLogsMu.Unlock()
+	key := fmt.Sprintf("%s/%d", imageID, version)
+	if bl != nil {
+		m.activeLogs[key] = bl
+	} else {
+		delete(m.activeLogs, key)
+	}
+}
+
+// GetBuildLog returns the build log for a version. If the build is in progress,
+// returns the live log from the active builder. Otherwise returns the stored log.
+func (m *Manager) GetBuildLog(imageID string, version int) string {
+	// Check for active (in-progress) log first.
+	m.activeLogsMu.RLock()
+	key := fmt.Sprintf("%s/%d", imageID, version)
+	bl := m.activeLogs[key]
+	m.activeLogsMu.RUnlock()
+	if bl != nil {
+		return bl.String()
+	}
+
+	// Fall back to stored log.
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	img, ok := m.images[imageID]
+	if !ok {
+		return ""
+	}
+	for _, v := range img.Versions {
+		if v.Version == version {
+			return v.BuildLog
+		}
+	}
+	return ""
 }
 
 // ImagesDir returns the base directory for image storage.

@@ -141,6 +141,8 @@ tr:hover td { background: var(--surface2); }
 .badge-status.denied { background: rgba(239,68,68,0.15); color: var(--red); }
 .badge-status.pending { background: rgba(245,158,11,0.15); color: var(--orange); }
 .badge-status.error { background: rgba(239,68,68,0.15); color: var(--red); }
+.badge-status[onclick] { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
+.badge-status[onclick]:hover { filter: brightness(1.3); }
  
 /* Buttons */
 .btn {
