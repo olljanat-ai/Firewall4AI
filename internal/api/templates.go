@@ -8,11 +8,18 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
 )
 
+// TemplateApplication records where a template has been applied.
+type TemplateApplication struct {
+	SourceIP string `json:"source_ip,omitempty"`
+	SkillID  string `json:"skill_id,omitempty"`
+}
+
 // ApprovalTemplate is a named set of approval rules that can be applied in bulk.
 type ApprovalTemplate struct {
-	ID    string               `json:"id"`
-	Name  string               `json:"name"`
-	Rules []ApprovalTemplateRule `json:"rules"`
+	ID        string                `json:"id"`
+	Name      string                `json:"name"`
+	Rules     []ApprovalTemplateRule `json:"rules"`
+	AppliedTo []TemplateApplication  `json:"applied_to,omitempty"`
 }
 
 // ApprovalTemplateRule is a single rule within a template.
@@ -67,6 +74,23 @@ func (ts *templateStore) update(t ApprovalTemplate) bool {
 		}
 	}
 	return false
+}
+
+func (ts *templateStore) addApplication(id string, app TemplateApplication) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	for i := range ts.templates {
+		if ts.templates[i].ID == id {
+			// Avoid duplicate entries.
+			for _, existing := range ts.templates[i].AppliedTo {
+				if existing.SourceIP == app.SourceIP && existing.SkillID == app.SkillID {
+					return
+				}
+			}
+			ts.templates[i].AppliedTo = append(ts.templates[i].AppliedTo, app)
+			return
+		}
+	}
 }
 
 func (ts *templateStore) delete(id string) bool {
@@ -182,6 +206,11 @@ func (h *Handler) applyTemplate(w http.ResponseWriter, r *http.Request) {
 		}
 		applied++
 	}
+
+	h.templates.addApplication(req.ID, TemplateApplication{
+		SourceIP: req.SourceIP,
+		SkillID:  req.SkillID,
+	})
 
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]interface{}{

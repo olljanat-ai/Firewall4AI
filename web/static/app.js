@@ -2954,9 +2954,19 @@ let templateRules = [];
 async function loadTemplates() {
   try {
     currentTemplates = await api('GET', '/api/templates');
+    // Load agents and skills for resolving IPs and skill IDs in the Applied To column.
+    if (!currentAgents || currentAgents.length === 0) {
+      try { currentAgents = await api('GET', '/api/agents') || []; } catch (e) { currentAgents = []; }
+    }
+    if (!currentSkills || currentSkills.length === 0) {
+      try {
+        currentSkills = await api('GET', '/api/skills') || [];
+        currentSkills.sort((a, b) => a.name.localeCompare(b.name));
+      } catch (e) { currentSkills = []; }
+    }
     const tbody = document.getElementById('templates-tbody');
     if (!currentTemplates || currentTemplates.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No templates configured. Create one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No templates configured. Create one to get started.</td></tr>';
       return;
     }
     const typeLabels = { url: 'URL', image: 'Image', package: 'Package', library: 'Library' };
@@ -2964,9 +2974,11 @@ async function loadTemplates() {
       const rulesSummary = (t.rules || []).map(r =>
         `<span class="badge-status ${r.status === 'approved' ? 'approved' : 'denied'}" style="font-size:10px">${esc(typeLabels[r.type] || r.type)}: ${esc(r.host)}${r.path_prefix ? r.path_prefix : ''}</span>`
       ).join(' ');
+      const appliedTo = formatAppliedTo(t.applied_to);
       return `<tr>
         <td><strong>${esc(t.name)}</strong></td>
         <td>${rulesSummary || '<span class="muted">no rules</span>'}</td>
+        <td>${appliedTo}</td>
         <td>
           <button class="btn btn-success btn-sm" onclick="showApplyTemplate('${esc(t.id)}')">Apply</button>
           <button class="btn btn-outline btn-sm" onclick="editTemplate('${esc(t.id)}')">Edit</button>
@@ -2977,6 +2989,26 @@ async function loadTemplates() {
   } catch (e) {
     console.error('Templates load error:', e);
   }
+}
+
+function formatAppliedTo(appliedTo) {
+  if (!appliedTo || appliedTo.length === 0) return '<span class="muted">not applied</span>';
+  return appliedTo.map(a => {
+    if (!a.source_ip && !a.skill_id) {
+      return '<span class="badge-status approved" style="font-size:10px">Global</span>';
+    }
+    if (a.source_ip && !a.skill_id) {
+      const agent = (currentAgents || []).find(ag => ag.ip === a.source_ip);
+      const label = agent ? agent.hostname : a.source_ip;
+      return `<span class="badge-status pending" style="font-size:10px">VM: ${esc(label)}</span>`;
+    }
+    if (a.skill_id) {
+      const skill = (currentSkills || []).find(s => s.id === a.skill_id);
+      const label = skill ? skill.name : a.skill_id;
+      return `<span class="badge-status" style="font-size:10px;background:var(--bg-secondary)">Skill: ${esc(label)}</span>`;
+    }
+    return '';
+  }).join(' ');
 }
 
 function showCreateTemplate() {
