@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os/exec"
 	"sort"
@@ -1085,10 +1086,17 @@ func (h *Handler) systemUpgrade(w http.ResponseWriter, r *http.Request) {
 	if image == "" {
 		image = "ghcr.io/olljanat-ai/firewall4ai:latest"
 	}
+	log.Printf("System upgrade requested with image: %s", image)
 	// Run upgrade in background since it will reboot.
 	go func() {
-		exec.Command("mount", "-o", "remount,rw", "/.snapshots").Run()
-		exec.Command("elemental", "upgrade", "--reboot", "--system", "oci:"+image).Run()
+		log.Printf("Remounting /.snapshots as read-write for upgrade")
+		if out, err := exec.Command("mount", "-o", "remount,rw", "/.snapshots").CombinedOutput(); err != nil {
+			log.Printf("Warning: failed to remount /.snapshots: %v: %s", err, string(out))
+		}
+		log.Printf("Starting elemental upgrade with image: oci:%s", image)
+		if out, err := exec.Command("elemental", "upgrade", "--reboot", "--system", "oci:"+image).CombinedOutput(); err != nil {
+			log.Printf("Upgrade failed: %v: %s", err, string(out))
+		}
 	}()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "upgrade started"})
 }
