@@ -48,7 +48,7 @@ type Proxy struct {
 	Transport        http.RoundTripper
 	CA               *certgen.CA
 	ApprovalTimeout  time.Duration
-	LearningMode     bool // when true, allow all traffic by default (still logged)
+	LearningMode     bool                  // when true, allow all traffic by default (still logged)
 	OnActivity       func(sourceIP string) // called on each request with the source IP
 }
 
@@ -302,14 +302,15 @@ func captureRequestBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxFullLogBody+1))
+	maxBody := config.GetMaxFullLogBody()
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(maxBody)+1))
 	r.Body.Close()
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if err != nil {
 		return ""
 	}
-	if len(body) > maxFullLogBody {
-		return string(body[:maxFullLogBody]) + "... (truncated)"
+	if len(body) > maxBody {
+		return string(body[:maxBody]) + "... (truncated)"
 	}
 	return string(body)
 }
@@ -322,7 +323,8 @@ func captureResponseBody(resp *http.Response) string {
 	}
 	// Read the raw (possibly compressed) bytes first, then restore the body
 	// so that the caller can still forward it to the client.
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxFullLogBody+1))
+	maxBody := config.GetMaxFullLogBody()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBody)+1))
 	resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(raw))
 	if err != nil {
@@ -334,21 +336,21 @@ func captureResponseBody(resp *http.Response) string {
 	switch strings.ToLower(resp.Header.Get("Content-Encoding")) {
 	case "gzip":
 		if r, gerr := gzip.NewReader(bytes.NewReader(raw)); gerr == nil {
-			if plain, rerr := io.ReadAll(io.LimitReader(r, maxFullLogBody+1)); rerr == nil {
+			if plain, rerr := io.ReadAll(io.LimitReader(r, int64(maxBody)+1)); rerr == nil {
 				r.Close()
 				decoded = plain
 			}
 		}
 	case "deflate":
 		r := flate.NewReader(bytes.NewReader(raw))
-		if plain, rerr := io.ReadAll(io.LimitReader(r, maxFullLogBody+1)); rerr == nil {
+		if plain, rerr := io.ReadAll(io.LimitReader(r, int64(maxBody)+1)); rerr == nil {
 			r.Close()
 			decoded = plain
 		}
 	}
 
-	if len(decoded) > maxFullLogBody {
-		return string(decoded[:maxFullLogBody]) + "... (truncated)"
+	if len(decoded) > maxBody {
+		return string(decoded[:maxBody]) + "... (truncated)"
 	}
 	return string(decoded)
 }

@@ -39,6 +39,7 @@ type Config struct {
 	LearningMode       bool                `json:"learning_mode"`
 	DisabledLanguages  []string            `json:"-"` // runtime only, persisted in state.json
 	DisabledDistros    []string            `json:"-"` // runtime only, persisted in state.json
+	MaxFullLogBody     int                 `json:"-"` // runtime only, persisted in state.json
 }
 
 // SetLearningMode updates the learning mode setting at runtime.
@@ -72,6 +73,26 @@ func IsLanguageDisabled(langType string) bool {
 		}
 	}
 	return false
+}
+
+// DefaultMaxFullLogBody is the default maximum body size (in bytes) captured in full logging mode.
+const DefaultMaxFullLogBody = 256 * 1024 // 256 KB
+
+// SetMaxFullLogBody updates the maximum full log body size at runtime.
+func SetMaxFullLogBody(size int) {
+	mu.Lock()
+	defer mu.Unlock()
+	current.MaxFullLogBody = size
+}
+
+// GetMaxFullLogBody returns the current maximum full log body size.
+func GetMaxFullLogBody() int {
+	mu.RLock()
+	defer mu.RUnlock()
+	if current.MaxFullLogBody <= 0 {
+		return DefaultMaxFullLogBody
+	}
+	return current.MaxFullLogBody
 }
 
 // IsDistroDisabled returns true if the given OS distro type is disabled.

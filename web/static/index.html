@@ -420,6 +420,19 @@
           </div>
         </div>
         <div class="card">
+          <h3>Logging</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Max Full Log Body Size</div>
+              <div class="setting-desc">Maximum request/response body size (in bytes) captured in full logging mode. Default: 262144 (256 KB).</div>
+            </div>
+            <div class="setting-control">
+              <input type="number" id="max-full-log-body" placeholder="262144" style="width:140px" min="1" max="2147483647">
+              <button class="btn btn-primary btn-sm" onclick="saveMaxFullLogBody()">Save</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
           <h3>Programming Languages</h3>
           <div class="setting-row">
             <div class="setting-info">

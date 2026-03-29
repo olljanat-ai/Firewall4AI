@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os/exec"
 	"sort"
@@ -26,34 +27,34 @@ import (
 
 // Handler holds dependencies for API endpoints.
 type Handler struct {
-	Skills           *auth.SkillStore
-	Approvals        *approval.Manager
-	ImageApprovals   *approval.Manager // image-level approvals for container registry
-	PackageApprovals *approval.Manager // OS package approvals (e.g., Debian)
-	LibraryApprovals *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
-	Credentials      *credentials.Manager
-	Logger           *proxylog.Logger
-	SaveFunc               func() error    // called after state mutations to persist
-	SetLearningModeFunc    func(bool)      // called to update learning mode on the proxy
-	SetDisabledLanguagesFunc func([]string) // called to update disabled languages
-	SetDisabledDistrosFunc   func([]string) // called to update disabled distros
-	Version                string          // build version string
-	GetBackupData          func() ([]byte, error) // returns state.json contents for backup
-	RestoreBackupData      func([]byte) error     // restores state from backup data
+	Skills                   *auth.SkillStore
+	Approvals                *approval.Manager
+	ImageApprovals           *approval.Manager // image-level approvals for container registry
+	PackageApprovals         *approval.Manager // OS package approvals (e.g., Debian)
+	LibraryApprovals         *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
+	Credentials              *credentials.Manager
+	Logger                   *proxylog.Logger
+	SaveFunc                 func() error           // called after state mutations to persist
+	SetLearningModeFunc      func(bool)             // called to update learning mode on the proxy
+	SetDisabledLanguagesFunc func([]string)         // called to update disabled languages
+	SetDisabledDistrosFunc   func([]string)         // called to update disabled distros
+	Version                  string                 // build version string
+	GetBackupData            func() ([]byte, error) // returns state.json contents for backup
+	RestoreBackupData        func([]byte) error     // restores state from backup data
 
 	// Database management.
-	DatabaseManager   *database.Manager
+	DatabaseManager *database.Manager
 
 	// Image management.
-	ImageManager      *image.Manager
-	BuildImage        func(img *image.DiskImage, version int) // called to build an image version
+	ImageManager *image.Manager
+	BuildImage   func(img *image.DiskImage, version int) // called to build an image version
 
 	// Agent management.
-	AgentManager      *agent.Manager
-	OnAgentChange     func(a *agent.Agent) // called when agent is created/updated
-	OnAgentDelete     func(a *agent.Agent) // called when agent is deleted
-	GetLeaseIP        func(mac string) string   // returns DHCP lease IP for a MAC address
-	GetDHCPLeases     func() []DHCPLeaseInfo   // returns all current DHCP leases
+	AgentManager  *agent.Manager
+	OnAgentChange func(a *agent.Agent)    // called when agent is created/updated
+	OnAgentDelete func(a *agent.Agent)    // called when agent is deleted
+	GetLeaseIP    func(mac string) string // returns DHCP lease IP for a MAC address
+	GetDHCPLeases func() []DHCPLeaseInfo  // returns all current DHCP leases
 
 	catMu      sync.RWMutex
 	categories []string
@@ -61,9 +62,9 @@ type Handler struct {
 	templates templateStore
 
 	// Global VM settings.
-	vmSettingsMu     sync.RWMutex
-	keyboard         string   // keyboard layout, e.g. "us", "fi"
-	timezone         string   // timezone, e.g. "UTC", "Europe/Helsinki"
+	vmSettingsMu      sync.RWMutex
+	keyboard          string   // keyboard layout, e.g. "us", "fi"
+	timezone          string   // timezone, e.g. "UTC", "Europe/Helsinki"
 	sshAuthorizedKeys []string // SSH public keys for root login on all agent VMs
 }
 
@@ -149,6 +150,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/distros", h.setDisabledDistros)
 	mux.HandleFunc("GET /api/settings/vm-settings", h.getVMSettings)
 	mux.HandleFunc("POST /api/settings/vm-settings", h.setVMSettings)
+	mux.HandleFunc("GET /api/settings/max-full-log-body", h.getMaxFullLogBody)
+	mux.HandleFunc("POST /api/settings/max-full-log-body", h.setMaxFullLogBody)
 	mux.HandleFunc("GET /api/system/logs", h.systemLogs)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
@@ -246,14 +249,14 @@ func (h *Handler) getPendingCounts(w http.ResponseWriter, r *http.Request) {
 }
 
 type decisionRequest struct {
-	Host        string              `json:"host"`
-	SkillID     string              `json:"skill_id"`
-	SourceIP    string              `json:"source_ip"`
-	PathPrefix  string              `json:"path_prefix"`
-	Category    string              `json:"category"`
+	Host        string               `json:"host"`
+	SkillID     string               `json:"skill_id"`
+	SourceIP    string               `json:"source_ip"`
+	PathPrefix  string               `json:"path_prefix"`
+	Category    string               `json:"category"`
 	LoggingMode approval.LoggingMode `json:"logging_mode"`
-	Status      approval.Status     `json:"status"`
-	Note        string              `json:"note"`
+	Status      approval.Status      `json:"status"`
+	Note        string               `json:"note"`
 }
 
 func (h *Handler) decideApproval(w http.ResponseWriter, r *http.Request) {
@@ -1131,6 +1134,29 @@ func (h *Handler) setLearningMode(w http.ResponseWriter, r *http.Request) {
 	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]bool{"enabled": req.Enabled})
+}
+
+// --- Max Full Log Body ---
+
+func (h *Handler) getMaxFullLogBody(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]int{"max_full_log_body": config.GetMaxFullLogBody()})
+}
+
+func (h *Handler) setMaxFullLogBody(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MaxFullLogBody int `json:"max_full_log_body"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.MaxFullLogBody <= 0 || req.MaxFullLogBody > math.MaxInt32 {
+		http.Error(w, "max_full_log_body must be a positive integer not exceeding 2147483647", http.StatusBadRequest)
+		return
+	}
+	config.SetMaxFullLogBody(req.MaxFullLogBody)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]int{"max_full_log_body": req.MaxFullLogBody})
 }
 
 // --- Language/Distro Settings ---

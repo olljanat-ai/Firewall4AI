@@ -39,24 +39,25 @@ var Version = "dev"
 
 // storeData holds the persisted state.
 type storeData struct {
-	Skills            []auth.Skill             `json:"skills"`
-	Approvals         []approval.HostApproval  `json:"approvals"`
-	Creds             []credentials.Credential `json:"credentials"`
-	ImageApprovals    []approval.HostApproval  `json:"image_approvals"`
-	PackageApprovals  []approval.HostApproval  `json:"package_approvals"`
-	LibraryApprovals  []approval.HostApproval  `json:"library_approvals"`
-	Categories        []string                 `json:"categories"`
-	LearningMode      bool                     `json:"learning_mode"`
-	DisabledLanguages []string                 `json:"disabled_languages"`
-	DisabledDistros   []string                 `json:"disabled_distros"`
+	Skills            []auth.Skill              `json:"skills"`
+	Approvals         []approval.HostApproval   `json:"approvals"`
+	Creds             []credentials.Credential  `json:"credentials"`
+	ImageApprovals    []approval.HostApproval   `json:"image_approvals"`
+	PackageApprovals  []approval.HostApproval   `json:"package_approvals"`
+	LibraryApprovals  []approval.HostApproval   `json:"library_approvals"`
+	Categories        []string                  `json:"categories"`
+	LearningMode      bool                      `json:"learning_mode"`
+	DisabledLanguages []string                  `json:"disabled_languages"`
+	DisabledDistros   []string                  `json:"disabled_distros"`
+	MaxFullLogBody    int                       `json:"max_full_log_body"`
 	Databases         []database.DatabaseConfig `json:"databases"`
-	DiskImages        []image.DiskImage        `json:"disk_images"`
-	Agents            []agent.Agent            `json:"agents"`
-	DHCPLeases        []dhcp.Lease             `json:"dhcp_leases"`
-	Keyboard          string                   `json:"keyboard"`
-	Timezone          string                   `json:"timezone"`
-	SSHAuthorizedKeys []string                 `json:"ssh_authorized_keys"`
-	Templates         []api.ApprovalTemplate   `json:"templates"`
+	DiskImages        []image.DiskImage         `json:"disk_images"`
+	Agents            []agent.Agent             `json:"agents"`
+	DHCPLeases        []dhcp.Lease              `json:"dhcp_leases"`
+	Keyboard          string                    `json:"keyboard"`
+	Timezone          string                    `json:"timezone"`
+	SSHAuthorizedKeys []string                  `json:"ssh_authorized_keys"`
+	Templates         []api.ApprovalTemplate    `json:"templates"`
 }
 
 func main() {
@@ -153,6 +154,11 @@ func main() {
 	}
 	if len(state.DisabledDistros) > 0 {
 		config.SetDisabledDistros(state.DisabledDistros)
+	}
+
+	// Restore max full log body from persisted state.
+	if state.MaxFullLogBody > 0 {
+		config.SetMaxFullLogBody(state.MaxFullLogBody)
 	}
 
 	// Setup static DHCP leases and DNS entries for configured agents.
@@ -298,6 +304,7 @@ func main() {
 			d.LearningMode = cfg.LearningMode
 			d.DisabledLanguages = cfg.DisabledLanguages
 			d.DisabledDistros = cfg.DisabledDistros
+			d.MaxFullLogBody = cfg.MaxFullLogBody
 			d.DiskImages = imageMgr.ExportImages()
 			d.Agents = agentMgr.ExportAgents()
 			d.DHCPLeases = dhcpServer.ExportLeases()

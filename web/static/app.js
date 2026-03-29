@@ -2229,6 +2229,12 @@ async function loadSystem() {
   } catch (e) {
     console.error('Learning mode load error:', e);
   }
+  try {
+    const data = await api('GET', '/api/settings/max-full-log-body');
+    document.getElementById('max-full-log-body').value = data.max_full_log_body || 262144;
+  } catch (e) {
+    console.error('Max full log body load error:', e);
+  }
   loadLanguageSettings();
   loadDistroSettings();
 }
@@ -2347,6 +2353,21 @@ async function toggleLearningMode() {
   try {
     await api('POST', '/api/settings/learning-mode', { enabled: !isEnabled });
     loadSystem();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function saveMaxFullLogBody() {
+  const input = document.getElementById('max-full-log-body');
+  const value = parseInt(input.value, 10);
+  if (isNaN(value) || value <= 0 || value > 2147483647) {
+    alert('Value must be a positive integer not exceeding 2147483647.');
+    return;
+  }
+  try {
+    await api('POST', '/api/settings/max-full-log-body', { max_full_log_body: value });
+    alert('Max full log body size saved.');
   } catch (e) {
     alert('Error: ' + e.message);
   }
