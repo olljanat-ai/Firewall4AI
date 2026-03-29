@@ -266,6 +266,7 @@ func main() {
 		})
 
 		bl := image.NewBuildLogger()
+		imageMgr.SetActiveBuildLog(img.ID, version, bl)
 		keyboard, tz := apiHandler.GetVMSettings()
 		buildSettings := image.BuildSettings{Keyboard: keyboard, Timezone: tz}
 		if err := imageMgr.BuildImage(img, version, serverIP.String(), buildSettings, bl); err != nil {
@@ -274,6 +275,7 @@ func main() {
 		} else {
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusReady, "")
 		}
+		imageMgr.SetActiveBuildLog(img.ID, version, nil)
 		imageMgr.SetVersionBuildLog(img.ID, version, bl.String())
 
 		dataStore.Update(func(d *storeData) {

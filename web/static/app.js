@@ -2508,15 +2508,14 @@ async function loadDiskImages() {
         ? img.container_tools.map(t => esc(containerToolLabels[t] || t)).join(', ')
         : '<span class="muted">none</span>';
 
-      // Build versions display.
+      // Build versions display — each version badge is clickable to view build log.
       let versionsHTML = '';
       if (img.versions && img.versions.length > 0) {
         versionsHTML = img.versions.map(v => {
           const cls = imageVersionStatusClass(v.status);
           const sizeStr = v.size ? ' (' + formatBytes(v.size) + ')' : '';
           const label = 'v' + v.version + ': ' + v.status + (v.status_msg ? ' - ' + v.status_msg : '') + sizeStr;
-          const logBtn = v.build_log ? ` <button class="btn btn-outline btn-xs" onclick="showBuildLog('${esc(img.id)}',${v.version})" title="View build log">Log</button>` : '';
-          return `<span class="badge-status ${cls}">${esc(label)}</span>${logBtn}`;
+          return `<span class="badge-status ${cls}" style="cursor:pointer" onclick="showBuildLog('${esc(img.id)}',${v.version},'${v.status}')" title="Click to view build log">${esc(label)}</span>`;
         }).join(' ');
       } else {
         versionsHTML = '<span class="muted">no builds</span>';
@@ -2670,18 +2669,60 @@ async function buildDiskImage(id) {
   }
 }
 
-async function showBuildLog(imageId, version) {
+let buildLogRefreshTimer = null;
+let buildLogImageId = null;
+let buildLogVersion = null;
+
+async function showBuildLog(imageId, version, status) {
+  buildLogImageId = imageId;
+  buildLogVersion = version;
+  document.getElementById('build-log-content').textContent = 'Loading...';
+  document.getElementById('modal-build-log').classList.add('active');
+
+  await refreshBuildLog();
+
+  // Auto-refresh while building.
+  stopBuildLogRefresh();
+  if (status === 'building' || status === 'pending') {
+    buildLogRefreshTimer = setInterval(refreshBuildLog, 2000);
+  }
+}
+
+async function refreshBuildLog() {
   try {
-    const result = await api('GET', `/api/disk-images/build-log?id=${encodeURIComponent(imageId)}&version=${version}`);
-    document.getElementById('build-log-content').textContent = result.log || '(no log captured)';
-    document.getElementById('modal-build-log').classList.add('active');
+    const result = await api('GET', `/api/disk-images/build-log?id=${encodeURIComponent(buildLogImageId)}&version=${buildLogVersion}`);
+    const el = document.getElementById('build-log-content');
+    el.textContent = result.log || '(no log output yet — build may be starting)';
+    // Auto-scroll to bottom.
+    el.scrollTop = el.scrollHeight;
+
+    // Check if build finished — if so, stop refreshing and reload disk images.
+    const images = await api('GET', '/api/disk-images');
+    const img = images.find(i => i.id === buildLogImageId);
+    if (img) {
+      const ver = (img.versions || []).find(v => v.version === buildLogVersion);
+      if (ver && ver.status !== 'building' && ver.status !== 'pending') {
+        stopBuildLogRefresh();
+        loadDiskImages();
+      }
+    }
   } catch (e) {
-    alert('Error loading build log: ' + e.message);
+    console.error('Build log refresh error:', e);
+  }
+}
+
+function stopBuildLogRefresh() {
+  if (buildLogRefreshTimer) {
+    clearInterval(buildLogRefreshTimer);
+    buildLogRefreshTimer = null;
   }
 }
 
 function hideBuildLog() {
+  stopBuildLogRefresh();
   document.getElementById('modal-build-log').classList.remove('active');
+  buildLogImageId = null;
+  buildLogVersion = null;
 }
 
 // --- Agent VMs ---

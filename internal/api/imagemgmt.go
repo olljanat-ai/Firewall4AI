@@ -250,20 +250,14 @@ func (h *Handler) getDiskImageBuildLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	img, ok := h.ImageManager.Get(id)
-	if !ok {
+	if _, ok := h.ImageManager.Get(id); !ok {
 		http.Error(w, fmt.Sprintf("image %q not found", id), http.StatusNotFound)
 		return
 	}
 
-	for _, v := range img.Versions {
-		if v.Version == version {
-			writeJSON(w, http.StatusOK, map[string]string{
-				"log": v.BuildLog,
-			})
-			return
-		}
-	}
-
-	http.Error(w, "version not found", http.StatusNotFound)
+	// GetBuildLog checks active (in-progress) loggers first, then stored logs.
+	logContent := h.ImageManager.GetBuildLog(id, version)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"log": logContent,
+	})
 }
