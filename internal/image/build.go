@@ -196,10 +196,6 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 	interfaces := "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/network/interfaces"), []byte(interfaces), 0o644)
 
-	// Proxy configuration.
-	proxyConf := fmt.Sprintf("export http_proxy=http://%s:8080\nexport https_proxy=http://%s:8080\n", serverIP, serverIP)
-	os.WriteFile(filepath.Join(rootfsDir, "etc/profile.d/proxy.sh"), []byte(proxyConf), 0o644)
-
 	// Install custom CA certificate into the rootfs.
 	buildLog("Image build [%s v%s]: installing CA certificate", img.Name, img.OSVersion)
 	caDir := filepath.Join(rootfsDir, "usr/local/share/ca-certificates")
@@ -401,10 +397,6 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 	// Network: auto eth0 via DHCP.
 	interfaces := "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/network/interfaces"), []byte(interfaces), 0o644)
-
-	// Proxy configuration.
-	proxyConf := fmt.Sprintf("export http_proxy=http://%s:8080\nexport https_proxy=http://%s:8080\n", serverIP, serverIP)
-	os.WriteFile(filepath.Join(rootfsDir, "etc/profile.d/proxy.sh"), []byte(proxyConf), 0o644)
 
 	// Root password: set to 'root'.
 	runChroot(rootfsDir, "sh", "-c", "echo 'root:root' | chpasswd")
