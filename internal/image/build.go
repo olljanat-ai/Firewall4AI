@@ -162,7 +162,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 	hypervModules := "kernel/drivers/hv\nkernel/drivers/net/ethernet/dec/tulip\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/features.d/hyperv.modules"), []byte(hypervModules), 0o644)
 
-	mkinitfsConf := "features=\"ata base cdrom ext4 hyperv keymap kms mmc network nvme scsi usb virtio\"\n"
+	mkinitfsConf := "features=\"ata base cdrom ext2 hyperv keymap kms mmc network nvme scsi usb virtio\"\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/mkinitfs.conf"), []byte(mkinitfsConf), 0o644)
 
 	// Find the installed kernel version from /lib/modules/<version>/.
@@ -179,7 +179,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 	buildLog("Image build [%s v%s]: configuring system", img.Name, img.OSVersion)
 
 	// fstab
-	fstab := "/dev/sda1\t/\text4\tdefaults,noatime\t0\t1\n"
+	fstab := "/dev/sda1\t/\text2\tdefaults,noatime\t0\t1\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/fstab"), []byte(fstab), 0o644)
 
 	// Auto-login on tty1.
@@ -228,7 +228,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 LABEL alpine
   LINUX /boot/%s
   INITRD /boot/%s
-  APPEND root=/dev/sda1 modules=ext4 quiet
+  APPEND root=/dev/sda1 modules=ext2 quiet
 `, kernelFile, initrdFile)
 	os.WriteFile(filepath.Join(rootfsDir, "boot/extlinux.conf"), []byte(extlinuxConf), 0o644)
 
@@ -385,7 +385,7 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 	buildLog("Image build [%s v%s]: configuring system", img.Name, img.OSVersion)
 
 	// fstab.
-	fstab := "/dev/sda1\t/\text4\tdefaults,noatime\t0\t1\n"
+	fstab := "/dev/sda1\t/\text2\tdefaults,noatime\t0\t1\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/fstab"), []byte(fstab), 0o644)
 
 	// Auto-login on tty1 via systemd.
@@ -427,13 +427,13 @@ LABEL linux
 	os.WriteFile(filepath.Join(rootfsDir, "boot/extlinux.conf"), []byte(extlinuxConf), 0o644)
 
 	// Install initramfs-tools hook and premount script for PXE deploy.
-	// The hook copies deploy tools (wget, fdisk, mkfs.ext4, tar) into the initrd.
+	// The hook copies deploy tools (wget, fdisk, mkfs.ext2, tar) into the initrd.
 	// The premount script runs during PXE boot to partition, format, and extract rootfs.
 	// On normal disk boots, the premount script detects no fw4ai params and exits.
 	buildLog("Image build [%s v%s]: adding deploy support to initrd", img.Name, img.OSVersion)
 	os.MkdirAll(filepath.Join(rootfsDir, "etc/initramfs-tools/hooks"), 0o755)
 	os.MkdirAll(filepath.Join(rootfsDir, "etc/initramfs-tools/scripts/init-premount"), 0o755)
-	os.WriteFile(filepath.Join(rootfsDir, "etc/initramfs-tools/modules"), []byte("ext4"), 0o644)
+	os.WriteFile(filepath.Join(rootfsDir, "etc/initramfs-tools/modules"), []byte("ext2"), 0o644)
 
 	deployHook := `#!/bin/sh
 PREREQ=""
@@ -442,7 +442,7 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 . /usr/share/initramfs-tools/hook-functions
 copy_exec /usr/bin/wget
 copy_exec /sbin/fdisk
-copy_exec /sbin/mkfs.ext4
+copy_exec /sbin/mkfs.ext2
 copy_exec /sbin/fsck.vfat
 copy_exec /sbin/mke2fs
 copy_exec /bin/tar
@@ -536,7 +536,7 @@ fi
 
 # Format partition.
 echo "-> Formatting ${PART}..."
-mkfs.ext4 -F ${PART}
+mkfs.ext2 -F ${PART}
 
 # Mount and extract rootfs.
 echo "-> Extracting rootfs image..."

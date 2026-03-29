@@ -173,7 +173,7 @@ fi
 
 # Format partition.
 echo "-> Formatting ${PART}..."
-mkfs.ext4 -F ${PART}
+mkfs.ext2 -F ${PART}
 
 # Mount and extract rootfs.
 echo "-> Extracting rootfs image..."
@@ -239,7 +239,7 @@ sync
 
 KERNEL=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -n1)
 INITRD=$(ls /mnt/target/boot/initramfs-* 2>/dev/null | head -n1)
-APPEND="root=${PART} modules=ext4 quiet"
+APPEND="root=${PART} modules=ext2 quiet"
 
 if [ -n "$KERNEL" ] && [ -n "$INITRD" ]; then
     echo "-> Loading installed kernel via kexec..."
