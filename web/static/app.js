@@ -2974,7 +2974,7 @@ async function loadTemplates() {
       const rulesSummary = (t.rules || []).map(r =>
         `<span class="badge-status ${r.status === 'approved' ? 'approved' : 'denied'}" style="font-size:10px">${esc(typeLabels[r.type] || r.type)}: ${esc(r.host)}${r.path_prefix ? r.path_prefix : ''}</span>`
       ).join(' ');
-      const appliedTo = formatAppliedTo(t.applied_to);
+      const appliedTo = formatAppliedTo(t.applied_to, t.id);
       return `<tr>
         <td><strong>${esc(t.name)}</strong></td>
         <td>${rulesSummary || '<span class="muted">no rules</span>'}</td>
@@ -2991,24 +2991,46 @@ async function loadTemplates() {
   }
 }
 
-function formatAppliedTo(appliedTo) {
+function formatAppliedTo(appliedTo, templateID) {
   if (!appliedTo || appliedTo.length === 0) return '<span class="muted">not applied</span>';
+  const xBtn = (ip, skill) =>
+    `<span onclick="unapplyTemplate('${esc(templateID)}','${esc(ip || '')}','${esc(skill || '')}')" style="cursor:pointer;margin-left:4px;font-weight:bold" title="Remove">&times;</span>`;
   return appliedTo.map(a => {
     if (!a.source_ip && !a.skill_id) {
-      return '<span class="badge-status approved" style="font-size:10px">Global</span>';
+      return `<span class="badge-status approved" style="font-size:10px">Global${xBtn('','')}</span>`;
     }
     if (a.source_ip && !a.skill_id) {
       const agent = (currentAgents || []).find(ag => ag.ip === a.source_ip);
       const label = agent ? agent.hostname : a.source_ip;
-      return `<span class="badge-status pending" style="font-size:10px">VM: ${esc(label)}</span>`;
+      return `<span class="badge-status pending" style="font-size:10px">VM: ${esc(label)}${xBtn(a.source_ip,'')}</span>`;
     }
     if (a.skill_id) {
       const skill = (currentSkills || []).find(s => s.id === a.skill_id);
       const label = skill ? skill.name : a.skill_id;
-      return `<span class="badge-status" style="font-size:10px;background:var(--bg-secondary)">Skill: ${esc(label)}</span>`;
+      return `<span class="badge-status" style="font-size:10px;background:var(--bg-secondary)">Skill: ${esc(label)}${xBtn('',a.skill_id)}</span>`;
     }
     return '';
   }).join(' ');
+}
+
+async function unapplyTemplate(templateID, sourceIP, skillID) {
+  const tmpl = currentTemplates.find(t => t.id === templateID);
+  const name = tmpl ? tmpl.name : templateID;
+  let target = 'Global';
+  if (sourceIP) {
+    const agent = (currentAgents || []).find(a => a.ip === sourceIP);
+    target = 'VM: ' + (agent ? agent.hostname : sourceIP);
+  } else if (skillID) {
+    const skill = (currentSkills || []).find(s => s.id === skillID);
+    target = 'Skill: ' + (skill ? skill.name : skillID);
+  }
+  if (!confirm('Remove "' + name + '" from ' + target + '? This will also delete the associated approval rules.')) return;
+  try {
+    await api('POST', '/api/templates/unapply', { id: templateID, source_ip: sourceIP, skill_id: skillID });
+    loadTemplates();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
 }
 
 function showCreateTemplate() {

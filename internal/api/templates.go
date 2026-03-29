@@ -93,6 +93,23 @@ func (ts *templateStore) addApplication(id string, app TemplateApplication) {
 	}
 }
 
+func (ts *templateStore) removeApplication(id string, app TemplateApplication) bool {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	for i := range ts.templates {
+		if ts.templates[i].ID == id {
+			for j, existing := range ts.templates[i].AppliedTo {
+				if existing.SourceIP == app.SourceIP && existing.SkillID == app.SkillID {
+					ts.templates[i].AppliedTo = append(ts.templates[i].AppliedTo[:j], ts.templates[i].AppliedTo[j+1:]...)
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return false
+}
+
 func (ts *templateStore) delete(id string) bool {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
@@ -122,6 +139,7 @@ func (h *Handler) RegisterTemplateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/templates", h.updateTemplate)
 	mux.HandleFunc("DELETE /api/templates", h.deleteTemplate)
 	mux.HandleFunc("POST /api/templates/apply", h.applyTemplate)
+	mux.HandleFunc("POST /api/templates/unapply", h.unapplyTemplate)
 }
 
 func (h *Handler) listTemplates(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +234,46 @@ func (h *Handler) applyTemplate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"result":  "ok",
 		"applied": applied,
+	})
+}
+
+func (h *Handler) unapplyTemplate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID       string `json:"id"`
+		SourceIP string `json:"source_ip"`
+		SkillID  string `json:"skill_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	tmpl, ok := h.templates.get(req.ID)
+	if !ok {
+		http.Error(w, "template not found", http.StatusNotFound)
+		return
+	}
+
+	// Delete the approval rules that were created by this application.
+	removed := 0
+	for _, rule := range tmpl.Rules {
+		mgr := h.managerForType(rule.Type)
+		if mgr == nil {
+			continue
+		}
+		mgr.Delete(rule.Host, req.SkillID, req.SourceIP, rule.PathPrefix)
+		removed++
+	}
+
+	h.templates.removeApplication(req.ID, TemplateApplication{
+		SourceIP: req.SourceIP,
+		SkillID:  req.SkillID,
+	})
+
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"result":  "ok",
+		"removed": removed,
 	})
 }
 
