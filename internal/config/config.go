@@ -23,6 +23,12 @@ type PackageRepoConfig struct {
 	Hosts []string `json:"hosts"` // all hostnames associated with this repo
 }
 
+// GitConfig holds global Git client configuration applied to all disk images.
+type GitConfig struct {
+	Username string `json:"username"` // git user.name
+	Email    string `json:"email"`    // git user.email
+}
+
 // Config holds the main application configuration.
 type Config struct {
 	ListenAddr         string              `json:"listen_addr"`
@@ -40,6 +46,7 @@ type Config struct {
 	DisabledLanguages  []string            `json:"-"` // runtime only, persisted in state.json
 	DisabledDistros    []string            `json:"-"` // runtime only, persisted in state.json
 	MaxFullLogBody     int                 `json:"-"` // runtime only, persisted in state.json
+	Git                GitConfig           `json:"-"` // runtime only, persisted in state.json
 }
 
 // SetLearningMode updates the learning mode setting at runtime.
@@ -93,6 +100,20 @@ func GetMaxFullLogBody() int {
 		return DefaultMaxFullLogBody
 	}
 	return current.MaxFullLogBody
+}
+
+// SetGitConfig updates the global Git client configuration at runtime.
+func SetGitConfig(git GitConfig) {
+	mu.Lock()
+	defer mu.Unlock()
+	current.Git = git
+}
+
+// GetGitConfig returns the current Git client configuration.
+func GetGitConfig() GitConfig {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.Git
 }
 
 // IsDistroDisabled returns true if the given OS distro type is disabled.

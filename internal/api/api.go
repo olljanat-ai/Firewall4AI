@@ -152,6 +152,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/vm-settings", h.setVMSettings)
 	mux.HandleFunc("GET /api/settings/max-full-log-body", h.getMaxFullLogBody)
 	mux.HandleFunc("POST /api/settings/max-full-log-body", h.setMaxFullLogBody)
+	mux.HandleFunc("GET /api/settings/git-config", h.getGitConfig)
+	mux.HandleFunc("POST /api/settings/git-config", h.setGitConfig)
 	mux.HandleFunc("GET /api/system/logs", h.systemLogs)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
@@ -1273,6 +1275,34 @@ func (h *Handler) setVMSettings(w http.ResponseWriter, r *http.Request) {
 		"keyboard":            req.Keyboard,
 		"timezone":            req.Timezone,
 		"ssh_authorized_keys": req.SSHAuthorizedKeys,
+	})
+}
+
+func (h *Handler) getGitConfig(w http.ResponseWriter, r *http.Request) {
+	git := config.GetGitConfig()
+	writeJSON(w, http.StatusOK, map[string]string{
+		"username": git.Username,
+		"email":    git.Email,
+	})
+}
+
+func (h *Handler) setGitConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	config.SetGitConfig(config.GitConfig{
+		Username: req.Username,
+		Email:    req.Email,
+	})
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{
+		"username": req.Username,
+		"email":    req.Email,
 	})
 }
 
