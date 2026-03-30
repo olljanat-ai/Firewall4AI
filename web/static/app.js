@@ -2848,7 +2848,7 @@ async function loadAgentVMs() {
       let hostnameDisplay;
       const sshTarget = a.ip || a.hostname;
       if (sshTarget) {
-        const vscodeURI = 'vscode://vscode-remote/ssh-remote+root@' + encodeURIComponent(sshTarget) + '/root';
+        const vscodeURI = 'vscode://vscode-remote/ssh-remote+root@' + encodeURIComponent(sshTarget) + '/root?windowId=_blank';
         hostnameDisplay = `<a href="${vscodeURI}" title="Open in VS Code via Remote SSH"><strong>${esc(a.hostname)}</strong></a>`;
       } else {
         hostnameDisplay = `<strong>${esc(a.hostname)}</strong>`;
