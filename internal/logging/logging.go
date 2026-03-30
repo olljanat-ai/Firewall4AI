@@ -23,6 +23,7 @@ const (
 // when an approval rule has logging mode set to "full".
 type FullDetail struct {
 	RequestHeaders  map[string][]string `json:"request_headers,omitempty"`
+	InjectedHeaders map[string][]string `json:"injected_headers,omitempty"`
 	RequestBody     string              `json:"request_body,omitempty"`
 	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
 	ResponseBody    string              `json:"response_body,omitempty"`

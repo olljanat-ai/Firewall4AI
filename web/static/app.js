@@ -2056,6 +2056,7 @@ async function showLogDetail(logId) {
   try {
     const detail = await api('GET', '/api/logs/detail?id=' + logId);
     const content = document.getElementById('log-detail-content');
+    const hasInjected = detail.injected_headers && Object.keys(detail.injected_headers).length > 0;
     content.innerHTML = `
       <div style="margin-bottom:12px">
         <span class="method-badge">${esc(detail.method)}</span>
@@ -2064,10 +2065,11 @@ async function showLogDetail(logId) {
       </div>
       <h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Request Headers</h4>
       <pre class="detail-pre">${formatHeaders(detail.request_headers)}</pre>
+      ${hasInjected ? `<h4 style="margin:12px 0 6px;font-size:13px;color:var(--accent);text-transform:uppercase">Injected Headers (by credentials)</h4><pre class="detail-pre" style="border-color:var(--accent)">${formatHeaders(detail.injected_headers)}</pre>` : ''}
       ${detail.request_body ? `<h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Request Body</h4><pre class="detail-pre">${esc(detail.request_body)}</pre>` : ''}
       <h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Response ${detail.response_status ? detail.response_status : ''} Headers</h4>
       <pre class="detail-pre">${formatHeaders(detail.response_headers)}</pre>
-      ${detail.response_body ? `<h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Response Body</h4><pre class="detail-pre">${esc(detail.response_body)}</pre>` : ''}
+      ${detail.response_body ? renderResponseBody(detail) : ''}
     `;
     document.getElementById('modal-log-detail').classList.add('active');
   } catch (e) {
@@ -2084,6 +2086,69 @@ function formatHeaders(headers) {
   return Object.entries(headers).map(([k, vals]) =>
     vals.map(v => esc(k) + ': ' + esc(v)).join('\n')
   ).join('\n');
+}
+
+function getResponseContentType(detail) {
+  if (!detail.response_headers) return '';
+  for (const [k, vals] of Object.entries(detail.response_headers)) {
+    if (k.toLowerCase() === 'content-type' && vals.length > 0) return vals[0].toLowerCase();
+  }
+  return '';
+}
+
+function renderResponseBody(detail) {
+  const ct = getResponseContentType(detail);
+  const heading = '<h4 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);text-transform:uppercase">Response Body</h4>';
+
+  // JSON: pretty-print with syntax highlighting
+  if (ct.includes('application/json') || ct.includes('+json')) {
+    let formatted;
+    try {
+      const parsed = JSON.parse(detail.response_body);
+      formatted = JSON.stringify(parsed, null, 2);
+    } catch (e) {
+      formatted = detail.response_body;
+    }
+    return heading + `<pre class="detail-pre">${syntaxHighlightJSON(esc(formatted))}</pre>`;
+  }
+
+  // HTML: show rendered preview in sandboxed iframe + raw source toggle
+  if (ct.includes('text/html')) {
+    const id = 'resp-body-' + detail.id;
+    return heading +
+      `<div style="margin-bottom:4px"><button class="btn btn-outline btn-sm" onclick="toggleHTMLView('${id}')">Toggle raw / rendered</button></div>` +
+      `<pre class="detail-pre" id="${id}-raw">${esc(detail.response_body)}</pre>` +
+      `<iframe id="${id}-rendered" sandbox="" srcdoc="${esc(detail.response_body).replace(/"/g, '&quot;')}" style="display:none;width:100%;height:300px;border:1px solid var(--border);border-radius:6px;background:#fff"></iframe>`;
+  }
+
+  // Default: plain text
+  return heading + `<pre class="detail-pre">${esc(detail.response_body)}</pre>`;
+}
+
+function toggleHTMLView(id) {
+  const raw = document.getElementById(id + '-raw');
+  const rendered = document.getElementById(id + '-rendered');
+  if (raw.style.display === 'none') {
+    raw.style.display = '';
+    rendered.style.display = 'none';
+  } else {
+    raw.style.display = 'none';
+    rendered.style.display = '';
+  }
+}
+
+function syntaxHighlightJSON(escaped) {
+  // Operates on already HTML-escaped string. esc() preserves literal " characters.
+  // First mark keys (strings followed by colon), then remaining strings as values.
+  let result = escaped.replace(/("(?:[^"\\]|\\.)*")\s*:/g, function(m, key) {
+    return '<span style="color:#905">' + key + '</span>:';
+  });
+  result = result.replace(/"(?:[^"\\]|\\.)*"/g, function(m) {
+    return '<span style="color:#070">' + m + '</span>';
+  });
+  result = result.replace(/\b(true|false|null)\b/g, '<span style="color:#00c">$1</span>');
+  result = result.replace(/\b(-?\d+\.?\d*(?:[eE][+-]?\d+)?)\b/g, '<span style="color:#a0a">$1</span>');
+  return result;
 }
 
 // --- Polling ---

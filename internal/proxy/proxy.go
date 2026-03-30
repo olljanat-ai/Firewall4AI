@@ -355,6 +355,31 @@ func captureResponseBody(resp *http.Response) string {
 	return string(decoded)
 }
 
+// captureInjectedHeaders compares request headers before and after credential
+// injection and returns only the headers that were added or changed.
+func captureInjectedHeaders(before map[string][]string, after http.Header) map[string][]string {
+	diff := make(map[string][]string)
+	for key, newVals := range after {
+		oldVals, existed := before[key]
+		if !existed {
+			diff[key] = newVals
+		} else if len(newVals) != len(oldVals) {
+			diff[key] = newVals
+		} else {
+			for i, v := range newVals {
+				if v != oldVals[i] {
+					diff[key] = newVals
+					break
+				}
+			}
+		}
+	}
+	if len(diff) == 0 {
+		return nil
+	}
+	return diff
+}
+
 // getLoggingMode returns the logging mode for the request's host/path.
 func (p *Proxy) getLoggingMode(host, path string, skill *auth.Skill, sourceIP string) approval.LoggingMode {
 	sid := getSkillID(skill)
@@ -423,8 +448,11 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Inject credentials.
+	// Inject credentials and capture injected headers for full logging.
 	p.Credentials.InjectForRequest(r, sourceIP)
+	if fullDetail != nil {
+		fullDetail.InjectedHeaders = captureInjectedHeaders(fullDetail.RequestHeaders, r.Header)
+	}
 
 	// Forward the request.
 	r.RequestURI = ""
@@ -685,6 +713,9 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 
 	// Inject credentials for HTTPS requests.
 	p.Credentials.InjectForRequest(req, sourceIP)
+	if fullDetail != nil {
+		fullDetail.InjectedHeaders = captureInjectedHeaders(fullDetail.RequestHeaders, req.Header)
+	}
 
 	resp, err := p.Transport.RoundTrip(req)
 	if err != nil {
@@ -920,6 +951,9 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 
 	// Inject credentials.
 	p.Credentials.InjectForRequest(req, sourceIP)
+	if fullDetail != nil {
+		fullDetail.InjectedHeaders = captureInjectedHeaders(fullDetail.RequestHeaders, req.Header)
+	}
 
 	resp, err := p.Transport.RoundTrip(req)
 	if err != nil {

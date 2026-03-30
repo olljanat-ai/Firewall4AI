@@ -841,6 +841,7 @@ func (h *Handler) getLogDetail(w http.ResponseWriter, r *http.Request) {
 		Status          string              `json:"status"`
 		Detail          string              `json:"detail"`
 		RequestHeaders  map[string][]string `json:"request_headers"`
+		InjectedHeaders map[string][]string `json:"injected_headers"`
 		RequestBody     string              `json:"request_body"`
 		ResponseHeaders map[string][]string `json:"response_headers"`
 		ResponseBody    string              `json:"response_body"`
@@ -854,6 +855,7 @@ func (h *Handler) getLogDetail(w http.ResponseWriter, r *http.Request) {
 		Status:          entry.Status,
 		Detail:          entry.Detail,
 		RequestHeaders:  entry.FullDetail.RequestHeaders,
+		InjectedHeaders: entry.FullDetail.InjectedHeaders,
 		RequestBody:     entry.FullDetail.RequestBody,
 		ResponseHeaders: entry.FullDetail.ResponseHeaders,
 		ResponseBody:    entry.FullDetail.ResponseBody,
