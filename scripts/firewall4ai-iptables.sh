@@ -51,6 +51,9 @@ iptables -A INPUT -i eth0 -j ACCEPT
 # INPUT rules for the internal interface (eth1)
 # ============================================================
 
+# Reject Azure metadata service
+iptables -A INPUT -i $INTERNAL_IF -p tcp --dport 80 -d 169.254.169.254 -j REJECT
+
 # Allow DHCP (integrated DHCP server)
 iptables -A INPUT -i $INTERNAL_IF -p udp --dport 67 -j ACCEPT
 
