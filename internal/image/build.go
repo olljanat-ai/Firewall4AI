@@ -41,8 +41,10 @@ func (bl *BuildLogger) String() string {
 
 // BuildSettings holds global settings applied during image builds.
 type BuildSettings struct {
-	Keyboard string // keyboard layout, e.g. "us", "fi"
-	Timezone string // timezone, e.g. "UTC", "Europe/Helsinki"
+	Keyboard    string // keyboard layout, e.g. "us", "fi"
+	Timezone    string // timezone, e.g. "UTC", "Europe/Helsinki"
+	GitUsername string // git user.name
+	GitEmail    string // git user.email
 }
 
 // BuildImage builds a new version of a disk image by creating a rootfs tarball.
@@ -136,7 +138,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 	// Install base packages + kernel + bootloader.
 	buildLog("Image build [%s v%s]: installing packages", img.Name, img.OSVersion)
 
-	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates", "openssh"}
+	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates", "openssh", "git"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChroot(rootfsDir, "apk", append([]string{"update"})...); err != nil {
@@ -249,6 +251,9 @@ LABEL alpine
 		os.WriteFile(filepath.Join(rootfsDir, "etc/timezone"), []byte(settings.Timezone+"\n"), 0o644)
 	}
 
+	// Configure git client.
+	configureGit(rootfsDir, serverIP, settings)
+
 	// Install container tools.
 	if err := installContainerTools(img, rootfsDir, false, nil); err != nil {
 		return fmt.Errorf("install container tools: %w", err)
@@ -360,7 +365,7 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 		kernelPkg = "linux-image-generic"
 	}
 
-	basePkgs := []string{kernelPkg, "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs", "openssh-server", "locales"}
+	basePkgs := []string{kernelPkg, "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs", "openssh-server", "locales", "git"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChrootEnv(rootfsDir, debEnv, "apt-get", "update"); err != nil {
@@ -645,6 +650,9 @@ echo "=== Firewall4AI Deploy done, continuing boot ==="
 		runChrootEnv(rootfsDir, debEnv, "dpkg-reconfigure", "-f", "noninteractive", "tzdata")
 	}
 
+	// Configure git client.
+	configureGit(rootfsDir, serverIP, settings)
+
 	// Install container tools.
 	if err := installContainerTools(img, rootfsDir, true, debEnv); err != nil {
 		return fmt.Errorf("install container tools: %w", err)
@@ -813,6 +821,33 @@ func downloadFile(url, dest string) error {
 	f.Close()
 
 	return os.Rename(tmpPath, dest)
+}
+
+// configureGit sets up git configuration in the rootfs.
+// It configures user.name, user.email (if provided in settings), and sets up
+// a credential helper that uses the firewall proxy for HTTPS authentication.
+func configureGit(rootfsDir, serverIP string, settings BuildSettings) {
+	var gitconfig strings.Builder
+
+	if settings.GitUsername != "" {
+		buildLog("Configuring git user.name: %s", settings.GitUsername)
+		gitconfig.WriteString(fmt.Sprintf("[user]\n\tname = %s\n", settings.GitUsername))
+		if settings.GitEmail != "" {
+			gitconfig.WriteString(fmt.Sprintf("\temail = %s\n", settings.GitEmail))
+		}
+	} else if settings.GitEmail != "" {
+		buildLog("Configuring git user.email: %s", settings.GitEmail)
+		gitconfig.WriteString(fmt.Sprintf("[user]\n\temail = %s\n", settings.GitEmail))
+	}
+
+	// Configure git to trust the firewall CA for HTTPS operations.
+	caCertPath := "/usr/local/share/ca-certificates/firewall4ai-ca.crt"
+	gitconfig.WriteString(fmt.Sprintf("[http]\n\tsslCAInfo = %s\n", caCertPath))
+
+	if gitconfig.Len() > 0 {
+		buildLog("Writing /root/.gitconfig")
+		os.WriteFile(filepath.Join(rootfsDir, "root/.gitconfig"), []byte(gitconfig.String()), 0o644)
+	}
 }
 
 // installAITools installs the selected AI coding tools into the rootfs.

@@ -492,6 +492,35 @@
           </div>
         </div>
         <div class="card">
+          <h3>Git Client Configuration</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Git User Name</div>
+              <div class="setting-desc">Global git user.name for commits on all Agent VMs.</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" id="git-username" placeholder="AI Agent" style="width:200px">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Git Email</div>
+              <div class="setting-desc">Global git user.email for commits on all Agent VMs.</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" id="git-email" placeholder="agent@example.com" style="width:250px">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-desc">Git is automatically installed in all disk images. These settings are applied during image build. HTTPS authentication is handled through the Credentials system.</div>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-primary btn-sm" onclick="saveGitConfig()">Save Git Settings</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
           <h3>Backup &amp; Restore</h3>
           <div class="setting-row">
             <div class="setting-info">

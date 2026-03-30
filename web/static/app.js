@@ -2304,6 +2304,7 @@ async function loadSystem() {
   }
   loadLanguageSettings();
   loadDistroSettings();
+  loadGitConfig();
 }
 
 async function loadServiceLogs() {
@@ -2408,6 +2409,27 @@ async function toggleDistro(distroType, currentlyEnabled) {
     }
     await api('POST', '/api/settings/distros', { disabled });
     loadDistroSettings();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function loadGitConfig() {
+  try {
+    const data = await api('GET', '/api/settings/git-config');
+    document.getElementById('git-username').value = data.username || '';
+    document.getElementById('git-email').value = data.email || '';
+  } catch (e) {
+    console.error('Git config load error:', e);
+  }
+}
+
+async function saveGitConfig() {
+  const username = document.getElementById('git-username').value.trim();
+  const email = document.getElementById('git-email').value.trim();
+  try {
+    await api('POST', '/api/settings/git-config', { username, email });
+    alert('Git settings saved. Rebuild disk images to apply changes.');
   } catch (e) {
     alert('Error: ' + e.message);
   }

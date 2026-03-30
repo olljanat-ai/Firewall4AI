@@ -58,6 +58,7 @@ type storeData struct {
 	Timezone          string                    `json:"timezone"`
 	SSHAuthorizedKeys map[string]string         `json:"ssh_authorized_keys"`
 	Templates         []api.ApprovalTemplate    `json:"templates"`
+	GitConfig         config.GitConfig          `json:"git_config"`
 }
 
 func main() {
@@ -159,6 +160,11 @@ func main() {
 	// Restore max full log body from persisted state.
 	if state.MaxFullLogBody > 0 {
 		config.SetMaxFullLogBody(state.MaxFullLogBody)
+	}
+
+	// Restore git config from persisted state.
+	if state.GitConfig.Username != "" || state.GitConfig.Email != "" {
+		config.SetGitConfig(state.GitConfig)
 	}
 
 	// Setup static DHCP leases and DNS entries for configured agents.
@@ -274,7 +280,8 @@ func main() {
 		bl := image.NewBuildLogger()
 		imageMgr.SetActiveBuildLog(img.ID, version, bl)
 		keyboard, tz := apiHandler.GetVMSettings()
-		buildSettings := image.BuildSettings{Keyboard: keyboard, Timezone: tz}
+		gitCfg := config.GetGitConfig()
+		buildSettings := image.BuildSettings{Keyboard: keyboard, Timezone: tz, GitUsername: gitCfg.Username, GitEmail: gitCfg.Email}
 		if err := imageMgr.BuildImage(img, version, serverIP.String(), buildSettings, bl); err != nil {
 			log.Printf("Failed to build image %s v%d: %v", img.Name, version, err)
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusError, err.Error())
@@ -305,6 +312,7 @@ func main() {
 			d.DisabledLanguages = cfg.DisabledLanguages
 			d.DisabledDistros = cfg.DisabledDistros
 			d.MaxFullLogBody = cfg.MaxFullLogBody
+			d.GitConfig = cfg.Git
 			d.DiskImages = imageMgr.ExportImages()
 			d.Agents = agentMgr.ExportAgents()
 			d.DHCPLeases = dhcpServer.ExportLeases()
