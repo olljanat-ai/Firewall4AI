@@ -424,12 +424,16 @@ func main() {
 		log.Printf("Admin UI using provided TLS certificate")
 	}
 
+	eth0IP, err := getInterfaceIPv4("eth0")
+	if err != nil {
+		log.Fatalf("Error: %v", err)
+	}
 	adminServerPort := "80"
 	if adminTLSConfig != nil {
-		adminServerPort = "5443"
+		adminServerPort = "443"
 	}
 	adminServer := &http.Server{
-		Addr:         "0.0.0.0:" + adminServerPort,
+		Addr:         eth0IP + ":" + adminServerPort,
 		Handler:      adminMux,
 		TLSConfig:    adminTLSConfig,
 		ReadTimeout:  30 * time.Second,
@@ -549,4 +553,33 @@ func main() {
 	adminServer.Shutdown(ctx)
 	agentAPIServer.Shutdown(ctx)
 	log.Println("Stopped.")
+}
+
+func getInterfaceIPv4(ifaceName string) (string, error) {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return "", fmt.Errorf("could not find interface %q: %v", ifaceName, err)
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", fmt.Errorf("could not get addresses for %q: %v", ifaceName, err)
+	}
+
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+
+		// Return first non-loopback IPv4
+		if ip != nil && ip.To4() != nil && !ip.IsLoopback() {
+			return ip.String(), nil
+		}
+	}
+
+	return "", fmt.Errorf("no IPv4 address found for interface %q", ifaceName)
 }
