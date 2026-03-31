@@ -115,24 +115,26 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 		return fmt.Errorf("write repositories: %w", err)
 	}
 
-	// Mount proc/sys/dev for chroot.
-	mounts := []struct{ src, dst, fstype string }{
-		{"proc", filepath.Join(rootfsDir, "proc"), "proc"},
-		{"sysfs", filepath.Join(rootfsDir, "sys"), "sysfs"},
-	}
-	for _, mnt := range mounts {
-		os.MkdirAll(mnt.dst, 0o755)
-		if err := run("mount", "-t", mnt.fstype, mnt.src, mnt.dst); err != nil {
-			buildLog("Warning: mount %s failed: %v", mnt.fstype, err)
-		}
-	}
+	// Mount proc/sys/dev/tmp for chroot.
+	os.MkdirAll(filepath.Join(rootfsDir, "proc"), 0o755)
+	run("mount", "-t", "proc", "proc", filepath.Join(rootfsDir, "proc"))
+
+	os.MkdirAll(filepath.Join(rootfsDir, "sys"), 0o755)
+	run("mount", "--rbind", "/sys", filepath.Join(rootfsDir, "sys"))
+	run("mount", "--make-rslave", filepath.Join(rootfsDir, "sys"))
+
 	os.MkdirAll(filepath.Join(rootfsDir, "dev"), 0o755)
-	run("mount", "--bind", "/dev", filepath.Join(rootfsDir, "dev"))
+	run("mount", "--rbind", "/dev", filepath.Join(rootfsDir, "dev"))
+	run("mount", "--make-rslave", filepath.Join(rootfsDir, "dev"))
+
+	os.MkdirAll(filepath.Join(rootfsDir, "tmp"), 0o755)
+	run("mount", "-t", "tmpfs", "tmpfs", filepath.Join(rootfsDir, "tmp"))
 
 	defer func() {
 		run("umount", "-l", filepath.Join(rootfsDir, "dev"))
 		run("umount", "-l", filepath.Join(rootfsDir, "sys"))
 		run("umount", "-l", filepath.Join(rootfsDir, "proc"))
+		run("umount", "-l", filepath.Join(rootfsDir, "tmp"))
 	}()
 
 	// Install base packages + kernel + bootloader.
@@ -303,6 +305,7 @@ LABEL alpine
 	run("umount", "-l", filepath.Join(rootfsDir, "dev"))
 	run("umount", "-l", filepath.Join(rootfsDir, "sys"))
 	run("umount", "-l", filepath.Join(rootfsDir, "proc"))
+	run("umount", "-l", filepath.Join(rootfsDir, "tmp"))
 
 	tmpTar := rootfsPath + ".tmp"
 	if err := run("tar", "czf", tmpTar, "-C", rootfsDir, "."); err != nil {
@@ -340,15 +343,26 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 		return fmt.Errorf("debootstrap: %w", err)
 	}
 
-	// Mount proc/sys/dev for chroot.
+	// Mount proc/sys/dev/tmp for chroot.
+	os.MkdirAll(filepath.Join(rootfsDir, "proc"), 0o755)
 	run("mount", "-t", "proc", "proc", filepath.Join(rootfsDir, "proc"))
-	run("mount", "-t", "sysfs", "sysfs", filepath.Join(rootfsDir, "sys"))
-	run("mount", "--bind", "/dev", filepath.Join(rootfsDir, "dev"))
+
+	os.MkdirAll(filepath.Join(rootfsDir, "sys"), 0o755)
+	run("mount", "--rbind", "/sys", filepath.Join(rootfsDir, "sys"))
+	run("mount", "--make-rslave", filepath.Join(rootfsDir, "sys"))
+
+	os.MkdirAll(filepath.Join(rootfsDir, "dev"), 0o755)
+	run("mount", "--rbind", "/dev", filepath.Join(rootfsDir, "dev"))
+	run("mount", "--make-rslave", filepath.Join(rootfsDir, "dev"))
+
+	os.MkdirAll(filepath.Join(rootfsDir, "tmp"), 0o755)
+	run("mount", "-t", "tmpfs", "tmpfs", filepath.Join(rootfsDir, "tmp"))
 
 	defer func() {
 		run("umount", "-l", filepath.Join(rootfsDir, "dev"))
 		run("umount", "-l", filepath.Join(rootfsDir, "sys"))
 		run("umount", "-l", filepath.Join(rootfsDir, "proc"))
+		run("umount", "-l", filepath.Join(rootfsDir, "tmp"))
 	}()
 
 	// For Ubuntu, enable universe repository (extlinux, syslinux-common, ifupdown
@@ -707,6 +721,7 @@ echo "=== Firewall4AI Deploy done, continuing boot ==="
 	run("umount", "-l", filepath.Join(rootfsDir, "dev"))
 	run("umount", "-l", filepath.Join(rootfsDir, "sys"))
 	run("umount", "-l", filepath.Join(rootfsDir, "proc"))
+	run("umount", "-l", filepath.Join(rootfsDir, "tmp"))
 
 	tmpTar := rootfsPath + ".tmp"
 	if err := run("tar", "czf", tmpTar, "-C", rootfsDir, "."); err != nil {
