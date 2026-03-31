@@ -979,14 +979,9 @@ func installContainerTools(img *DiskImage, rootfsDir string, isDebian bool, debE
 					return fmt.Errorf("install nomad: %w", err)
 				}
 			case ContainerToolKubernetes:
-				buildLog("Image build [%s v%s]: installing Kubernetes", img.Name, img.OSVersion)
-				if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c",
-					"apt-get install -y apt-transport-https ca-certificates curl gpg && "+
-						"curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg && "+
-						"echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /' > /etc/apt/sources.list.d/kubernetes.list && "+
-						"apt-get update && apt-get install -y kubelet kubeadm kubectl",
-				); err != nil {
-					return fmt.Errorf("install kubernetes: %w", err)
+				buildLog("Image build [%s v%s]: installing K3s from pre-built binary", img.Name, img.OSVersion)
+				if err := installK3s(rootfsDir, true, debEnv); err != nil {
+					return fmt.Errorf("install k3s: %w", err)
 				}
 			}
 		}
@@ -1007,11 +1002,152 @@ func installContainerTools(img *DiskImage, rootfsDir string, isDebian bool, debE
 					return fmt.Errorf("install nomad: %w", err)
 				}
 			case ContainerToolKubernetes:
-				buildLog("Image build [%s v%s]: installing Kubernetes", img.Name, img.OSVersion)
-				if err := runChroot(rootfsDir, "apk", "add", "kubelet", "kubeadm", "kubectl"); err != nil {
-					return fmt.Errorf("install kubernetes: %w", err)
+				buildLog("Image build [%s v%s]: installing K3s from pre-built binary", img.Name, img.OSVersion)
+				if err := installK3s(rootfsDir, false, nil); err != nil {
+					return fmt.Errorf("install k3s: %w", err)
 				}
 			}
+		}
+	}
+
+	return nil
+}
+
+// installK3s downloads the K3s binary and sets up the K3s service.
+// It pre-runs K3s during build so that container images are pulled and the node
+// is ready immediately when the agent VM boots.
+func installK3s(rootfsDir string, isDebian bool, debEnv []string) error {
+	k3sVersion := "v1.32.4+k3s1"
+	k3sURL := fmt.Sprintf("https://github.com/k3s-io/k3s/releases/download/%s/k3s", k3sVersion)
+
+	// Download K3s binary and create symlinks.
+	installScript := fmt.Sprintf(
+		"wget -qO /usr/local/bin/k3s '%s' && "+
+			"chmod 755 /usr/local/bin/k3s && "+
+			"ln -sf k3s /usr/local/bin/kubectl && "+
+			"ln -sf k3s /usr/local/bin/crictl && "+
+			"ln -sf k3s /usr/local/bin/ctr",
+		k3sURL,
+	)
+
+	if isDebian {
+		if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", installScript); err != nil {
+			return fmt.Errorf("download k3s binary: %w", err)
+		}
+	} else {
+		if err := runChroot(rootfsDir, "sh", "-c", installScript); err != nil {
+			return fmt.Errorf("download k3s binary: %w", err)
+		}
+	}
+
+	// Create K3s data directories.
+	for _, dir := range []string{
+		"etc/rancher/k3s",
+		"var/lib/rancher/k3s/server",
+		"var/lib/rancher/k3s/agent",
+	} {
+		os.MkdirAll(filepath.Join(rootfsDir, dir), 0o755)
+	}
+
+	if isDebian {
+		// systemd service unit for K3s.
+		k3sService := `[Unit]
+Description=Lightweight Kubernetes
+Documentation=https://k3s.io
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStartPre=-/sbin/modprobe br_netfilter
+ExecStartPre=-/sbin/modprobe overlay
+ExecStart=/usr/local/bin/k3s server
+KillMode=process
+Delegate=yes
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+`
+		os.MkdirAll(filepath.Join(rootfsDir, "etc/systemd/system"), 0o755)
+		os.WriteFile(filepath.Join(rootfsDir, "etc/systemd/system/k3s.service"), []byte(k3sService), 0o644)
+		runChrootEnv(rootfsDir, debEnv, "systemctl", "enable", "k3s")
+	} else {
+		// OpenRC init script for K3s (Alpine).
+		k3sInit := `#!/sbin/openrc-run
+
+name="k3s"
+description="Lightweight Kubernetes"
+command="/usr/local/bin/k3s"
+command_args="server"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/k3s.log"
+error_log="/var/log/k3s.log"
+
+depend() {
+	need net
+	after firewall
+}
+`
+		os.MkdirAll(filepath.Join(rootfsDir, "etc/init.d"), 0o755)
+		os.WriteFile(filepath.Join(rootfsDir, "etc/init.d/k3s"), []byte(k3sInit), 0o755)
+		runChroot(rootfsDir, "rc-update", "add", "k3s", "default")
+	}
+
+	// Pre-run K3s to pull images and initialize the node so it's ready at boot.
+	buildLog("Pre-running K3s to pull container images and initialize node...")
+
+	// K3s needs /proc, /sys, /dev mounted (already done by build flow).
+	// Run K3s server briefly to let it pull all required images.
+	preRunScript := `k3s server --data-dir /var/lib/rancher/k3s &
+K3S_PID=$!
+# Wait for K3s to become ready (node registered + system pods pulled).
+for i in $(seq 1 120); do
+  if k3s kubectl get nodes 2>/dev/null | grep -q " Ready"; then
+    echo "K3s node is Ready"
+    # Wait a bit more for core pods to be pulled.
+    sleep 15
+    break
+  fi
+  sleep 5
+done
+# Show status for build log.
+k3s kubectl get nodes 2>/dev/null || true
+k3s kubectl get pods -A 2>/dev/null || true
+# Stop K3s gracefully.
+kill $K3S_PID 2>/dev/null
+wait $K3S_PID 2>/dev/null || true
+# Also stop containerd that K3s spawned.
+pkill -f "k3s.*containerd" 2>/dev/null || true
+sleep 2
+# Clean up runtime state but keep pre-pulled images and manifests.
+rm -rf /var/lib/rancher/k3s/server/db/etcd 2>/dev/null || true
+rm -rf /var/lib/rancher/k3s/server/tls 2>/dev/null || true
+rm -rf /var/lib/rancher/k3s/server/cred 2>/dev/null || true
+rm -rf /var/lib/rancher/k3s/server/token 2>/dev/null || true
+rm -f /var/lib/rancher/k3s/server/node-token 2>/dev/null || true
+rm -rf /etc/rancher/k3s/k3s.yaml 2>/dev/null || true
+rm -rf /run/k3s 2>/dev/null || true
+rm -rf /var/lib/rancher/k3s/agent/client-* 2>/dev/null || true
+rm -rf /var/lib/rancher/k3s/agent/etc 2>/dev/null || true
+rm -rf /tmp/k3s-* 2>/dev/null || true
+echo "K3s pre-initialization complete"
+`
+
+	if isDebian {
+		if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", preRunScript); err != nil {
+			buildLog("Warning: K3s pre-run returned error (may be expected during shutdown): %v", err)
+		}
+	} else {
+		if err := runChroot(rootfsDir, "sh", "-c", preRunScript); err != nil {
+			buildLog("Warning: K3s pre-run returned error (may be expected during shutdown): %v", err)
 		}
 	}
 

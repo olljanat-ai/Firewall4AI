@@ -2647,7 +2647,7 @@ async function loadDiskImages() {
     const containerToolLabels = {
       'docker': 'Docker',
       'nomad': 'Nomad',
-      'kubernetes': 'Kubernetes'
+      'kubernetes': 'K3s'
     };
 
     currentDiskImages.forEach(img => {
