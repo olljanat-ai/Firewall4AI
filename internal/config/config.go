@@ -131,7 +131,7 @@ func IsDistroDisabled(distroType string) bool {
 var (
 	defaultConfig = Config{
 		ListenAddr:         ":8080",
-		AdminAddr:          ":443",
+		AdminAddr:          ":80",
 		AgentAPIAddr:       "10.255.255.1:80",
 		TransparentTLSAddr: ":8443",
 		DataDir:            "./data",
