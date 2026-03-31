@@ -400,10 +400,18 @@ func main() {
 	}
 	adminMux.Handle("GET /", http.FileServer(http.FS(staticFS)))
 
-	// Setup admin server TLS.
-	adminTLSConfig, err := adminTLS(cfg, ca)
-	if err != nil {
-		log.Fatalf("Failed to setup admin TLS: %v", err)
+	// Setup admin server, optionally with TLS.
+	var adminTLSConfig *tls.Config
+	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			log.Fatalf("Failed to load admin TLS cert: %v", err)
+		}
+		adminTLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+		log.Printf("Admin UI using provided TLS certificate")
 	}
 
 	adminServer := &http.Server{
@@ -478,9 +486,16 @@ func main() {
 
 	// Start admin server.
 	go func() {
-		log.Printf("Admin UI listening on https://localhost%s", cfg.AdminAddr)
-		if err := adminServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Admin server error: %v", err)
+		if adminTLSConfig != nil {
+			log.Printf("Admin UI listening on https://localhost%s", cfg.AdminAddr)
+			if err := adminServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Admin server error: %v", err)
+			}
+		} else {
+			log.Printf("Admin UI listening on http://localhost%s", cfg.AdminAddr)
+			if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Admin server error: %v", err)
+			}
 		}
 	}()
 
@@ -514,29 +529,4 @@ func main() {
 	adminServer.Shutdown(ctx)
 	agentAPIServer.Shutdown(ctx)
 	log.Println("Stopped.")
-}
-
-// adminTLS returns a TLS config for the admin server.
-func adminTLS(cfg config.Config, ca *certgen.CA) (*tls.Config, error) {
-	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("load admin TLS cert: %w", err)
-		}
-		log.Printf("Admin UI using provided TLS certificate")
-		return &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			MinVersion:   tls.VersionTLS12,
-		}, nil
-	}
-
-	cert, err := certgen.LoadOrGenerateAdminCert(cfg.DataDir)
-	if err != nil {
-		return nil, fmt.Errorf("load/generate admin cert: %w", err)
-	}
-	log.Printf("Admin UI TLS certificate: %s", filepath.Join(cfg.DataDir, "admin.crt"))
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}, nil
 }

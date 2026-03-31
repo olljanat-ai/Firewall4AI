@@ -159,32 +159,3 @@ func TestTLSConfigForMITM(t *testing.T) {
 	}
 }
 
-func TestGenerateAdminCert(t *testing.T) {
-	cert, err := LoadOrGenerateAdminCert(t.TempDir())
-	if err != nil {
-		t.Fatalf("LoadOrGenerateAdminCert() error: %v", err)
-	}
-
-	leaf, err := x509.ParseCertificate(cert.Certificate[0])
-	if err != nil {
-		t.Fatalf("parse cert: %v", err)
-	}
-	if leaf.Subject.CommonName != "Firewall4AI Admin" {
-		t.Errorf("expected CN 'Firewall4AI Admin', got %q", leaf.Subject.CommonName)
-	}
-
-	// Should have localhost SANs.
-	hasLocalhost := false
-	for _, name := range leaf.DNSNames {
-		if name == "localhost" {
-			hasLocalhost = true
-		}
-	}
-	if !hasLocalhost {
-		t.Error("admin cert should include 'localhost' SAN")
-	}
-
-	if len(leaf.IPAddresses) < 2 {
-		t.Error("admin cert should include 127.0.0.1 and ::1")
-	}
-}
