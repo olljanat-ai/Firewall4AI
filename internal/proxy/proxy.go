@@ -29,9 +29,19 @@ const (
 	approvalTimeout = 15 * time.Minute
 	// AuthHeader is used by AI agents to provide their skill token.
 	AuthHeader = "X-Firewall4AI-Token"
-	// maxFullLogBody is the maximum body size captured in full logging mode.
-	maxFullLogBody = 256 * 1024 // 256 KB
 )
+
+// responseBodyWrapper restores the full original response body (prefix for logging
+// + remaining stream from upstream) while still allowing the original body to be
+// closed properly by the defer resp.Body.Close().
+type responseBodyWrapper struct {
+	io.Reader
+	original io.ReadCloser
+}
+
+func (w *responseBodyWrapper) Close() error {
+	return w.original.Close()
+}
 
 // Proxy is the main proxy server.
 type Proxy struct {
@@ -321,28 +331,36 @@ func captureResponseBody(resp *http.Response) string {
 	if resp.Body == nil {
 		return ""
 	}
-	// Read the raw (possibly compressed) bytes first, then restore the body
-	// so that the caller can still forward it to the client.
 	maxBody := config.GetMaxFullLogBody()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBody)+1))
-	resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(raw))
-	if err != nil {
-		return ""
+	origBody := resp.Body
+
+	// Read only the prefix for logging (decompression + UI display).
+	// The upstream body stream now sits at the *remaining* bytes.
+	prefix, err := io.ReadAll(io.LimitReader(origBody, int64(maxBody)+1))
+	if err != nil && err != io.EOF {
+		// On real read error we still want to forward whatever we can.
+		prefix = nil
+	}
+
+	// Reconstruct the *full* original body for the client:
+	// prefix (for logging) + remaining bytes from upstream.
+	resp.Body = &responseBodyWrapper{
+		Reader:   io.MultiReader(bytes.NewReader(prefix), origBody),
+		original: origBody,
 	}
 
 	// Decompress for display if needed.
-	decoded := raw
+	decoded := prefix
 	switch strings.ToLower(resp.Header.Get("Content-Encoding")) {
 	case "gzip":
-		if r, gerr := gzip.NewReader(bytes.NewReader(raw)); gerr == nil {
+		if r, gerr := gzip.NewReader(bytes.NewReader(prefix)); gerr == nil {
 			if plain, rerr := io.ReadAll(io.LimitReader(r, int64(maxBody)+1)); rerr == nil {
 				r.Close()
 				decoded = plain
 			}
 		}
 	case "deflate":
-		r := flate.NewReader(bytes.NewReader(raw))
+		r := flate.NewReader(bytes.NewReader(prefix))
 		if plain, rerr := io.ReadAll(io.LimitReader(r, int64(maxBody)+1)); rerr == nil {
 			r.Close()
 			decoded = plain
