@@ -793,20 +793,19 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 		fullDetail.ResponseBody = captureResponseBody(resp)
 	}
 
+	// Write response back to client.
+	err = resp.Write(clientConn)
 	p.Logger.Add(proxylog.Entry{
 		SkillID:    sid,
 		Method:     req.Method,
 		Host:       host,
 		Path:       req.URL.Path,
 		Status:     "allowed",
-		Detail:     fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
+		Detail:     fmt.Sprintf("%d %s, %s", resp.StatusCode, resp.Status, err),
 		Duration:   time.Since(start).Milliseconds(),
 		HasFullLog: fullDetail != nil,
 		FullDetail: fullDetail,
 	})
-
-	// Write response back to client.
-	resp.Write(clientConn)
 }
 
 // handleBlindTunnel is the fallback when no CA is configured: just pipe bytes.
