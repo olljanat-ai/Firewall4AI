@@ -805,6 +805,13 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 		FullDetail: fullDetail,
 	})
 
+	// Fix for responses without Content-Length and without chunked encoding.
+	// This forces chunked transfer so the client knows where the body ends
+	// without requiring the connection to be closed.
+	if resp.ContentLength == -1 && len(resp.TransferEncoding) == 0 {
+		resp.TransferEncoding = []string{"chunked"}
+	}
+
 	// Write response back to client.
 	resp.Write(clientConn)
 }
