@@ -1116,55 +1116,58 @@ depend() {
 		runChroot(rootfsDir, "rc-update", "add", "k3s", "default")
 	}
 
-	// Pre-run K3s to pull images and initialize the node so it's ready at boot.
-	buildLog("Pre-running K3s to pull container images and initialize node...")
+	// FixMe: Temporarily disabled because gets stuck to error loop.
+	/*
+			// Pre-run K3s to pull images and initialize the node so it's ready at boot.
+			buildLog("Pre-running K3s to pull container images and initialize node...")
 
-	// K3s needs /proc, /sys, /dev mounted (already done by build flow).
-	// Run K3s server briefly to let it pull all required images.
-	preRunScript := `k3s server --data-dir /var/lib/rancher/k3s &
-K3S_PID=$!
-# Wait for K3s to become ready (node registered + system pods pulled).
-for i in $(seq 1 120); do
-  if k3s kubectl get nodes 2>/dev/null | grep -q " Ready"; then
-    echo "K3s node is Ready"
-    # Wait a bit more for core pods to be pulled.
-    sleep 15
-    break
-  fi
-  sleep 5
-done
-# Show status for build log.
-k3s kubectl get nodes 2>/dev/null || true
-k3s kubectl get pods -A 2>/dev/null || true
-# Stop K3s gracefully.
-kill $K3S_PID 2>/dev/null
-wait $K3S_PID 2>/dev/null || true
-# Also stop containerd that K3s spawned.
-pkill -f "k3s.*containerd" 2>/dev/null || true
-sleep 2
-# Clean up runtime state but keep pre-pulled images and manifests.
-rm -rf /var/lib/rancher/k3s/server/db/etcd 2>/dev/null || true
-rm -rf /var/lib/rancher/k3s/server/tls 2>/dev/null || true
-rm -rf /var/lib/rancher/k3s/server/cred 2>/dev/null || true
-rm -rf /var/lib/rancher/k3s/server/token 2>/dev/null || true
-rm -f /var/lib/rancher/k3s/server/node-token 2>/dev/null || true
-rm -rf /etc/rancher/k3s/k3s.yaml 2>/dev/null || true
-rm -rf /run/k3s 2>/dev/null || true
-rm -rf /var/lib/rancher/k3s/agent/client-* 2>/dev/null || true
-rm -rf /var/lib/rancher/k3s/agent/etc 2>/dev/null || true
-rm -rf /tmp/k3s-* 2>/dev/null || true
-echo "K3s pre-initialization complete"
-`
+			// K3s needs /proc, /sys, /dev mounted (already done by build flow).
+			// Run K3s server briefly to let it pull all required images.
+			preRunScript := `k3s server --data-dir /var/lib/rancher/k3s &
+		K3S_PID=$!
+		# Wait for K3s to become ready (node registered + system pods pulled).
+		for i in $(seq 1 120); do
+		  if k3s kubectl get nodes 2>/dev/null | grep -q " Ready"; then
+		    echo "K3s node is Ready"
+		    # Wait a bit more for core pods to be pulled.
+		    sleep 15
+		    break
+		  fi
+		  sleep 5
+		done
+		# Show status for build log.
+		k3s kubectl get nodes 2>/dev/null || true
+		k3s kubectl get pods -A 2>/dev/null || true
+		# Stop K3s gracefully.
+		kill $K3S_PID 2>/dev/null
+		wait $K3S_PID 2>/dev/null || true
+		# Also stop containerd that K3s spawned.
+		pkill -f "k3s.*containerd" 2>/dev/null || true
+		sleep 2
+		# Clean up runtime state but keep pre-pulled images and manifests.
+		rm -rf /var/lib/rancher/k3s/server/db/etcd 2>/dev/null || true
+		rm -rf /var/lib/rancher/k3s/server/tls 2>/dev/null || true
+		rm -rf /var/lib/rancher/k3s/server/cred 2>/dev/null || true
+		rm -rf /var/lib/rancher/k3s/server/token 2>/dev/null || true
+		rm -f /var/lib/rancher/k3s/server/node-token 2>/dev/null || true
+		rm -rf /etc/rancher/k3s/k3s.yaml 2>/dev/null || true
+		rm -rf /run/k3s 2>/dev/null || true
+		rm -rf /var/lib/rancher/k3s/agent/client-* 2>/dev/null || true
+		rm -rf /var/lib/rancher/k3s/agent/etc 2>/dev/null || true
+		rm -rf /tmp/k3s-* 2>/dev/null || true
+		echo "K3s pre-initialization complete"
+		`
 
-	if isDebian {
-		if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", preRunScript); err != nil {
-			buildLog("Warning: K3s pre-run returned error (may be expected during shutdown): %v", err)
-		}
-	} else {
-		if err := runChroot(rootfsDir, "sh", "-c", preRunScript); err != nil {
-			buildLog("Warning: K3s pre-run returned error (may be expected during shutdown): %v", err)
-		}
-	}
+			if isDebian {
+				if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", preRunScript); err != nil {
+					buildLog("Warning: K3s pre-run returned error (may be expected during shutdown): %v", err)
+				}
+			} else {
+				if err := runChroot(rootfsDir, "sh", "-c", preRunScript); err != nil {
+					buildLog("Warning: K3s pre-run returned error (may be expected during shutdown): %v", err)
+				}
+			}
+	*/
 
 	return nil
 }
