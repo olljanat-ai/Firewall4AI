@@ -624,7 +624,34 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 			}
 			return hostCert, nil
 		},
-		MinVersion: tls.VersionTLS12,
+
+		// Allow also TLS 1.0 and 1.1 (Go 1.22 set minimum to TLS 1.2)
+		MinVersion: tls.VersionTLS10,
+		MaxVersion: tls.VersionTLS13,
+
+		// Disable experimental X25519Kyber768Draft00 (Go 1.23 enables it by default)
+		// and disable X25519MLKEM768 (Go 1.24 enables it by default) by listing curve list from:
+		// https://github.com/golang/go/blob/go1.23.5/src/crypto/tls/defaults.go#L20
+		CurvePreferences: []tls.CurveID{
+			tls.X25519,
+			tls.CurveP256,
+			tls.CurveP384,
+			tls.CurveP521,
+		},
+
+		// Allow all ciphers, including those marked "insecure" by Go
+		CipherSuites: func() []uint16 {
+			all := append([]*tls.CipherSuite{}, tls.CipherSuites()...)
+			all = append(all, tls.InsecureCipherSuites()...)
+			var ids []uint16
+			for _, cs := range all {
+				ids = append(ids, cs.ID)
+			}
+			return ids
+		}(),
+
+		// Force HTTP/1.1 to avoid issues with HTTP/2 connection.
+		NextProtos: []string{"http/1.1"},
 	}
 
 	tlsClientConn := tls.Server(clientConn, tlsConfig)
@@ -850,7 +877,34 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 			}
 			return p.CA.GenerateHostCert(sniHost)
 		},
-		MinVersion: tls.VersionTLS12,
+
+		// Allow also TLS 1.0 and 1.1 (Go 1.22 set minimum to TLS 1.2)
+		MinVersion: tls.VersionTLS10,
+		MaxVersion: tls.VersionTLS13,
+
+		// Disable experimental X25519Kyber768Draft00 (Go 1.23 enables it by default)
+		// and disable X25519MLKEM768 (Go 1.24 enables it by default) by listing curve list from:
+		// https://github.com/golang/go/blob/go1.23.5/src/crypto/tls/defaults.go#L20
+		CurvePreferences: []tls.CurveID{
+			tls.X25519,
+			tls.CurveP256,
+			tls.CurveP384,
+			tls.CurveP521,
+		},
+
+		// Allow all ciphers, including those marked "insecure" by Go
+		CipherSuites: func() []uint16 {
+			all := append([]*tls.CipherSuite{}, tls.CipherSuites()...)
+			all = append(all, tls.InsecureCipherSuites()...)
+			var ids []uint16
+			for _, cs := range all {
+				ids = append(ids, cs.ID)
+			}
+			return ids
+		}(),
+
+		// Force HTTP/1.1 to avoid issues with HTTP/2 connection.
+		NextProtos: []string{"http/1.1"},
 	}
 
 	tlsConn := tls.Server(clientConn, tlsConfig)
