@@ -135,7 +135,24 @@ func forwardHTTP(w http.ResponseWriter, resp *http.Response) {
 }
 
 // forwardTLS writes the upstream response to a raw net.Conn using HTTP/1.1 wire format.
+// When the upstream response uses chunked Transfer-Encoding (no Content-Length),
+// the body is fully read and Content-Length is set explicitly. This prevents
+// clients from hanging when resp.Write() re-chunks the body but the connection
+// stays open (e.g. helm repo add with ~600KB index responses).
 func forwardTLS(conn net.Conn, resp *http.Response) {
+	if resp.ContentLength < 0 && resp.Body != nil {
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			// On read error, send what we have.
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			resp.ContentLength = int64(len(body))
+		} else {
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			resp.ContentLength = int64(len(body))
+		}
+		resp.TransferEncoding = nil
+	}
 	resp.Write(conn)
 }
 

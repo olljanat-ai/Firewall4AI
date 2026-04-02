@@ -870,5 +870,103 @@ func TestProxy_LearningMode_RegistryBlob_DeniedWhenOff(t *testing.T) {
 	}
 }
 
+// TestProxy_MITM_ChunkedResponseComplete verifies that large chunked
+// responses are fully delivered through the MITM proxy without hanging.
+// This is a regression test for the Helm repo add hang issue.
+func TestProxy_MITM_ChunkedResponseComplete(t *testing.T) {
+	p, skills, _, ca := setupProxyWithCA(t)
+
+	// Create a ~100KB response body (simulating a Helm index).
+	largeBody := make([]byte, 100*1024)
+	for i := range largeBody {
+		largeBody[i] = byte('A' + (i % 26))
+	}
+
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Write without setting Content-Length to force chunked encoding.
+		w.Header().Set("Content-Type", "application/yaml")
+		w.WriteHeader(http.StatusOK)
+		w.Write(largeBody)
+	}))
+	defer backend.Close()
+
+	backendURL, _ := url.Parse(backend.URL)
+	_, backendPort, _ := net.SplitHostPort(backendURL.Host)
+
+	skills.AddSkill(auth.Skill{
+		ID: "s1", Token: "tok-1", Active: true,
+		AllowedHost: []string{"127.0.0.1"},
+	})
+
+	p.Transport = backend.Client().Transport
+
+	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer proxyListener.Close()
+
+	proxySrv := &http.Server{Handler: p}
+	go proxySrv.Serve(proxyListener)
+	defer proxySrv.Close()
+
+	proxyConn, err := net.Dial("tcp", proxyListener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer proxyConn.Close()
+
+	connectReq := fmt.Sprintf("CONNECT 127.0.0.1:%s HTTP/1.1\r\nHost: 127.0.0.1:%s\r\n%s: tok-1\r\n\r\n",
+		backendPort, backendPort, AuthHeader)
+	proxyConn.Write([]byte(connectReq))
+
+	br := bufio.NewReader(proxyConn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("read CONNECT response: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected CONNECT 200, got %d", resp.StatusCode)
+	}
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca.Certificate)
+	tlsConn := tls.Client(proxyConn, &tls.Config{
+		RootCAs:    caPool,
+		ServerName: "127.0.0.1",
+	})
+	defer tlsConn.Close()
+
+	if err := tlsConn.Handshake(); err != nil {
+		t.Fatalf("TLS handshake with proxy: %v", err)
+	}
+
+	httpReq, _ := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%s/index.yaml", backendPort), nil)
+	httpReq.Write(tlsConn)
+
+	// Set a deadline so the test fails fast instead of hanging indefinitely
+	// if the fix regresses.
+	tlsConn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
+	tlsReader := bufio.NewReader(tlsConn)
+	httpResp, err := http.ReadResponse(tlsReader, httpReq)
+	if err != nil {
+		t.Fatalf("read HTTPS response: %v", err)
+	}
+	defer httpResp.Body.Close()
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	if len(body) != len(largeBody) {
+		t.Errorf("body length: got %d, want %d", len(body), len(largeBody))
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", httpResp.StatusCode)
+	}
+}
+
 // Alias for use in test file.
 var StatusApproved = approval.StatusApproved
