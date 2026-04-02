@@ -597,33 +597,12 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	p.handleBlindTunnel(clientConn, host, targetHost, skill, start)
 }
 
-// handleMITM performs TLS MITM: terminates the client TLS with a generated cert,
-// reads the inner HTTP requests, applies auth/approval/credential injection,
-// and forwards them to the real target over a new TLS connection.
-func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, sourceIP string, start time.Time) {
-	defer clientConn.Close()
-
-	sid := getSkillID(skill)
-
-	// Present a CA-signed certificate for this host to the client.
-	hostCert, err := p.CA.GenerateHostCert(host)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  "CONNECT",
-			Host:    host,
-			Status:  "error",
-			Detail:  "generate host cert: " + err.Error(),
-		})
-		return
-	}
-	tlsConfig := &tls.Config{
-		GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			if info.ServerName != "" && info.ServerName != host {
-				return p.CA.GenerateHostCert(info.ServerName)
-			}
-			return hostCert, nil
-		},
+// newMITMTLSConfig returns a shared TLS configuration for MITM interception.
+// The getCertFunc callback is invoked during the TLS handshake to provide the
+// appropriate certificate for the connecting client.
+func newMITMTLSConfig(getCertFunc func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *tls.Config {
+	return &tls.Config{
+		GetCertificate: getCertFunc,
 
 		// Allow also TLS 1.0 and 1.1 (Go 1.22 set minimum to TLS 1.2)
 		MinVersion: tls.VersionTLS10,
@@ -653,6 +632,34 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 		// Force HTTP/1.1 to avoid issues with HTTP/2 connection.
 		NextProtos: []string{"http/1.1"},
 	}
+}
+
+// handleMITM performs TLS MITM: terminates the client TLS with a generated cert,
+// reads the inner HTTP requests, applies auth/approval/credential injection,
+// and forwards them to the real target over a new TLS connection.
+func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, sourceIP string, start time.Time) {
+	defer clientConn.Close()
+
+	sid := getSkillID(skill)
+
+	// Present a CA-signed certificate for this host to the client.
+	hostCert, err := p.CA.GenerateHostCert(host)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID: sid,
+			Method:  "CONNECT",
+			Host:    host,
+			Status:  "error",
+			Detail:  "generate host cert: " + err.Error(),
+		})
+		return
+	}
+	tlsConfig := newMITMTLSConfig(func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if info.ServerName != "" && info.ServerName != host {
+			return p.CA.GenerateHostCert(info.ServerName)
+		}
+		return hostCert, nil
+	})
 
 	tlsClientConn := tls.Server(clientConn, tlsConfig)
 	if err := tlsClientConn.Handshake(); err != nil {
@@ -869,43 +876,13 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	}
 	var sniHost string
 
-	tlsConfig := &tls.Config{
-		GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			sniHost = info.ServerName
-			if sniHost == "" {
-				return nil, fmt.Errorf("no SNI provided for transparent TLS")
-			}
-			return p.CA.GenerateHostCert(sniHost)
-		},
-
-		// Allow also TLS 1.0 and 1.1 (Go 1.22 set minimum to TLS 1.2)
-		MinVersion: tls.VersionTLS10,
-		MaxVersion: tls.VersionTLS13,
-
-		// Disable experimental X25519Kyber768Draft00 (Go 1.23 enables it by default)
-		// and disable X25519MLKEM768 (Go 1.24 enables it by default) by listing curve list from:
-		// https://github.com/golang/go/blob/go1.23.5/src/crypto/tls/defaults.go#L20
-		CurvePreferences: []tls.CurveID{
-			tls.X25519,
-			tls.CurveP256,
-			tls.CurveP384,
-			tls.CurveP521,
-		},
-
-		// Allow all ciphers, including those marked "insecure" by Go
-		CipherSuites: func() []uint16 {
-			all := append([]*tls.CipherSuite{}, tls.CipherSuites()...)
-			all = append(all, tls.InsecureCipherSuites()...)
-			var ids []uint16
-			for _, cs := range all {
-				ids = append(ids, cs.ID)
-			}
-			return ids
-		}(),
-
-		// Force HTTP/1.1 to avoid issues with HTTP/2 connection.
-		NextProtos: []string{"http/1.1"},
-	}
+	tlsConfig := newMITMTLSConfig(func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		sniHost = info.ServerName
+		if sniHost == "" {
+			return nil, fmt.Errorf("no SNI provided for transparent TLS")
+		}
+		return p.CA.GenerateHostCert(sniHost)
+	})
 
 	tlsConn := tls.Server(clientConn, tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
