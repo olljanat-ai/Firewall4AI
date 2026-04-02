@@ -122,6 +122,34 @@ func writeErrorResponseConn(conn net.Conn, status approval.Status, resource stri
 	resp.Write(conn)
 }
 
+// forwardHTTP copies the upstream response headers, status, and body to an
+// http.ResponseWriter.
+func forwardHTTP(w http.ResponseWriter, resp *http.Response) {
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// forwardTLS writes the upstream response to a raw net.Conn using HTTP/1.1 wire format.
+func forwardTLS(conn net.Conn, resp *http.Response) {
+	resp.Write(conn)
+}
+
+// write502TLS sends a minimal 502 Bad Gateway response to a raw net.Conn.
+func write502TLS(conn net.Conn) {
+	resp := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+	}
+	resp.Write(conn)
+}
+
 // ServeHTTP handles both HTTP requests and HTTPS CONNECT tunnels.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
@@ -517,14 +545,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		FullDetail: fullDetail,
 	})
 
-	// Copy response headers.
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	forwardHTTP(w, resp)
 }
 
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -786,14 +807,7 @@ func (p *Proxy) handleTLSRequest(clientConn net.Conn, req *http.Request, host, t
 			HasFullLog: fullDetail != nil,
 			FullDetail: fullDetail,
 		})
-		// Send a 502 response to the client.
-		resp502 := &http.Response{
-			StatusCode: http.StatusBadGateway,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-		}
-		resp502.Write(clientConn)
+		write502TLS(clientConn)
 		return
 	}
 	defer resp.Body.Close()
@@ -816,8 +830,7 @@ func (p *Proxy) handleTLSRequest(clientConn net.Conn, req *http.Request, host, t
 		FullDetail: fullDetail,
 	})
 
-	// Write response back to client.
-	resp.Write(clientConn)
+	forwardTLS(clientConn, resp)
 }
 
 // handleBlindTunnel is the fallback when no CA is configured: just pipe bytes.
@@ -1037,18 +1050,12 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 			Detail:   err.Error(),
 			Duration: time.Since(start).Milliseconds(),
 		})
-		resp502 := &http.Response{
-			StatusCode: http.StatusBadGateway,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-		}
-		resp502.Write(clientConn)
+		write502TLS(clientConn)
 		return
 	}
 	defer resp.Body.Close()
 
-	resp.Write(clientConn)
+	forwardTLS(clientConn, resp)
 }
 
 // checkPackageRepoAccess checks disabled-type, parses the package name, runs
@@ -1192,14 +1199,7 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 		Duration: time.Since(start).Milliseconds(),
 	})
 
-	// Copy response.
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	forwardHTTP(w, resp)
 }
 
 // handlePackageRepoTLSRequest handles TLS requests to package repositories.
@@ -1230,18 +1230,12 @@ func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Reque
 			Detail:   err.Error(),
 			Duration: time.Since(start).Milliseconds(),
 		})
-		resp502 := &http.Response{
-			StatusCode: http.StatusBadGateway,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-		}
-		resp502.Write(clientConn)
+		write502TLS(clientConn)
 		return
 	}
 	defer resp.Body.Close()
 
-	resp.Write(clientConn)
+	forwardTLS(clientConn, resp)
 }
 
 // checkLibraryApproval performs three-level approval for a package/library.
