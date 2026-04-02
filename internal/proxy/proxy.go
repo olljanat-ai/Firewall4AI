@@ -1051,10 +1051,11 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 	resp.Write(clientConn)
 }
 
-// handlePackageRepoTLSRequest handles a request to a known package repository host.
-// handlePackageRepoHTTPRequest handles plain HTTP requests to package repositories.
-// It mirrors handlePackageRepoTLSRequest but uses http.ResponseWriter instead of raw net.Conn.
-func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
+// checkPackageRepoAccess checks disabled-type, parses the package name, runs
+// approval logic, and logs the result. It returns (status, resource) where
+// status is empty string on success or the denial status on failure. The
+// resource string is set only when access is denied (for error messages).
+func (p *Proxy) checkPackageRepoAccess(req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) (deniedStatus approval.Status, resource string) {
 	sid := getSkillID(skill)
 	urlPath := req.URL.Path
 	repoType := library.PackageType(repo.Type)
@@ -1068,7 +1069,7 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 	}
 	if disabled {
 		label := library.TypeLabel(repoType)
-		resource := label + " packages"
+		resource = label + " packages"
 		p.Logger.Add(proxylog.Entry{
 			SkillID: sid,
 			Method:  req.Method,
@@ -1077,8 +1078,7 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 			Status:  "denied",
 			Detail:  label + " is disabled by policy",
 		})
-		writeErrorResponse(w, approval.StatusDenied, resource)
-		return
+		return approval.StatusDenied, resource
 	}
 
 	pkgName, ok := library.ParsePackageName(urlPath, repoType)
@@ -1093,7 +1093,9 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 			Detail:   "package repo infra (" + repo.Name + ")",
 			Duration: time.Since(start).Milliseconds(),
 		})
-	} else if pkgName == "" {
+		return "", ""
+	}
+	if pkgName == "" {
 		// Metadata request (index, dist, etc.) — auto-approve.
 		p.Logger.Add(proxylog.Entry{
 			SkillID:  sid,
@@ -1104,43 +1106,55 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 			Detail:   "package metadata (" + repo.Name + ")",
 			Duration: time.Since(start).Milliseconds(),
 		})
-	} else {
-		// Package-specific request — check approval.
-		mgr := p.LibraryApprovals
-		if isOSPkg {
-			mgr = p.PackageApprovals
-		}
+		return "", ""
+	}
 
-		// In learning mode, skip the fast-path check since pending entries
-		// (created by learning mode) won't match. Go directly through
-		// checkLibraryApproval which handles learning mode.
-		if !p.LearningMode && library.CheckPackageApproval(mgr, pkgName) {
-			// already approved — fast path
-		} else {
-			status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
-			if status != approval.StatusApproved {
-				resource := string(repoType) + " package " + pkgName
-				p.Logger.Add(proxylog.Entry{
-					SkillID: sid,
-					Method:  req.Method,
-					Host:    host,
-					Path:    urlPath,
-					Status:  string(status),
-					Detail:  "package not approved: " + string(repoType) + ":" + pkgName,
-				})
-				writeErrorResponse(w, status, resource)
-				return
-			}
+	// Package-specific request — check approval.
+	mgr := p.LibraryApprovals
+	if isOSPkg {
+		mgr = p.PackageApprovals
+	}
+
+	// In learning mode, skip the fast-path check since pending entries
+	// (created by learning mode) won't match. Go directly through
+	// checkLibraryApproval which handles learning mode.
+	if !p.LearningMode && library.CheckPackageApproval(mgr, pkgName) {
+		// already approved — fast path
+	} else {
+		status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
+		if status != approval.StatusApproved {
+			resource = string(repoType) + " package " + pkgName
+			p.Logger.Add(proxylog.Entry{
+				SkillID: sid,
+				Method:  req.Method,
+				Host:    host,
+				Path:    urlPath,
+				Status:  string(status),
+				Detail:  "package not approved: " + string(repoType) + ":" + pkgName,
+			})
+			return status, resource
 		}
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   string(repoType) + ":" + pkgName,
-			Duration: time.Since(start).Milliseconds(),
-		})
+	}
+	p.Logger.Add(proxylog.Entry{
+		SkillID:  sid,
+		Method:   req.Method,
+		Host:     host,
+		Path:     urlPath,
+		Status:   "allowed",
+		Detail:   string(repoType) + ":" + pkgName,
+		Duration: time.Since(start).Milliseconds(),
+	})
+	return "", ""
+}
+
+// handlePackageRepoHTTPRequest handles plain HTTP requests to package repositories.
+func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
+	sid := getSkillID(skill)
+
+	deniedStatus, resource := p.checkPackageRepoAccess(req, host, sourceIP, skill, repo, isOSPkg, start)
+	if deniedStatus != "" {
+		writeErrorResponse(w, deniedStatus, resource)
+		return
 	}
 
 	// Forward the request.
@@ -1158,7 +1172,7 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 			SkillID:  sid,
 			Method:   req.Method,
 			Host:     host,
-			Path:     urlPath,
+			Path:     req.URL.Path,
 			Status:   "error",
 			Detail:   err.Error(),
 			Duration: time.Since(start).Milliseconds(),
@@ -1172,7 +1186,7 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 		SkillID:  sid,
 		Method:   req.Method,
 		Host:     host,
-		Path:     urlPath,
+		Path:     req.URL.Path,
 		Status:   "allowed",
 		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
 		Duration: time.Since(start).Milliseconds(),
@@ -1188,95 +1202,16 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 	io.Copy(w, resp.Body)
 }
 
+// handlePackageRepoTLSRequest handles TLS requests to package repositories.
 // Package-specific requests trigger package-level approval; metadata requests are
 // auto-approved since the repo host is configured explicitly.
 func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
 	sid := getSkillID(skill)
-	urlPath := req.URL.Path
-	repoType := library.PackageType(repo.Type)
 
-	// Check if this language/distro type is disabled entirely.
-	disabled := false
-	if isOSPkg {
-		disabled = config.IsDistroDisabled(repo.Type)
-	} else {
-		disabled = config.IsLanguageDisabled(repo.Type)
-	}
-	if disabled {
-		label := library.TypeLabel(repoType)
-		resource := label + " packages"
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  req.Method,
-			Host:    host,
-			Path:    urlPath,
-			Status:  "denied",
-			Detail:  label + " is disabled by policy",
-		})
-		writeErrorResponseConn(clientConn, approval.StatusDenied, resource)
+	deniedStatus, resource := p.checkPackageRepoAccess(req, host, sourceIP, skill, repo, isOSPkg, start)
+	if deniedStatus != "" {
+		writeErrorResponseConn(clientConn, deniedStatus, resource)
 		return
-	}
-
-	pkgName, ok := library.ParsePackageName(urlPath, repoType)
-	if !ok {
-		// Unrecognized path — auto-approve as repo infra.
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   "package repo infra (" + repo.Name + ")",
-			Duration: time.Since(start).Milliseconds(),
-		})
-	} else if pkgName == "" {
-		// Metadata request (index, dist, etc.) — auto-approve.
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   "package metadata (" + repo.Name + ")",
-			Duration: time.Since(start).Milliseconds(),
-		})
-	} else {
-		// Package-specific request — check approval.
-		mgr := p.LibraryApprovals
-		if isOSPkg {
-			mgr = p.PackageApprovals
-		}
-
-		// In learning mode, skip the fast-path check since pending entries
-		// (created by learning mode) won't match. Go directly through
-		// checkLibraryApproval which handles learning mode.
-		if !p.LearningMode && library.CheckPackageApproval(mgr, pkgName) {
-			// already approved — fast path
-		} else {
-			status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
-			if status != approval.StatusApproved {
-				resource := string(repoType) + " package " + pkgName
-				p.Logger.Add(proxylog.Entry{
-					SkillID: sid,
-					Method:  req.Method,
-					Host:    host,
-					Path:    urlPath,
-					Status:  string(status),
-					Detail:  "package not approved: " + string(repoType) + ":" + pkgName,
-				})
-				writeErrorResponseConn(clientConn, status, resource)
-				return
-			}
-		}
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   string(repoType) + ":" + pkgName,
-			Duration: time.Since(start).Milliseconds(),
-		})
 	}
 
 	// Forward to the real backend.
@@ -1290,7 +1225,7 @@ func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Reque
 			SkillID:  sid,
 			Method:   req.Method,
 			Host:     host,
-			Path:     urlPath,
+			Path:     req.URL.Path,
 			Status:   "error",
 			Detail:   err.Error(),
 			Duration: time.Since(start).Milliseconds(),
