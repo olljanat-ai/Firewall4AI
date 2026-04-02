@@ -700,12 +700,19 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 			return
 		}
 
-		p.handleMITMRequest(tlsClientConn, req, host, targetAddr, skill, sourceIP)
+		// Ensure targetAddr has a port for upstream forwarding.
+		upstreamAddr := targetAddr
+		if !strings.Contains(upstreamAddr, ":") {
+			upstreamAddr += ":443"
+		}
+		p.handleTLSRequest(tlsClientConn, req, host, upstreamAddr, skill, sourceIP)
 	}
 }
 
-// handleMITMRequest processes a single HTTP request read from the MITM'd TLS connection.
-func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, targetAddr string, skill *auth.Skill, sourceIP string) {
+// handleTLSRequest processes a single HTTP request from either a MITM'd
+// explicit CONNECT tunnel or a transparent TLS interception. The targetAddr
+// is used as the upstream host:port for forwarding (e.g. "example.com:443").
+func (p *Proxy) handleTLSRequest(clientConn net.Conn, req *http.Request, host, targetAddr string, skill *auth.Skill, sourceIP string) {
 	start := time.Now()
 	sid := getSkillID(skill)
 
@@ -758,9 +765,6 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	// Set the URL for forwarding.
 	req.URL.Scheme = "https"
 	req.URL.Host = targetAddr
-	if !strings.Contains(targetAddr, ":") {
-		req.URL.Host = targetAddr + ":443"
-	}
 	req.RequestURI = ""
 
 	// Inject credentials for HTTPS requests.
@@ -919,11 +923,9 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	}
 }
 
-// handleTransparentTLSRequest processes a single HTTP request from a
-// transparent TLS connection.
+// handleTransparentTLSRequest authenticates a request from a transparent TLS
+// connection and delegates to the unified handleTLSRequest handler.
 func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string) {
-	start := time.Now()
-
 	// Authenticate (optional in transparent mode).
 	skill, err := p.authenticateOptional(req)
 	if err != nil {
@@ -948,105 +950,7 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 		return
 	}
 
-	sid := getSkillID(skill)
-	req.Header.Del(AuthHeader)
-
-	// Check if this is a container registry request.
-	if reg := registry.RegistryForHost(host, p.Registries); reg != nil {
-		p.handleRegistryTLSRequest(clientConn, req, host, sourceIP, skill, reg, start)
-		return
-	}
-
-	// Check if this is a package repository request.
-	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
-		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, true, start)
-		return
-	}
-	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
-		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, false, start)
-		return
-	}
-
-	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
-	if status != approval.StatusApproved {
-		resource := host + req.URL.Path
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  req.Method,
-			Host:    host,
-			Path:    req.URL.Path,
-			Status:  string(status),
-			Detail:  "host not approved",
-		})
-		writeErrorResponseConn(clientConn, status, resource)
-		return
-	}
-
-	// Check logging mode.
-	logMode := p.getLoggingMode(host, req.URL.Path, skill, sourceIP)
-	var fullDetail *proxylog.FullDetail
-	if logMode == approval.LoggingModeFull {
-		reqBody := captureRequestBody(req)
-		fullDetail = &proxylog.FullDetail{
-			RequestHeaders: req.Header.Clone(),
-			RequestBody:    reqBody,
-		}
-	}
-
-	// Set URL for forwarding to the real backend.
-	req.URL.Scheme = "https"
-	req.URL.Host = host + ":443"
-	req.RequestURI = ""
-
-	// Inject credentials.
-	p.Credentials.InjectForRequest(req, sourceIP)
-	if fullDetail != nil {
-		fullDetail.InjectedHeaders = captureInjectedHeaders(fullDetail.RequestHeaders, req.Header)
-	}
-
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:    sid,
-			Method:     req.Method,
-			Host:       host,
-			Path:       req.URL.Path,
-			Status:     "error",
-			Detail:     err.Error(),
-			Duration:   time.Since(start).Milliseconds(),
-			HasFullLog: fullDetail != nil,
-			FullDetail: fullDetail,
-		})
-		resp502 := &http.Response{
-			StatusCode: http.StatusBadGateway,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-		}
-		resp502.Write(clientConn)
-		return
-	}
-	defer resp.Body.Close()
-
-	if fullDetail != nil {
-		fullDetail.ResponseHeaders = resp.Header.Clone()
-		fullDetail.ResponseStatus = resp.StatusCode
-		fullDetail.ResponseBody = captureResponseBody(resp)
-	}
-
-	p.Logger.Add(proxylog.Entry{
-		SkillID:    sid,
-		Method:     req.Method,
-		Host:       host,
-		Path:       req.URL.Path,
-		Status:     "allowed",
-		Detail:     fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration:   time.Since(start).Milliseconds(),
-		HasFullLog: fullDetail != nil,
-		FullDetail: fullDetail,
-	})
-
-	resp.Write(clientConn)
+	p.handleTLSRequest(clientConn, req, host, host+":443", skill, sourceIP)
 }
 
 // handleRegistryTLSRequest handles a request to a known container registry host.
