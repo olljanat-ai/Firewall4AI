@@ -7,7 +7,7 @@
   "registries": [
     {"name": "docker.io", "hosts": ["registry-1.docker.io", "auth.docker.io", "production.cloudflare.docker.com", "docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com"]},
     {"name": "ghcr.io", "hosts": ["ghcr.io", "pkg-containers.githubusercontent.com"]},
-    {"name": "quay.io", "hosts": ["quay.io", "quay-prod-1.gce.redhat.com"]},
+    {"name": "quay.io", "hosts": ["quay.io", "cdn01.quay.io", "cdn02.quay.io", "cdn03.quay.io", "cdn04.quay.io", "cdn05.quay.io", "cdn06.quay.io", "quay-prod-1.gce.redhat.com"]},
     {"name": "gcr.io", "hosts": ["gcr.io", "asia.gcr.io", "eu.gcr.io", "us.gcr.io"]},
     {"name": "mcr.microsoft.com", "hosts": ["mcr.microsoft.com"]},
     {"name": "nvcr.io", "hosts": ["nvcr.io"]},
