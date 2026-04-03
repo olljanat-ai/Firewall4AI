@@ -507,6 +507,48 @@ async function bulkAction(prefix, action) {
   if (activePage) navigate(activePage.id.replace('page-', ''));
 }
 
+function populateBulkCategorySelects() {
+  ['url', 'image', 'package', 'library'].forEach(prefix => {
+    const el = document.getElementById('bulk-category-' + prefix);
+    if (!el) return;
+    const current = el.value;
+    el.innerHTML = '<option value="">No category</option>';
+    currentCategories.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c;
+      o.textContent = c;
+      el.appendChild(o);
+    });
+    if (current && [...el.options].some(o => o.value === current)) {
+      el.value = current;
+    }
+  });
+}
+
+async function bulkSetCategory(prefix) {
+  const set = getSelectionSet(prefix);
+  if (set.size === 0) return;
+  const categoryEl = document.getElementById('bulk-category-' + prefix);
+  if (!categoryEl) return;
+  const category = categoryEl.value;
+  const items = getCurrentFiltered(prefix);
+  const keyFn = getKeyFn(prefix);
+  const selectedItems = items.filter(a => set.has(keyFn(a)));
+  if (selectedItems.length === 0) return;
+  const label = category ? `Set category to "${category}"` : 'Remove category from';
+  if (!confirm(`${label} ${selectedItems.length} selected item(s)?`)) return;
+  const apiPath = { url: '/api/approvals/category', image: '/api/images/category', package: '/api/packages/category', library: '/api/libraries/category' }[prefix];
+  try {
+    for (const a of selectedItems) {
+      const pp = prefix === 'url' ? (a.path_prefix || '') : '';
+      await api('PUT', apiPath, { host: a.host, skill_id: a.skill_id || '', source_ip: a.source_ip || '', path_prefix: pp, category });
+    }
+  } catch (e) { alert('Error: ' + e.message); return; }
+  set.clear();
+  const activePage = document.querySelector('.page.active');
+  if (activePage) navigate(activePage.id.replace('page-', ''));
+}
+
 function formatCategory(category) {
   if (!category) return '<span class="badge-status" style="opacity:0.4">-</span>';
   return '<span class="category-badge">' + esc(category) + '</span>';
@@ -566,6 +608,7 @@ async function refreshCategories() {
   } catch (e) {
     currentCategories = [];
   }
+  populateBulkCategorySelects();
 }
 
 async function refreshSkills() {

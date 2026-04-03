@@ -109,6 +109,8 @@
           <button class="btn btn-success btn-sm" onclick="bulkAction('url','approve')">Approve</button>
           <button class="btn btn-danger btn-sm" onclick="bulkAction('url','deny')">Deny</button>
           <button class="btn btn-outline btn-sm" onclick="bulkAction('url','promote')">Promote Global</button>
+          <select id="bulk-category-url" class="btn btn-outline btn-sm bulk-category-select" style="min-width:130px"></select>
+          <button class="btn btn-outline btn-sm" onclick="bulkSetCategory('url')">Set Category</button>
           <button class="btn btn-danger btn-sm" onclick="bulkAction('url','delete')">Delete</button>
           <button class="btn btn-outline btn-sm" onclick="clearSelection('url')">Clear selection</button>
         </div>
@@ -152,6 +154,8 @@
           <button class="btn btn-success btn-sm" onclick="bulkAction('image','approve')">Approve</button>
           <button class="btn btn-danger btn-sm" onclick="bulkAction('image','deny')">Deny</button>
           <button class="btn btn-outline btn-sm" onclick="bulkAction('image','promote')">Promote Global</button>
+          <select id="bulk-category-image" class="btn btn-outline btn-sm bulk-category-select" style="min-width:130px"></select>
+          <button class="btn btn-outline btn-sm" onclick="bulkSetCategory('image')">Set Category</button>
           <button class="btn btn-danger btn-sm" onclick="bulkAction('image','delete')">Delete</button>
           <button class="btn btn-outline btn-sm" onclick="clearSelection('image')">Clear selection</button>
         </div>
@@ -198,6 +202,8 @@
           <button class="btn btn-success btn-sm" onclick="bulkAction('package','approve')">Approve</button>
           <button class="btn btn-danger btn-sm" onclick="bulkAction('package','deny')">Deny</button>
           <button class="btn btn-outline btn-sm" onclick="bulkAction('package','promote')">Promote Global</button>
+          <select id="bulk-category-package" class="btn btn-outline btn-sm bulk-category-select" style="min-width:130px"></select>
+          <button class="btn btn-outline btn-sm" onclick="bulkSetCategory('package')">Set Category</button>
           <button class="btn btn-danger btn-sm" onclick="bulkAction('package','delete')">Delete</button>
           <button class="btn btn-outline btn-sm" onclick="clearSelection('package')">Clear selection</button>
         </div>
@@ -244,6 +250,8 @@
           <button class="btn btn-success btn-sm" onclick="bulkAction('library','approve')">Approve</button>
           <button class="btn btn-danger btn-sm" onclick="bulkAction('library','deny')">Deny</button>
           <button class="btn btn-outline btn-sm" onclick="bulkAction('library','promote')">Promote Global</button>
+          <select id="bulk-category-library" class="btn btn-outline btn-sm bulk-category-select" style="min-width:130px"></select>
+          <button class="btn btn-outline btn-sm" onclick="bulkSetCategory('library')">Set Category</button>
           <button class="btn btn-danger btn-sm" onclick="bulkAction('library','delete')">Delete</button>
           <button class="btn btn-outline btn-sm" onclick="clearSelection('library')">Clear selection</button>
         </div>
