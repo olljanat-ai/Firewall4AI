@@ -21,6 +21,19 @@ import (
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
 
+// testRedirectTransport wraps an http.RoundTripper and rewrites every
+// request URL so that it is sent to the given target host (e.g. the
+// httptest.Server address) instead of the host the proxy handler set.
+type testRedirectTransport struct {
+	inner      http.RoundTripper
+	targetHost string // host:port of the test backend
+}
+
+func (t *testRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.URL.Host = t.targetHost
+	return t.inner.RoundTrip(req)
+}
+
 func setupProxy(t *testing.T) (*Proxy, *auth.SkillStore, *approval.Manager) {
 	t.Helper()
 	skills := auth.NewSkillStore()
@@ -983,7 +996,8 @@ func TestProxy_HelmChart_CertManager_Approved(t *testing.T) {
 	p.HelmRepos = []config.PackageRepoConfig{
 		{Name: "Jetstack", Type: "helm", Hosts: []string{"charts.jetstack.io"}},
 	}
-	p.Transport = backend.Client().Transport
+	backendURL, _ := url.Parse(backend.URL)
+	p.Transport = &testRedirectTransport{inner: backend.Client().Transport, targetHost: backendURL.Host}
 
 	// Pre-approve cert-manager.
 	p.HelmChartApprovals.Decide("helm:cert-manager", "", "", "", approval.StatusApproved, "")
@@ -1074,7 +1088,8 @@ func TestProxy_HelmChart_IndexYaml_AutoApproved(t *testing.T) {
 	p.HelmRepos = []config.PackageRepoConfig{
 		{Name: "Jetstack", Type: "helm", Hosts: []string{"charts.jetstack.io"}},
 	}
-	p.Transport = backend.Client().Transport
+	backendURL, _ := url.Parse(backend.URL)
+	p.Transport = &testRedirectTransport{inner: backend.Client().Transport, targetHost: backendURL.Host}
 
 	req, _ := http.NewRequest("GET", "https://charts.jetstack.io:443/index.yaml", nil)
 	req.Host = "charts.jetstack.io"
@@ -1116,7 +1131,8 @@ func TestProxy_HelmChart_LearningMode_CertManager(t *testing.T) {
 		{Name: "Jetstack", Type: "helm", Hosts: []string{"charts.jetstack.io"}},
 	}
 	p.LearningMode = true
-	p.Transport = backend.Client().Transport
+	backendURL, _ := url.Parse(backend.URL)
+	p.Transport = &testRedirectTransport{inner: backend.Client().Transport, targetHost: backendURL.Host}
 
 	req, _ := http.NewRequest("GET", "https://charts.jetstack.io:443/charts/cert-manager-v1.14.0.tgz", nil)
 	req.Host = "charts.jetstack.io"

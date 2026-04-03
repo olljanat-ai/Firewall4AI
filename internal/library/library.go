@@ -414,8 +414,14 @@ func MatchPackageRef(pattern, pkg string) bool {
 	if pattern == pkg {
 		return true
 	}
+	// Prefix wildcard with /: "github.com/gorilla/*" matches "github.com/gorilla/mux"
 	if strings.HasSuffix(pattern, "/*") {
 		prefix := pattern[:len(pattern)-1] // include trailing /
+		return strings.HasPrefix(pkg, prefix)
+	}
+	// Trailing wildcard: "helm:kube-*" matches "helm:kube-prometheus-stack"
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
 		return strings.HasPrefix(pkg, prefix)
 	}
 	return false
