@@ -83,6 +83,26 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 }
 
 // statusToHTTPCode maps an approval status to the appropriate HTTP status code.
+// isConfiguredRepoHost returns true if the host belongs to a configured
+// container registry, Helm chart repo, OS package repo, or code library repo.
+// These hosts are auto-approved at the CONNECT level when MITM is available,
+// since the real access control happens per-item inside the tunnel.
+func (p *Proxy) isConfiguredRepoHost(host string) bool {
+	if registry.RegistryForHost(host, p.Registries) != nil {
+		return true
+	}
+	if library.RepoForHost(host, p.HelmRepos) != nil {
+		return true
+	}
+	if library.RepoForHost(host, p.OSPackages) != nil {
+		return true
+	}
+	if library.RepoForHost(host, p.CodeLibraries) != nil {
+		return true
+	}
+	return false
+}
+
 // StatusDenied -> 403 Forbidden, StatusPendingTimeout -> 407 Proxy Authentication Required.
 func statusToHTTPCode(status approval.Status) int {
 	if status == approval.StatusPendingTimeout {
@@ -597,11 +617,16 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For CONNECT with MITM, check if any approval (host-only or path-specific)
-	// exists. Per-request path checks happen in handleMITMRequest.
+	// For CONNECT with MITM, auto-approve hosts that belong to configured
+	// infrastructure (registries, Helm repos, package repos, code libraries)
+	// since the real access control happens per-item inside the tunnel.
+	// For other hosts, check host-level approval. Per-request path checks
+	// happen in handleMITMRequest.
 	// For blind tunnels (no MITM), use host-only check since we can't inspect paths.
 	var status approval.Status
-	if p.CA != nil {
+	if p.CA != nil && p.isConfiguredRepoHost(host) {
+		status = approval.StatusApproved
+	} else if p.CA != nil {
 		status = p.checkHostApproval(host, skill, sourceIP)
 	} else {
 		status = p.checkApproval(host, "", skill, sourceIP)
