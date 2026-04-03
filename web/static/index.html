@@ -15,7 +15,7 @@
         <a href="#" data-page="dashboard" class="active">&#x25a0; Dashboard</a>
         <a href="#" data-page="agents">&#x1f5a5; Agents</a>
         <a href="#" data-page="approvals">&#x1f517; URLs <span id="approval-badge" class="badge" style="display:none">0</span></a>
-        <a href="#" data-page="images">&#x1f4e6; Containers <span id="image-badge" class="badge" style="display:none">0</span></a>
+        <a href="#" data-page="images">&#x1f4e6; Containers <span id="image-badge" class="badge" style="display:none">0</span><span id="helm-chart-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="packages">&#x1f4e6; OS Packages <span id="package-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="libraries">&#x1f4da; Code Libraries <span id="library-badge" class="badge" style="display:none">0</span></a>
         <a href="#" data-page="templates">&#x1f4cb; Templates</a>
@@ -167,6 +167,48 @@
             </tbody>
           </table>
           <div id="pager-image" class="pager" style="display:none"></div>
+        </div>
+
+        <div class="toolbar" style="margin-top:24px">
+          <h2>Helm Charts</h2>
+          <button class="btn btn-primary" onclick="showAddHelmChartRule()">+ Add Helm Chart Rule</button>
+        </div>
+        <div class="filter-bar">
+          <select id="filter-helm-chart-category" onchange="onFilterChange('helm_chart')">
+            <option value="">All categories</option>
+          </select>
+          <select id="filter-helm-chart-skill" onchange="onFilterChange('helm_chart')">
+            <option value="">All skills</option>
+          </select>
+          <select id="filter-helm-chart-ip" onchange="onFilterChange('helm_chart')">
+            <option value="">All source IPs</option>
+          </select>
+          <select id="filter-helm-chart-status" onchange="onFilterChange('helm_chart')">
+            <option value="">All statuses</option>
+            <option value="approved">Approved</option>
+            <option value="denied">Denied</option>
+            <option value="pending" selected>Pending</option>
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="clearFilters('helm_chart')">Clear</button>
+        </div>
+        <div id="bulk-bar-helm_chart" class="bulk-bar" style="display:none">
+          <span class="bulk-count"></span>
+          <button class="btn btn-success btn-sm" onclick="bulkAction('helm_chart','approve')">Approve</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('helm_chart','deny')">Deny</button>
+          <button class="btn btn-outline btn-sm" onclick="bulkAction('helm_chart','promote')">Promote Global</button>
+          <select id="bulk-category-helm_chart" class="btn btn-outline btn-sm bulk-category-select" style="min-width:130px"></select>
+          <button class="btn btn-outline btn-sm" onclick="bulkSetCategory('helm_chart')">Set Category</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('helm_chart','delete')">Delete</button>
+          <button class="btn btn-outline btn-sm" onclick="clearSelection('helm_chart')">Clear selection</button>
+        </div>
+        <div class="card">
+          <table>
+            <thead><tr><th class="cb-col"><input type="checkbox" id="select-all-helm_chart" onchange="toggleSelectAll('helm_chart')"></th><th>Chart</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+            <tbody id="helm-charts-tbody">
+              <tr><td colspan="8" class="empty-state">No helm chart approval records</td></tr>
+            </tbody>
+          </table>
+          <div id="pager-helm_chart" class="pager" style="display:none"></div>
         </div>
       </div>
 
@@ -867,6 +909,51 @@
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideImageRuleModal()">Cancel</button>
         <button class="btn btn-primary" id="modal-image-submit" onclick="submitImageRule()">Add Rule</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Helm Chart Rule Modal -->
+  <div id="modal-helm-chart-rule" class="modal-overlay">
+    <div class="modal">
+      <h3 id="modal-helm-chart-title">Add Helm Chart Approval Rule</h3>
+      <div class="form-group">
+        <label>Chart (e.g., oci://registry/org/chart-name or repo/chart-name)</label>
+        <input type="text" id="helm-chart-rule-host" placeholder="e.g., oci://ghcr.io/org/chart-name or bitnami/nginx">
+      </div>
+      <div class="form-group">
+        <label>Level</label>
+        <select id="helm-chart-rule-level" onchange="updateHelmChartRuleFields()">
+          <option value="global">Global (all agents, all VMs)</option>
+          <option value="vm">VM-specific (by source IP)</option>
+        </select>
+      </div>
+      <div id="helm-chart-rule-vm-fields" style="display:none">
+        <div class="form-group">
+          <label>Source IP</label>
+          <input type="text" id="helm-chart-rule-source-ip" placeholder="e.g., 10.255.255.10">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Action</label>
+        <select id="helm-chart-rule-status">
+          <option value="approved">Approve</option>
+          <option value="denied">Deny</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Category (optional)</label>
+        <select id="helm-chart-rule-category">
+          <option value="">No category</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Note (optional)</label>
+        <input type="text" id="helm-chart-rule-note" placeholder="e.g., Allow nginx Helm chart">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="hideHelmChartRuleModal()">Cancel</button>
+        <button class="btn btn-primary" id="modal-helm-chart-submit" onclick="submitHelmChartRule()">Add Rule</button>
       </div>
     </div>
   </div>

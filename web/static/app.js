@@ -6,6 +6,7 @@ let lastLogID = 0;
 // Edit state trackers
 let editingRule = null;       // null = adding, { host, pathPrefix, skillID, sourceIP } = editing
 let editingImageRule = null;  // null = adding, { host, skillID, sourceIP } = editing
+let editingHelmChartRule = null; // null = adding, { host, skillID, sourceIP } = editing
 let editingPackageRule = null; // null = adding, { host, skillID, sourceIP } = editing
 let editingLibraryRule = null; // null = adding, { host, skillID, sourceIP } = editing
 let editingSkillID = null;    // null = creating, string = editing
@@ -16,6 +17,7 @@ let editingDBID = null;       // null = creating, string = editing
 // Cached data for edit lookups
 let currentApprovals = [];
 let currentImages = [];
+let currentHelmCharts = [];
 let currentPackages = [];
 let currentLibraries = [];
 let currentSkills = [];
@@ -31,6 +33,7 @@ const PAGE_SIZE = 50;
 let pageState = {
   url: { offset: 0, total: 0 },
   image: { offset: 0, total: 0 },
+  helm_chart: { offset: 0, total: 0 },
   package: { offset: 0, total: 0 },
   library: { offset: 0, total: 0 },
 };
@@ -38,12 +41,14 @@ let pageState = {
 // Selection state for bulk actions
 let selectedApprovals = new Set();
 let selectedImages = new Set();
+let selectedHelmCharts = new Set();
 let selectedPackages = new Set();
 let selectedLibraries = new Set();
 
 // Currently filtered items (for select-all and bulk operations)
 let currentFilteredApprovals = [];
 let currentFilteredImages = [];
+let currentFilteredHelmCharts = [];
 let currentFilteredPackages = [];
 let currentFilteredLibraries = [];
 
@@ -57,7 +62,7 @@ function navigate(page) {
   if (page === 'dashboard') loadDashboard();
   if (page === 'agents') loadAgents();
   if (page === 'approvals') loadApprovals();
-  if (page === 'images') loadImages();
+  if (page === 'images') { loadImages(); loadHelmCharts(); }
   if (page === 'packages') loadPackages();
   if (page === 'libraries') loadLibraries();
   if (page === 'templates') loadTemplates();
@@ -106,10 +111,11 @@ function formatPathPrefix(pathPrefix) {
 // --- Dashboard ---
 async function loadDashboard() {
   try {
-    const [stats, pending, pendingImages, pendingPkgs, pendingLibs] = await Promise.all([
+    const [stats, pending, pendingImages, pendingHelmCharts, pendingPkgs, pendingLibs] = await Promise.all([
       api('GET', '/api/logs/stats'),
       api('GET', '/api/approvals/pending'),
       api('GET', '/api/images/pending'),
+      api('GET', '/api/helm-charts/pending'),
       api('GET', '/api/packages/pending'),
       api('GET', '/api/libraries/pending'),
       refreshSkills(),
@@ -118,10 +124,11 @@ async function loadDashboard() {
     document.getElementById('stat-allowed').textContent = stats.allowed || 0;
     document.getElementById('stat-denied').textContent = stats.denied || 0;
     document.getElementById('stat-pending').textContent = stats.pending || 0;
-    document.getElementById('pending-count').textContent = (pending.length || 0) + (pendingImages.length || 0) + (pendingPkgs.length || 0) + (pendingLibs.length || 0);
+    document.getElementById('pending-count').textContent = (pending.length || 0) + (pendingImages.length || 0) + (pendingHelmCharts.length || 0) + (pendingPkgs.length || 0) + (pendingLibs.length || 0);
     // Update sidebar badges
     updateBadge('approval-badge', pending);
     updateBadge('image-badge', pendingImages);
+    updateBadge('helm-chart-badge', pendingHelmCharts);
     updateBadge('package-badge', pendingPkgs);
     updateBadge('library-badge', pendingLibs);
     // Recent pending (all types combined)
@@ -130,6 +137,7 @@ async function loadDashboard() {
     const allPending = [
       ...(pending || []).map(a => ({ ...a, _type: 'host' })),
       ...(pendingImages || []).map(a => ({ ...a, _type: 'image' })),
+      ...(pendingHelmCharts || []).map(a => ({ ...a, _type: 'helm_chart' })),
       ...(pendingPkgs || []).map(a => ({ ...a, _type: 'package' })),
       ...(pendingLibs || []).map(a => ({ ...a, _type: 'library' })),
     ];
@@ -140,9 +148,9 @@ async function loadDashboard() {
         const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
         const pathDisplay = a._type === 'host' ? formatPathPrefix(a.path_prefix) : '';
-        const apiPathMap = { host: '/api/approvals/decide', image: '/api/images/decide', package: '/api/packages/decide', library: '/api/libraries/decide' };
+        const apiPathMap = { host: '/api/approvals/decide', image: '/api/images/decide', helm_chart: '/api/helm-charts/decide', package: '/api/packages/decide', library: '/api/libraries/decide' };
         const apiPath = apiPathMap[a._type] || '/api/approvals/decide';
-        const typeLabelMap = { image: 'image', package: 'package', library: 'library' };
+        const typeLabelMap = { image: 'image', helm_chart: 'helm chart', package: 'package', library: 'library' };
         const typeLabel = typeLabelMap[a._type] ? '<span class="badge-status pending">' + typeLabelMap[a._type] + '</span> ' : '';
         const pp = a.path_prefix || '';
         const approveBtn = `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>`;
@@ -317,13 +325,14 @@ function clearFilters(prefix) {
   pageState[prefix].offset = 0;
   if (prefix === 'url') loadApprovals();
   if (prefix === 'image') loadImages();
+  if (prefix === 'helm_chart') loadHelmCharts();
   if (prefix === 'package') loadPackages();
   if (prefix === 'library') loadLibraries();
 }
 
 // Build query string for server-side filtered + paginated requests.
 function buildFilterQuery(prefix) {
-  const filter = prefix === 'package' || prefix === 'library' ? getTypedFilter(prefix) : getFilter(prefix);
+  const filter = (prefix === 'package' || prefix === 'library') ? getTypedFilter(prefix) : getFilter(prefix);
   const ps = pageState[prefix];
   const params = new URLSearchParams();
   if (filter.status) params.set('status', filter.status);
@@ -362,14 +371,14 @@ function goPage(prefix, dir) {
   const ps = pageState[prefix];
   ps.offset += dir * PAGE_SIZE;
   if (ps.offset < 0) ps.offset = 0;
-  const loaders = { url: loadApprovals, image: loadImages, package: loadPackages, library: loadLibraries };
+  const loaders = { url: loadApprovals, image: loadImages, helm_chart: loadHelmCharts, package: loadPackages, library: loadLibraries };
   loaders[prefix]();
 }
 
 // Reset page offset when filter changes.
 function onFilterChange(prefix) {
   pageState[prefix].offset = 0;
-  const loaders = { url: loadApprovals, image: loadImages, package: loadPackages, library: loadLibraries };
+  const loaders = { url: loadApprovals, image: loadImages, helm_chart: loadHelmCharts, package: loadPackages, library: loadLibraries };
   loaders[prefix]();
 }
 
@@ -386,6 +395,7 @@ function imgKey(a) {
 function getSelectionSet(prefix) {
   if (prefix === 'url') return selectedApprovals;
   if (prefix === 'image') return selectedImages;
+  if (prefix === 'helm_chart') return selectedHelmCharts;
   if (prefix === 'package') return selectedPackages;
   return selectedLibraries;
 }
@@ -393,6 +403,7 @@ function getSelectionSet(prefix) {
 function getCurrentFiltered(prefix) {
   if (prefix === 'url') return currentFilteredApprovals;
   if (prefix === 'image') return currentFilteredImages;
+  if (prefix === 'helm_chart') return currentFilteredHelmCharts;
   if (prefix === 'package') return currentFilteredPackages;
   return currentFilteredLibraries;
 }
@@ -467,8 +478,8 @@ async function bulkAction(prefix, action) {
   const items = getCurrentFiltered(prefix);
   const keyFn = getKeyFn(prefix);
   const selectedItems = items.filter(a => set.has(keyFn(a)));
-  const apiDecide = { url: '/api/approvals/decide', image: '/api/images/decide', package: '/api/packages/decide', library: '/api/libraries/decide' }[prefix];
-  const apiDelete = { url: '/api/approvals', image: '/api/images', package: '/api/packages', library: '/api/libraries' }[prefix];
+  const apiDecide = { url: '/api/approvals/decide', image: '/api/images/decide', helm_chart: '/api/helm-charts/decide', package: '/api/packages/decide', library: '/api/libraries/decide' }[prefix];
+  const apiDelete = { url: '/api/approvals', image: '/api/images', helm_chart: '/api/helm-charts', package: '/api/packages', library: '/api/libraries' }[prefix];
   if (action === 'promote') {
     const applicable = selectedItems.filter(a => a.source_ip && !a.skill_id);
     if (applicable.length === 0) {
@@ -508,7 +519,7 @@ async function bulkAction(prefix, action) {
 }
 
 function populateBulkCategorySelects() {
-  ['url', 'image', 'package', 'library'].forEach(prefix => {
+  ['url', 'image', 'helm_chart', 'package', 'library'].forEach(prefix => {
     const el = document.getElementById('bulk-category-' + prefix);
     if (!el) return;
     const current = el.value;
@@ -537,7 +548,7 @@ async function bulkSetCategory(prefix) {
   if (selectedItems.length === 0) return;
   const label = category ? `Set category to "${category}"` : 'Remove category from';
   if (!confirm(`${label} ${selectedItems.length} selected item(s)?`)) return;
-  const apiPath = { url: '/api/approvals/category', image: '/api/images/category', package: '/api/packages/category', library: '/api/libraries/category' }[prefix];
+  const apiPath = { url: '/api/approvals/category', image: '/api/images/category', helm_chart: '/api/helm-charts/category', package: '/api/packages/category', library: '/api/libraries/category' }[prefix];
   try {
     for (const a of selectedItems) {
       const pp = prefix === 'url' ? (a.path_prefix || '') : '';
@@ -1065,6 +1076,194 @@ async function submitImageRule() {
     await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: sourceIP, category, status, note });
     hideImageRuleModal();
     loadImages();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Helm Charts ---
+async function loadHelmCharts() {
+  try {
+    const query = buildFilterQuery('helm_chart');
+    const [result, meta] = await Promise.all([
+      api('GET', '/api/helm-charts?' + query),
+      api('GET', '/api/helm-charts/meta'),
+      refreshSkills(),
+    ]);
+    const items = result.items || [];
+    pageState.helm_chart.total = result.total || 0;
+    currentHelmCharts = items;
+    currentFilteredHelmCharts = items;
+    currentCategories = meta.categories || [];
+    populateSelect('filter-helm-chart-category', currentCategories.map(c => ({ value: c, label: c })), 'All categories');
+    const skillOpts = (meta.skill_ids || []).map(id => ({ value: id, label: skillNameByID(id) }));
+    skillOpts.sort((a, b) => a.label.localeCompare(b.label));
+    populateSelect('filter-helm-chart-skill', skillOpts, 'All skills');
+    populateSelect('filter-helm-chart-ip', (meta.source_ips || []).map(ip => ({ value: ip, label: ip })), 'All source IPs');
+    const tbody = document.getElementById('helm-charts-tbody');
+    const rows = [];
+    if (items.length === 0) {
+      rows.push('<tr><td colspan="8" class="empty-state">No helm chart approval records</td></tr>');
+    } else {
+      items.forEach((a, i) => {
+        const key = imgKey(a);
+        const cbChecked = selectedHelmCharts.has(key) ? 'checked' : '';
+        const skillDisplay = formatSkillID(a.skill_id);
+        const sourceDisplay = formatSourceIP(a.source_ip);
+        const categoryDisplay = formatCategory(a.category);
+        const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditHelmChartRule(${i})" title="Edit rule">Edit</button>`;
+        const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteHelmChart('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+        let actions = '';
+        if (a.status === 'pending') {
+          const vmBtn = a.source_ip
+            ? `<button class="btn btn-outline btn-sm" onclick="decideHelmChart('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+          const globalBtn = (a.skill_id || a.source_ip)
+            ? `<button class="btn btn-outline btn-sm" onclick="decideHelmChart('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
+          actions = `<button class="btn btn-success btn-sm" onclick="decideHelmChart('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+             ${vmBtn} ${globalBtn}
+             <button class="btn btn-danger btn-sm" onclick="decideHelmChart('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+             ${editBtn} ${deleteBtn}`;
+        } else {
+          const promoteBtn = a.source_ip && !a.skill_id
+            ? `<button class="btn btn-outline btn-sm" onclick="promoteHelmChartToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+          actions = `<button class="btn btn-outline btn-sm" onclick="decideHelmChart('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+             <button class="btn btn-outline btn-sm" onclick="decideHelmChart('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+             ${promoteBtn}
+             ${editBtn} ${deleteBtn}`;
+        }
+        rows.push(`<tr>
+          <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('helm_chart',this)"></td>
+          <td><strong>${esc(a.host)}</strong>${a.host.includes('*') ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px">wildcard</span>' : ''}</td>
+          <td>${categoryDisplay}</td>
+          <td>${skillDisplay}</td>
+          <td>${sourceDisplay}</td>
+          <td><span class="badge-status ${a.status}">${a.status}</span></td>
+          <td>${timeAgo(a.updated_at)}</td>
+          <td>${actions}</td>
+        </tr>`);
+      });
+    }
+    tbody.innerHTML = rows.join('');
+    updateBulkBar('helm_chart');
+    renderPager('helm_chart');
+  } catch (e) {
+    console.error('Helm charts load error:', e);
+  }
+}
+
+async function decideHelmChart(host, skillID, sourceIP, status) {
+  try {
+    await api('POST', '/api/helm-charts/decide', { host, skill_id: skillID, source_ip: sourceIP, status });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteHelmChart(host, skillID, sourceIP) {
+  if (!confirm(`Delete helm chart rule for "${host}"?`)) return;
+  try {
+    await api('DELETE', '/api/helm-charts', { host, skill_id: skillID, source_ip: sourceIP });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function promoteHelmChartToGlobal(host, sourceIP, status) {
+  if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
+  try {
+    await api('POST', '/api/helm-charts/decide', { host, skill_id: '', source_ip: '', status });
+    await api('DELETE', '/api/helm-charts', { host, skill_id: '', source_ip: sourceIP });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Helm Chart Rule Modal ---
+function showAddHelmChartRule() {
+  editingHelmChartRule = null;
+  document.getElementById('modal-helm-chart-title').textContent = 'Add Helm Chart Approval Rule';
+  document.getElementById('modal-helm-chart-submit').textContent = 'Add Rule';
+  document.getElementById('helm-chart-rule-host').value = '';
+  document.getElementById('helm-chart-rule-level').value = 'global';
+  document.getElementById('helm-chart-rule-source-ip').value = '';
+  document.getElementById('helm-chart-rule-status').value = 'approved';
+  populateCategorySelect('helm-chart-rule-category', '');
+  document.getElementById('helm-chart-rule-note').value = '';
+  updateHelmChartRuleFields();
+  document.getElementById('modal-helm-chart-rule').classList.add('active');
+}
+
+function showEditHelmChartRule(idx) {
+  const a = currentHelmCharts[idx];
+  if (!a) return;
+  editingHelmChartRule = { host: a.host, skillID: a.skill_id || '', sourceIP: a.source_ip || '' };
+  document.getElementById('modal-helm-chart-title').textContent = 'Edit Helm Chart Approval Rule';
+  document.getElementById('modal-helm-chart-submit').textContent = 'Save';
+  document.getElementById('helm-chart-rule-host').value = a.host;
+  if (a.source_ip) {
+    document.getElementById('helm-chart-rule-level').value = 'vm';
+    document.getElementById('helm-chart-rule-source-ip').value = a.source_ip;
+  } else {
+    document.getElementById('helm-chart-rule-level').value = 'global';
+  }
+  document.getElementById('helm-chart-rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  populateCategorySelect('helm-chart-rule-category', a.category || '');
+  document.getElementById('helm-chart-rule-note').value = a.note || '';
+  updateHelmChartRuleFields();
+  document.getElementById('modal-helm-chart-rule').classList.add('active');
+}
+
+function hideHelmChartRuleModal() {
+  document.getElementById('modal-helm-chart-rule').classList.remove('active');
+  editingHelmChartRule = null;
+}
+
+function updateHelmChartRuleFields() {
+  const level = document.getElementById('helm-chart-rule-level').value;
+  document.getElementById('helm-chart-rule-vm-fields').style.display = level === 'vm' ? 'block' : 'none';
+}
+
+async function submitHelmChartRule() {
+  const host = document.getElementById('helm-chart-rule-host').value.trim();
+  if (!host) { alert('Helm chart reference is required'); return; }
+  const level = document.getElementById('helm-chart-rule-level').value;
+  const status = document.getElementById('helm-chart-rule-status').value;
+  const category = document.getElementById('helm-chart-rule-category').value.trim();
+  const note = document.getElementById('helm-chart-rule-note').value.trim();
+  let sourceIP = '';
+  if (level === 'vm') {
+    sourceIP = document.getElementById('helm-chart-rule-source-ip').value.trim();
+    if (!sourceIP) { alert('Source IP is required for VM-specific rules'); return; }
+  }
+  try {
+    if (editingHelmChartRule) {
+      const keyChanged = editingHelmChartRule.host !== host ||
+        editingHelmChartRule.sourceIP !== sourceIP;
+      if (keyChanged) {
+        await api('DELETE', '/api/helm-charts', {
+          host: editingHelmChartRule.host, skill_id: editingHelmChartRule.skillID,
+          source_ip: editingHelmChartRule.sourceIP,
+        });
+      }
+    }
+    await api('POST', '/api/helm-charts/decide', { host, skill_id: '', source_ip: sourceIP, category, status, note });
+    hideHelmChartRuleModal();
+    loadHelmCharts();
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -2195,7 +2394,7 @@ function syntaxHighlightJSON(escaped) {
 }
 
 // --- Polling ---
-let lastPendingCounts = { approvals: -1, images: -1, packages: -1, libraries: -1 };
+let lastPendingCounts = { approvals: -1, images: -1, helm_charts: -1, packages: -1, libraries: -1 };
 
 function startPolling() {
   pollInterval = setInterval(async () => {
@@ -2204,12 +2403,14 @@ function startPolling() {
       const counts = await api('GET', '/api/pending-counts');
       updateBadgeCount('approval-badge', counts.approvals || 0);
       updateBadgeCount('image-badge', counts.images || 0);
+      updateBadgeCount('helm-chart-badge', counts.helm_charts || 0);
       updateBadgeCount('package-badge', counts.packages || 0);
       updateBadgeCount('library-badge', counts.libraries || 0);
 
       // Only refresh active page if pending counts changed.
       const changed = counts.approvals !== lastPendingCounts.approvals ||
         counts.images !== lastPendingCounts.images ||
+        counts.helm_charts !== lastPendingCounts.helm_charts ||
         counts.packages !== lastPendingCounts.packages ||
         counts.libraries !== lastPendingCounts.libraries;
       lastPendingCounts = { ...counts };
@@ -2235,6 +2436,7 @@ function startPolling() {
         }
         if (document.getElementById('page-images').classList.contains('active')) {
           loadImages();
+          loadHelmCharts();
         }
         if (document.getElementById('page-packages').classList.contains('active')) {
           loadPackages();

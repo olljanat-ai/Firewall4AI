@@ -284,6 +284,8 @@ func (h *Handler) managerForType(ruleType string) *approval.Manager {
 		return h.Approvals
 	case "image":
 		return h.ImageApprovals
+	case "helm_chart":
+		return h.HelmChartApprovals
 	case "package":
 		return h.PackageApprovals
 	case "library":

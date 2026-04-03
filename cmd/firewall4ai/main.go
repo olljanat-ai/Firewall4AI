@@ -43,6 +43,7 @@ type storeData struct {
 	Approvals         []approval.HostApproval   `json:"approvals"`
 	Creds             []credentials.Credential  `json:"credentials"`
 	ImageApprovals    []approval.HostApproval   `json:"image_approvals"`
+	HelmChartApprovals []approval.HostApproval  `json:"helm_chart_approvals"`
 	PackageApprovals  []approval.HostApproval   `json:"package_approvals"`
 	LibraryApprovals  []approval.HostApproval   `json:"library_approvals"`
 	Categories        []string                  `json:"categories"`
@@ -94,6 +95,7 @@ func main() {
 	skills := auth.NewSkillStore()
 	approvals := approval.NewManager()
 	imageApprovals := approval.NewManager()
+	helmChartApprovals := approval.NewManager()
 	packageApprovals := approval.NewManager()
 	libraryApprovals := approval.NewManager()
 	creds := credentials.NewManager()
@@ -136,6 +138,7 @@ func main() {
 	skills.LoadSkills(state.Skills)
 	approvals.LoadApprovals(state.Approvals)
 	imageApprovals.LoadApprovals(state.ImageApprovals)
+	helmChartApprovals.LoadApprovals(state.HelmChartApprovals)
 	packageApprovals.LoadApprovals(state.PackageApprovals)
 	libraryApprovals.LoadApprovals(state.LibraryApprovals)
 	creds.LoadCredentials(state.Creds)
@@ -217,11 +220,12 @@ func main() {
 
 	// Setup API handler.
 	apiHandler := &api.Handler{
-		Skills:           skills,
-		Approvals:        approvals,
-		ImageApprovals:   imageApprovals,
-		PackageApprovals: packageApprovals,
-		LibraryApprovals: libraryApprovals,
+		Skills:             skills,
+		Approvals:          approvals,
+		ImageApprovals:     imageApprovals,
+		HelmChartApprovals: helmChartApprovals,
+		PackageApprovals:   packageApprovals,
+		LibraryApprovals:   libraryApprovals,
 		Credentials:      creds,
 		DatabaseManager:  dbMgr,
 		ImageManager:     imageMgr,
@@ -303,6 +307,7 @@ func main() {
 			d.Skills = skills.ListSkills()
 			d.Approvals = approvals.Export()
 			d.ImageApprovals = imageApprovals.Export()
+			d.HelmChartApprovals = helmChartApprovals.Export()
 			d.PackageApprovals = packageApprovals.Export()
 			d.LibraryApprovals = libraryApprovals.Export()
 			d.Creds = creds.List()
@@ -433,10 +438,11 @@ func main() {
 	// Setup agent API server (available on agent network).
 	agentAPIMux := http.NewServeMux()
 	agentHandler := &api.AgentHandler{
-		Approvals:        approvals,
-		ImageApprovals:   imageApprovals,
-		PackageApprovals: packageApprovals,
-		LibraryApprovals: libraryApprovals,
+		Approvals:          approvals,
+		ImageApprovals:     imageApprovals,
+		HelmChartApprovals: helmChartApprovals,
+		PackageApprovals:   packageApprovals,
+		LibraryApprovals:   libraryApprovals,
 		Skills:           skills,
 		CACertPEM:        ca.CertPEM,
 		DatabaseManager:  dbMgr,

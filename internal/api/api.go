@@ -30,6 +30,7 @@ type Handler struct {
 	Skills                   *auth.SkillStore
 	Approvals                *approval.Manager
 	ImageApprovals           *approval.Manager // image-level approvals for container registry
+	HelmChartApprovals       *approval.Manager // Helm chart approvals
 	PackageApprovals         *approval.Manager // OS Packages (e.g., Debian)
 	LibraryApprovals         *approval.Manager // Code Libraries (e.g., Go, npm, PyPI, NuGet)
 	Credentials              *credentials.Manager
@@ -103,6 +104,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/images/category", h.setImageCategory)
 	mux.HandleFunc("GET /api/images/meta", h.imageMeta)
 	mux.HandleFunc("DELETE /api/images", h.deleteImageApproval)
+
+	// Helm Charts
+	mux.HandleFunc("GET /api/helm-charts", h.listHelmChartApprovals)
+	mux.HandleFunc("GET /api/helm-charts/pending", h.listPendingHelmCharts)
+	mux.HandleFunc("POST /api/helm-charts/decide", h.decideHelmChartApproval)
+	mux.HandleFunc("PUT /api/helm-charts/category", h.setHelmChartCategory)
+	mux.HandleFunc("GET /api/helm-charts/meta", h.helmChartMeta)
+	mux.HandleFunc("DELETE /api/helm-charts", h.deleteHelmChartApproval)
 
 	// OS Packages (e.g., Debian)
 	mux.HandleFunc("GET /api/packages", h.listPackageApprovals)
@@ -229,6 +238,12 @@ func (h *Handler) imageMeta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, meta)
 }
 
+func (h *Handler) helmChartMeta(w http.ResponseWriter, r *http.Request) {
+	meta := h.HelmChartApprovals.GetFilterMeta()
+	meta.Categories = h.ListCategoriesSlice()
+	writeJSON(w, http.StatusOK, meta)
+}
+
 func (h *Handler) packageMeta(w http.ResponseWriter, r *http.Request) {
 	meta := h.PackageApprovals.GetFilterMeta()
 	meta.Categories = h.ListCategoriesSlice()
@@ -243,10 +258,11 @@ func (h *Handler) libraryMeta(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) getPendingCounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{
-		"approvals": h.Approvals.PendingCount(),
-		"images":    h.ImageApprovals.PendingCount(),
-		"packages":  h.PackageApprovals.PendingCount(),
-		"libraries": h.LibraryApprovals.PendingCount(),
+		"approvals":   h.Approvals.PendingCount(),
+		"images":      h.ImageApprovals.PendingCount(),
+		"helm_charts": h.HelmChartApprovals.PendingCount(),
+		"packages":    h.PackageApprovals.PendingCount(),
+		"libraries":   h.LibraryApprovals.PendingCount(),
 	})
 }
 
@@ -660,6 +676,67 @@ func (h *Handler) deleteImageApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.ImageApprovals.Delete(req.Host, req.SkillID, req.SourceIP, "")
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+// --- Helm Charts ---
+
+func (h *Handler) listHelmChartApprovals(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") ||
+		r.URL.Query().Has("status") || r.URL.Query().Has("category") ||
+		r.URL.Query().Has("skill_id") || r.URL.Query().Has("source_ip") {
+		p := parseFilterParams(r)
+		writeJSON(w, http.StatusOK, h.HelmChartApprovals.ListFiltered(p))
+		return
+	}
+	writeJSON(w, http.StatusOK, h.HelmChartApprovals.ListAll())
+}
+
+func (h *Handler) listPendingHelmCharts(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.HelmChartApprovals.ListPending())
+}
+
+func (h *Handler) decideHelmChartApproval(w http.ResponseWriter, r *http.Request) {
+	var req decisionRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Status != approval.StatusApproved && req.Status != approval.StatusDenied {
+		http.Error(w, "status must be 'approved' or 'denied'", http.StatusBadRequest)
+		return
+	}
+	h.HelmChartApprovals.Decide(req.Host, req.SkillID, req.SourceIP, "", req.Status, req.Note)
+	if req.Category != "" {
+		h.HelmChartApprovals.SetCategory(req.Host, req.SkillID, req.SourceIP, "", req.Category)
+	}
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) setHelmChartCategory(w http.ResponseWriter, r *http.Request) {
+	var req setCategoryRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	h.HelmChartApprovals.SetCategory(req.Host, req.SkillID, req.SourceIP, "", req.Category)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) deleteHelmChartApproval(w http.ResponseWriter, r *http.Request) {
+	var req deleteApprovalRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Host == "" {
+		http.Error(w, "host is required", http.StatusBadRequest)
+		return
+	}
+	h.HelmChartApprovals.Delete(req.Host, req.SkillID, req.SourceIP, "")
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }

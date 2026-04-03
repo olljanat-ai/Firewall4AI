@@ -24,8 +24,9 @@ import (
 // query access to AI agents.
 type AgentHandler struct {
 	Approvals        *approval.Manager
-	ImageApprovals   *approval.Manager
-	PackageApprovals *approval.Manager
+	ImageApprovals     *approval.Manager
+	HelmChartApprovals *approval.Manager
+	PackageApprovals   *approval.Manager
 	LibraryApprovals *approval.Manager
 	Skills           *auth.SkillStore
 	CACertPEM        []byte // PEM-encoded CA certificate
