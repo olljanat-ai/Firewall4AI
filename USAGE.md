@@ -61,14 +61,14 @@ When registries are configured in `config.json`, the proxy recognizes traffic to
 When an agent pulls an image (e.g., `docker pull ubuntu:latest`):
 1. Docker connects to `registry-1.docker.io` — transparently intercepted by iptables
 2. The proxy detects this is a configured registry host and parses the image reference (`docker.io/library/ubuntu:latest`)
-3. If no approval exists, a pending entry appears in the admin UI **Container Images** tab
+3. If no approval exists, a pending entry appears in the admin UI **Containers** tab
 4. Admin approves or denies the image pull
 5. Wildcard patterns are supported for pre-approving images:
    - `docker.io/library/*` — all official Docker Hub images
    - `docker.io/library/ubuntu:*` — any tag of ubuntu
    - `ghcr.io/myorg/*` — all images from a GitHub organization
 
-Image approvals use the same three-level system as host approvals (global, VM-specific, skill-specific).
+Container Images use the same three-level system as host approvals (global, VM-specific, skill-specific).
 
 #### Registry Configuration
 The `registries` config lists all hostnames associated with each registry (API, auth, CDN):

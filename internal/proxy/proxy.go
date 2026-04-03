@@ -48,8 +48,8 @@ type Proxy struct {
 	Skills           *auth.SkillStore
 	Approvals        *approval.Manager
 	ImageApprovals   *approval.Manager // image-level approvals for container registries
-	PackageApprovals *approval.Manager // OS package approvals (e.g., Debian)
-	LibraryApprovals *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
+	PackageApprovals *approval.Manager // OS Packages (e.g., Debian)
+	LibraryApprovals *approval.Manager // Code Libraries (e.g., Go, npm, PyPI, NuGet)
 	Registries       []config.RegistryConfig
 	OSPackages       []config.PackageRepoConfig
 	CodeLibraries    []config.PackageRepoConfig

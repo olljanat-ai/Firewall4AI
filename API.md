@@ -14,11 +14,11 @@
 | `GET` | `/api/approvals/pending` | List pending approvals |
 | `POST` | `/api/approvals/decide` | Approve or deny a host (empty `skill_id` + empty `source_ip` = global, empty `skill_id` + `source_ip` = VM-specific) |
 
-### Image Approvals (Container Registry)
+### Container Images (Container Registry)
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/images` | List all image approvals |
-| `GET` | `/api/images/pending` | List pending image approvals |
+| `GET` | `/api/images` | List all Container Images |
+| `GET` | `/api/images/pending` | List pending Container Images |
 | `POST` | `/api/images/decide` | Approve or deny an image (same level semantics as host approvals) |
 | `DELETE` | `/api/images` | Delete an image approval rule |
 

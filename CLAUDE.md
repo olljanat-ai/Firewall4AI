@@ -9,12 +9,12 @@ Firewall4AI is a transparent firewall/proxy that controls AI agent internet acce
 - **iptables REDIRECT**: Port 80 -> :8080, port 443 -> :8443 for transparent interception
 - **TLS MITM**: Auto-generated CA signs per-host certificates; agents must trust the CA
 - **Default-deny**: All connections blocked until admin approves
-- **Three-level approval**: Global (all agents/VMs) -> VM-specific (by source IP) -> Skill-specific (by skill token, for getting more permissions). Used for both host approvals and image approvals.
+- **Three-level approval**: Global (all agents/VMs) -> VM-specific (by source IP) -> Skill-specific (by skill token, for getting more permissions). Used for both host approvals and Container Images.
 - **Container registry awareness**: Transparent proxy detects Docker Registry V2 traffic to configured registry hosts and applies per-image approval instead of per-host approval. No Docker mirror config needed on agent VMs.
 - **Disk image-based provisioning**: Admin creates disk images (specifying OS, packages, scripts) which are built into rootfs tarballs. Agent VMs reference a disk image and are deployed via PXE boot using a universal Alpine-based deploy system that partitions, formats, and extracts the rootfs for fast boot.
 - **Integrated network services**: DHCP, DNS, and TFTP servers are built into the single binary, replacing the previous dnsmasq dependency.
 - **VM appliance**: Debian 13 ISO built with Elemental Toolkit, two NICs (eth0=internet, eth1=agent network 10.255.255.0/24)
-- **Immutable OS**: Elemental Toolkit provides immutable rootfs with btrfs snapshots and OTA upgrades via container images
+- **Immutable OS**: Elemental Toolkit provides immutable rootfs with btrfs snapshots and OTA upgrades via Containers
 - **Persistent storage**: Rules (state.json), CA certificates, DHCP leases, disk images, and logs stored on COS_PERSISTENT partition
 - **Permanent DHCP leases**: Agents get stable IPs for reliable VM-specific approvals
 - **SQL database proxy**: Agent API provides HTTP endpoints to query configured SQL databases (MSSQL, PostgreSQL, MySQL). Connections configured via admin UI with per-database API paths and credentials.
@@ -77,7 +77,7 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 - **URL path prefix**: Approvals can optionally restrict access to specific URL path prefixes (e.g., `github.com` with `path_prefix="/olljanat-ai/"` allows only that org's repos). Empty `PathPrefix` means all paths (backward compatible). When multiple approvals match, the most specific (longest PathPrefix) wins. For CONNECT+MITM, any path-specific approval implies host-level tunnel access; per-request path checks enforce restrictions inside the tunnel.
 - **Anonymous access**: Agents can make requests without skill tokens. These go through the global/VM approval system. Invalid tokens are rejected; missing tokens are anonymous.
 - **GUID tokens**: Skill tokens use UUID v4 format (e.g., `a1b2c3d4-e5f6-4789-abcd-ef0123456789`). Skill IDs can be user-provided or auto-generated GUIDs.
-- **State persistence**: All state (skills, approvals, credentials, image approvals, disk images, agents, DHCP leases, disabled languages/distros) stored in a single `state.json` file, loaded at startup, saved on mutations and shutdown.
+- **State persistence**: All state (skills, approvals, credentials, Container Images, disk images, agents, DHCP leases, disabled languages/distros) stored in a single `state.json` file, loaded at startup, saved on mutations and shutdown.
 - **Registry integration**: Configured registry hosts are detected in the transparent proxy. Manifest requests (`/v2/{name}/manifests/{ref}`) trigger image-level approval. Blob requests are allowed at repo level once any image in that repo is approved. All other registry traffic (auth endpoints, /v2/ pings, CDN) is auto-approved since the registry is configured explicitly.
 - **Language/distro toggle**: Admin can disable entire programming language types (e.g., npm, pypi) or OS distro types (e.g., alpine) via settings. Disabled types return 403 immediately without creating pending entries. Settings stored in `state.json` as `disabled_languages` and `disabled_distros` arrays.
 - **Agent API**: Plain HTTP server on eth1 (10.255.255.1:80) serves `GET /v1/policy` (JSON with allowed/disallowed languages, packages, URLs), `POST /v1/db/{name}/query` (SQL database query proxy), `GET /ca.crt` (CA certificate), and boot/deploy endpoints for PXE provisioning.
@@ -115,8 +115,8 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 - Persistent data (state.json, CA certs, disk images, DHCP leases) survives reboots/upgrades via COS_PERSISTENT partition
 - OTA upgrades via `elemental upgrade --system oci:<image>` using the pushed container image from GHCR
 - The transparent proxy detects registry hosts via `registry.RegistryForHost()` and routes to `handleRegistryTLSRequest()` for image-level approval instead of host-level
-- Image approvals use a second `approval.Manager` instance, persisted as `image_approvals` in state.json
-- Image approvals follow the same three-level pattern as host approvals; the `Host` field contains the image reference (e.g., `docker.io/library/ubuntu:latest`)
+- Container Images use a second `approval.Manager` instance, persisted as `image_approvals` in state.json
+- Container Images follow the same three-level pattern as host approvals; the `Host` field contains the image reference (e.g., `docker.io/library/ubuntu:latest`)
 - Registry config is in `config.json` under `registries` array; each entry has `name` and `hosts` (all associated hostnames: registry API, auth, CDN)
 - All configured registry hosts are auto-approved for network access; the real access control is per-image
 - Disk image management API: CRUD via `/api/disk-images`, build trigger via `/api/disk-images/build`, version delete via `/api/disk-images/version`

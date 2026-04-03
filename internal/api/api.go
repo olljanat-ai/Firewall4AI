@@ -30,8 +30,8 @@ type Handler struct {
 	Skills                   *auth.SkillStore
 	Approvals                *approval.Manager
 	ImageApprovals           *approval.Manager // image-level approvals for container registry
-	PackageApprovals         *approval.Manager // OS package approvals (e.g., Debian)
-	LibraryApprovals         *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
+	PackageApprovals         *approval.Manager // OS Packages (e.g., Debian)
+	LibraryApprovals         *approval.Manager // Code Libraries (e.g., Go, npm, PyPI, NuGet)
 	Credentials              *credentials.Manager
 	Logger                   *proxylog.Logger
 	SaveFunc                 func() error           // called after state mutations to persist
@@ -96,7 +96,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/databases", h.updateDatabase)
 	mux.HandleFunc("DELETE /api/databases", h.deleteDatabase)
 
-	// Image Approvals (container registry)
+	// Container Images (container registry)
 	mux.HandleFunc("GET /api/images", h.listImageApprovals)
 	mux.HandleFunc("GET /api/images/pending", h.listPendingImages)
 	mux.HandleFunc("POST /api/images/decide", h.decideImageApproval)
@@ -104,7 +104,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/images/meta", h.imageMeta)
 	mux.HandleFunc("DELETE /api/images", h.deleteImageApproval)
 
-	// OS Package Approvals (e.g., Debian)
+	// OS Packages (e.g., Debian)
 	mux.HandleFunc("GET /api/packages", h.listPackageApprovals)
 	mux.HandleFunc("GET /api/packages/pending", h.listPendingPackages)
 	mux.HandleFunc("POST /api/packages/decide", h.decidePackageApproval)
@@ -112,7 +112,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/packages/meta", h.packageMeta)
 	mux.HandleFunc("DELETE /api/packages", h.deletePackageApproval)
 
-	// Code Library Approvals (Go, npm, PyPI, NuGet)
+	// Code Libraries (Go, npm, PyPI, NuGet)
 	mux.HandleFunc("GET /api/libraries", h.listLibraryApprovals)
 	mux.HandleFunc("GET /api/libraries/pending", h.listPendingLibraries)
 	mux.HandleFunc("POST /api/libraries/decide", h.decideLibraryApproval)
@@ -614,7 +614,7 @@ func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
-// --- Image Approvals ---
+// --- Container Images ---
 
 func (h *Handler) listImageApprovals(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") ||
@@ -664,7 +664,7 @@ func (h *Handler) deleteImageApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
-// --- OS Package Approvals ---
+// --- OS Packages ---
 
 func (h *Handler) listPackageApprovals(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") ||
@@ -726,7 +726,7 @@ func (h *Handler) deletePackageApproval(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
-// --- Code Library Approvals ---
+// --- Code Libraries ---
 
 func (h *Handler) listLibraryApprovals(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") ||

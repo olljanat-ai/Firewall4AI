@@ -1033,7 +1033,7 @@ func installContainerTools(img *DiskImage, rootfsDir string, isDebian bool, debE
 }
 
 // installK3s downloads the K3s binary and sets up the K3s service.
-// It pre-runs K3s during build so that container images are pulled and the node
+// It pre-runs K3s during build so that Containers are pulled and the node
 // is ready immediately when the agent VM boots.
 func installK3s(rootfsDir string, isDebian bool, debEnv []string) error {
 	k3sVersion := "v1.35.3+k3s1"
@@ -1123,7 +1123,7 @@ depend() {
 	// FixMe: Temporarily disabled because gets stuck to error loop.
 	/*
 			// Pre-run K3s to pull images and initialize the node so it's ready at boot.
-			buildLog("Pre-running K3s to pull container images and initialize node...")
+			buildLog("Pre-running K3s to pull Containers and initialize node...")
 
 			// K3s needs /proc, /sys, /dev mounted (already done by build flow).
 			// Run K3s server briefly to let it pull all required images.
