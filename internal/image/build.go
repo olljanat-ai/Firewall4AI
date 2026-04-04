@@ -2,6 +2,7 @@ package image
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,15 +48,22 @@ type BuildSettings struct {
 	GitEmail    string // git user.email
 }
 
+// ErrBuildCanceled is returned when a build is canceled by the user.
+var ErrBuildCanceled = fmt.Errorf("build canceled")
+
 // BuildImage builds a new version of a disk image by creating a rootfs tarball.
 // This runs as a long-running operation and should be called in a goroutine.
 // The serverIP is the firewall's agent-facing IP (e.g., 10.255.255.1).
 // If bl is non-nil, build output is captured to it.
-func (m *Manager) BuildImage(img *DiskImage, version int, serverIP string, settings BuildSettings, bl *BuildLogger) error {
+// The context can be used to cancel the build.
+func (m *Manager) BuildImage(ctx context.Context, img *DiskImage, version int, serverIP string, settings BuildSettings, bl *BuildLogger) error {
 	if bl != nil {
 		setBuildLogger(bl)
 		defer setBuildLogger(nil)
 	}
+	setBuildContext(ctx)
+	defer setBuildContext(nil)
+
 	versionDir := m.VersionDir(img.ID, version)
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		return fmt.Errorf("create version dir: %w", err)
@@ -63,16 +71,27 @@ func (m *Manager) BuildImage(img *DiskImage, version int, serverIP string, setti
 
 	rootfsPath := filepath.Join(versionDir, "rootfs.tar.gz")
 
+	var err error
 	switch img.OS {
 	case agent.OSAlpine:
-		return m.buildAlpine(img, rootfsPath, serverIP, settings, bl)
+		err = m.buildAlpine(img, rootfsPath, serverIP, settings, bl)
 	case agent.OSDebian:
-		return m.buildDebian(img, rootfsPath, serverIP, "debian", settings, bl)
+		err = m.buildDebian(img, rootfsPath, serverIP, "debian", settings, bl)
 	case agent.OSUbuntu:
-		return m.buildDebian(img, rootfsPath, serverIP, "ubuntu", settings, bl)
+		err = m.buildDebian(img, rootfsPath, serverIP, "ubuntu", settings, bl)
 	default:
 		return fmt.Errorf("unsupported OS type: %s", img.OS)
 	}
+
+	// If the build failed or was canceled, clean up any partial tarball.
+	if err != nil {
+		os.Remove(rootfsPath)
+		os.Remove(rootfsPath + ".tmp")
+		if ctx.Err() != nil {
+			return ErrBuildCanceled
+		}
+	}
+	return err
 }
 
 // buildAlpine builds an Alpine Linux rootfs tarball.
@@ -746,6 +765,12 @@ var activeBuildLogger struct {
 	bl *BuildLogger
 }
 
+// activeBuildCtx holds the current build context for cancellation support.
+var activeBuildCtx struct {
+	mu  sync.Mutex
+	ctx context.Context
+}
+
 func setBuildLogger(bl *BuildLogger) {
 	activeBuildLogger.mu.Lock()
 	activeBuildLogger.bl = bl
@@ -756,6 +781,21 @@ func getBuildLogger() *BuildLogger {
 	activeBuildLogger.mu.Lock()
 	defer activeBuildLogger.mu.Unlock()
 	return activeBuildLogger.bl
+}
+
+func setBuildContext(ctx context.Context) {
+	activeBuildCtx.mu.Lock()
+	activeBuildCtx.ctx = ctx
+	activeBuildCtx.mu.Unlock()
+}
+
+func getBuildContext() context.Context {
+	activeBuildCtx.mu.Lock()
+	defer activeBuildCtx.mu.Unlock()
+	if activeBuildCtx.ctx != nil {
+		return activeBuildCtx.ctx
+	}
+	return context.Background()
 }
 
 func cmdOutput() (io.Writer, io.Writer) {
@@ -778,25 +818,28 @@ func buildLog(format string, args ...interface{}) {
 }
 
 func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+	ctx := getBuildContext()
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }
 
 // runChroot runs a command inside a chroot.
 func runChroot(rootfs, name string, args ...string) error {
+	ctx := getBuildContext()
 	chrootArgs := append([]string{rootfs, name}, args...)
-	cmd := exec.Command("chroot", chrootArgs...)
+	cmd := exec.CommandContext(ctx, "chroot", chrootArgs...)
 	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }
 
 // runChrootEnv runs a command inside a chroot with extra environment variables.
 func runChrootEnv(rootfs string, env []string, name string, args ...string) error {
+	ctx := getBuildContext()
 	// Use env to set variables, then chroot.
 	envArgs := append(env, "chroot", rootfs, name)
 	envArgs = append(envArgs, args...)
-	cmd := exec.Command("env", envArgs...)
+	cmd := exec.CommandContext(ctx, "env", envArgs...)
 	cmd.Stdout, cmd.Stderr = cmdOutput()
 	return cmd.Run()
 }

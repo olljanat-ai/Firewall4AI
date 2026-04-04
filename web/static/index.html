@@ -1123,6 +1123,7 @@
       <pre id="build-log-content" style="background:var(--bg-secondary);padding:12px;border-radius:6px;max-height:60vh;overflow-y:auto;font-size:12px;white-space:pre-wrap;word-break:break-all"></pre>
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="downloadBuildLog()">Download Log</button>
+        <button class="btn btn-danger" id="build-log-cancel-btn" onclick="cancelBuildFromLog()" style="display:none">Cancel Build</button>
         <button class="btn btn-danger" id="build-log-delete-btn" onclick="deleteVersionFromLog()">Delete Version</button>
         <button class="btn btn-outline" onclick="hideBuildLog()">Close</button>
       </div>

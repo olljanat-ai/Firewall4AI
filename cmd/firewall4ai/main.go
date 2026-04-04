@@ -281,14 +281,24 @@ func main() {
 			d.DiskImages = imageMgr.ExportImages()
 		})
 
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		imageMgr.SetActiveBuildCancel(img.ID, version, cancel)
+		defer imageMgr.SetActiveBuildCancel(img.ID, version, nil)
+
 		bl := image.NewBuildLogger()
 		imageMgr.SetActiveBuildLog(img.ID, version, bl)
 		keyboard, tz := apiHandler.GetVMSettings()
 		gitCfg := config.GetGitConfig()
 		buildSettings := image.BuildSettings{Keyboard: keyboard, Timezone: tz, GitUsername: gitCfg.Username, GitEmail: gitCfg.Email}
-		if err := imageMgr.BuildImage(img, version, serverIP.String(), buildSettings, bl); err != nil {
-			log.Printf("Failed to build image %s v%d: %v", img.Name, version, err)
-			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusError, err.Error())
+		if err := imageMgr.BuildImage(ctx, img, version, serverIP.String(), buildSettings, bl); err != nil {
+			if err == image.ErrBuildCanceled {
+				log.Printf("Build canceled for image %s v%d", img.Name, version)
+				imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusCanceled, "build canceled by user")
+			} else {
+				log.Printf("Failed to build image %s v%d: %v", img.Name, version, err)
+				imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusError, err.Error())
+			}
 		} else {
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusReady, "")
 		}

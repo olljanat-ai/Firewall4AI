@@ -22,6 +22,7 @@ func (h *Handler) RegisterImageMgmtRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/disk-images/build", h.buildDiskImage)
 	mux.HandleFunc("DELETE /api/disk-images/version", h.deleteDiskImageVersion)
 	mux.HandleFunc("GET /api/disk-images/build-log", h.getDiskImageBuildLog)
+	mux.HandleFunc("POST /api/disk-images/cancel-build", h.cancelDiskImageBuild)
 	mux.HandleFunc("GET /api/rtk-releases", h.getRtkReleases)
 }
 
@@ -270,6 +271,32 @@ func (h *Handler) getDiskImageBuildLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"log": logContent,
 	})
+}
+
+func (h *Handler) cancelDiskImageBuild(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == "" || req.Version == 0 {
+		http.Error(w, "id and version are required", http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := h.ImageManager.Get(req.ID); !ok {
+		http.Error(w, fmt.Sprintf("image %q not found", req.ID), http.StatusNotFound)
+		return
+	}
+
+	if h.ImageManager.CancelBuild(req.ID, req.Version) {
+		writeJSON(w, http.StatusOK, map[string]string{"result": "build canceling"})
+	} else {
+		http.Error(w, "no active build found for this version", http.StatusNotFound)
+	}
 }
 
 // getRtkReleases fetches available rtk release versions from GitHub.

@@ -17,10 +17,11 @@ import (
 type BuildStatus string
 
 const (
-	BuildStatusPending  BuildStatus = "pending"
-	BuildStatusBuilding BuildStatus = "building"
-	BuildStatusReady    BuildStatus = "ready"
-	BuildStatusError    BuildStatus = "error"
+	BuildStatusPending   BuildStatus = "pending"
+	BuildStatusBuilding  BuildStatus = "building"
+	BuildStatusReady     BuildStatus = "ready"
+	BuildStatusError     BuildStatus = "error"
+	BuildStatusCanceled  BuildStatus = "canceled"
 )
 
 // ImageVersion represents a built version of a disk image.
@@ -97,16 +98,44 @@ type Manager struct {
 	images       map[string]*DiskImage
 	dataDir      string
 	activeLogsMu sync.RWMutex
-	activeLogs   map[string]*BuildLogger // key: "imageID/version"
+	activeLogs   map[string]*BuildLogger  // key: "imageID/version"
+	cancelsMu    sync.Mutex
+	activeCancels map[string]func()        // key: "imageID/version" -> cancel func
 }
 
 // NewManager creates a new image manager.
 func NewManager(dataDir string) *Manager {
 	return &Manager{
-		images:     make(map[string]*DiskImage),
-		dataDir:    dataDir,
-		activeLogs: make(map[string]*BuildLogger),
+		images:        make(map[string]*DiskImage),
+		dataDir:       dataDir,
+		activeLogs:    make(map[string]*BuildLogger),
+		activeCancels: make(map[string]func()),
 	}
+}
+
+// SetActiveBuildCancel registers a cancel function for an in-progress build.
+func (m *Manager) SetActiveBuildCancel(imageID string, version int, cancel func()) {
+	m.cancelsMu.Lock()
+	defer m.cancelsMu.Unlock()
+	key := fmt.Sprintf("%s/%d", imageID, version)
+	if cancel != nil {
+		m.activeCancels[key] = cancel
+	} else {
+		delete(m.activeCancels, key)
+	}
+}
+
+// CancelBuild cancels an in-progress build. Returns true if a build was canceled.
+func (m *Manager) CancelBuild(imageID string, version int) bool {
+	m.cancelsMu.Lock()
+	key := fmt.Sprintf("%s/%d", imageID, version)
+	cancel, ok := m.activeCancels[key]
+	m.cancelsMu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+		return true
+	}
+	return false
 }
 
 // SetActiveBuildLog registers a live build logger for an in-progress build.

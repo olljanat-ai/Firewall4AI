@@ -2948,6 +2948,7 @@ function imageVersionStatusClass(status) {
     case 'building': return 'pending';
     case 'pending': return 'pending';
     case 'error': return 'denied';
+    case 'canceled': return 'denied';
     default: return '';
   }
 }
@@ -3112,9 +3113,12 @@ async function showBuildLog(imageId, version, status) {
   document.getElementById('build-log-content').textContent = 'Loading...';
   document.getElementById('modal-build-log').classList.add('active');
 
-  // Hide delete button while build is active.
+  // Show cancel button and hide delete button while build is active.
+  const isActive = (status === 'building' || status === 'pending');
   const deleteBtn = document.getElementById('build-log-delete-btn');
-  deleteBtn.style.display = (status === 'building' || status === 'pending') ? 'none' : '';
+  const cancelBtn = document.getElementById('build-log-cancel-btn');
+  deleteBtn.style.display = isActive ? 'none' : '';
+  cancelBtn.style.display = isActive ? '' : 'none';
 
   await refreshBuildLog();
 
@@ -3141,6 +3145,7 @@ async function refreshBuildLog() {
       if (ver && ver.status !== 'building' && ver.status !== 'pending') {
         stopBuildLogRefresh();
         document.getElementById('build-log-delete-btn').style.display = '';
+        document.getElementById('build-log-cancel-btn').style.display = 'none';
         loadDiskImages();
       }
     }
@@ -3185,6 +3190,17 @@ async function deleteVersionFromLog() {
     loadDiskImages();
   } catch (e) {
     alert('Failed to delete version: ' + e.message);
+  }
+}
+
+async function cancelBuildFromLog() {
+  if (!buildLogImageId || buildLogVersion == null) return;
+  if (!confirm(`Cancel build v${buildLogVersion}?`)) return;
+  try {
+    await api('POST', '/api/disk-images/cancel-build', { id: buildLogImageId, version: buildLogVersion });
+    document.getElementById('build-log-cancel-btn').style.display = 'none';
+  } catch (e) {
+    alert('Failed to cancel build: ' + e.message);
   }
 }
 
