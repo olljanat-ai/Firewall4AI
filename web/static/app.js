@@ -2685,7 +2685,8 @@ async function loadDiskImages() {
       'opencode': 'OpenCode',
       'github_copilot': 'GitHub Copilot',
       'claude_code': 'Claude Code',
-      'openai_codex': 'OpenAI Codex'
+      'openai_codex': 'OpenAI Codex',
+      'qwen_code': 'Qwen Code'
     };
     const containerToolLabels = {
       'docker': 'Docker',
@@ -2827,6 +2828,7 @@ function editDiskImage(id) {
   else if (aiTools.includes('github_copilot')) document.getElementById('disk-image-ai-github-copilot').checked = true;
   else if (aiTools.includes('claude_code')) document.getElementById('disk-image-ai-claude-code').checked = true;
   else if (aiTools.includes('openai_codex')) document.getElementById('disk-image-ai-openai-codex').checked = true;
+  else if (aiTools.includes('qwen_code')) document.getElementById('disk-image-ai-qwen-code').checked = true;
   else document.getElementById('disk-image-ai-none').checked = true;
   const ctTools = img.container_tools || [];
   if (ctTools.includes('nomad')) document.getElementById('disk-image-ct-nomad').checked = true;
