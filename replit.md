@@ -14,8 +14,27 @@ Firewall4AI is a transparent, default-deny firewall and proxy appliance for cont
 ### Key Components
 
 - `cmd/firewall4ai/` — Main application entry point
-- `internal/api/` — REST API and admin UI handler
-- `internal/proxy/` — Transparent HTTP/HTTPS proxy with MITM
+- `internal/api/` — REST API split into focused files:
+  - `api.go` — Handler struct, RegisterRoutes, shared helpers/types
+  - `api_approvals.go` — URL approval endpoints
+  - `api_skills.go` — Skill CRUD
+  - `api_credentials.go` — Credential CRUD
+  - `api_databases.go` — Database connection CRUD
+  - `api_images.go` — Container image approval endpoints
+  - `api_helm.go` — Helm chart approval endpoints
+  - `api_packages.go` — OS package + code library approval endpoints
+  - `api_logs.go` — Proxy log endpoints
+  - `api_categories.go` — Categories, health, version, DHCP leases, backup/restore
+  - `api_settings.go` — System settings, VM settings, learning mode
+- `internal/proxy/` — Transparent HTTP/HTTPS proxy split into focused files:
+  - `proxy.go` — Proxy struct, New(), ServeHTTP, shared helpers
+  - `proxy_approval.go` — checkApproval, checkHostApproval, checkRefApproval (generic 3-level)
+  - `proxy_http.go` — handleHTTP
+  - `proxy_connect.go` — handleConnect, MITM, handleTLSRequest, blind tunnel
+  - `proxy_transparent.go` — HandleTransparentTLS, ServeTransparentTLS
+  - `proxy_registry.go` — Container registry request handling
+  - `proxy_helm.go` — Helm chart repository handling + matchHelmRef
+  - `proxy_packages.go` — OS package + code library handling
 - `internal/dhcp/`, `internal/dns/`, `internal/tftp/` — Network services
 - `internal/agent/`, `internal/image/` — Agent and disk image management
 - `internal/certgen/` — TLS CA generation for MITM inspection

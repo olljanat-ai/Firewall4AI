@@ -3,7 +3,6 @@
 package proxy
 
 import (
-	"bufio"
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
@@ -45,8 +44,8 @@ func (w *responseBodyWrapper) Close() error {
 
 // Proxy is the main proxy server.
 type Proxy struct {
-	Skills           *auth.SkillStore
-	Approvals        *approval.Manager
+	Skills              *auth.SkillStore
+	Approvals           *approval.Manager
 	ImageApprovals      *approval.Manager // image-level approvals for container registries
 	HelmChartApprovals  *approval.Manager // Helm chart approvals
 	PackageApprovals    *approval.Manager // OS Packages (e.g., Debian)
@@ -55,13 +54,13 @@ type Proxy struct {
 	HelmRepos           []config.PackageRepoConfig
 	OSPackages          []config.PackageRepoConfig
 	CodeLibraries       []config.PackageRepoConfig
-	Credentials      *credentials.Manager
-	Logger           *proxylog.Logger
-	Transport        http.RoundTripper
-	CA               *certgen.CA
-	ApprovalTimeout  time.Duration
-	LearningMode     bool                  // when true, allow all traffic by default (still logged)
-	OnActivity       func(sourceIP string) // called on each request with the source IP
+	Credentials         *credentials.Manager
+	Logger              *proxylog.Logger
+	Transport           http.RoundTripper
+	CA                  *certgen.CA
+	ApprovalTimeout     time.Duration
+	LearningMode        bool                  // when true, allow all traffic by default (still logged)
+	OnActivity          func(sourceIP string) // called on each request with the source IP
 }
 
 // New creates a new Proxy with the given dependencies.
@@ -82,7 +81,17 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 	}
 }
 
-// statusToHTTPCode maps an approval status to the appropriate HTTP status code.
+// ServeHTTP handles both HTTP requests and HTTPS CONNECT tunnels.
+func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodConnect {
+		p.handleConnect(w, r)
+	} else {
+		p.handleHTTP(w, r)
+	}
+}
+
+// --- Host / source helpers ---
+
 // isConfiguredRepoHost returns true if the host belongs to a configured
 // container registry, Helm chart repo, OS package repo, or code library repo.
 // These hosts are auto-approved at the CONNECT level when MITM is available,
@@ -101,101 +110,6 @@ func (p *Proxy) isConfiguredRepoHost(host string) bool {
 		return true
 	}
 	return false
-}
-
-// StatusDenied -> 403 Forbidden, StatusPendingTimeout -> 407 Proxy Authentication Required.
-func statusToHTTPCode(status approval.Status) int {
-	if status == approval.StatusPendingTimeout {
-		return http.StatusProxyAuthRequired // 407
-	}
-	return http.StatusForbidden // 403
-}
-
-// denialMessage returns a clear plain text error message for denied/pending requests.
-func denialMessage(status approval.Status, resource string) string {
-	if status == approval.StatusPendingTimeout {
-		return fmt.Sprintf("Firewall4AI: Access to %s is waiting for admin approval. Your request has been registered and an administrator needs to approve it. Please retry later.", resource)
-	}
-	return fmt.Sprintf("Firewall4AI: Access to %s is denied by firewall policy. Contact your administrator to request access.", resource)
-}
-
-// writeErrorResponse writes a plain text error response to an http.ResponseWriter.
-func writeErrorResponse(w http.ResponseWriter, status approval.Status, resource string) {
-	code := statusToHTTPCode(status)
-	msg := denialMessage(status, resource)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(code)
-	fmt.Fprintln(w, msg)
-}
-
-// writeErrorResponseConn writes a plain text error HTTP response to a raw net.Conn.
-func writeErrorResponseConn(conn net.Conn, status approval.Status, resource string) {
-	code := statusToHTTPCode(status)
-	msg := denialMessage(status, resource)
-	resp := &http.Response{
-		StatusCode: code,
-		ProtoMajor: 1,
-		ProtoMinor: 1,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(msg + "\n")),
-	}
-	resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
-	resp.ContentLength = int64(len(msg) + 1)
-	resp.Write(conn)
-}
-
-// forwardHTTP copies the upstream response headers, status, and body to an
-// http.ResponseWriter.
-func forwardHTTP(w http.ResponseWriter, resp *http.Response) {
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-// forwardTLS writes the upstream response to a raw net.Conn using HTTP/1.1 wire format.
-// When the upstream response uses chunked Transfer-Encoding (no Content-Length),
-// the body is fully read and Content-Length is set explicitly. This prevents
-// clients from hanging when resp.Write() re-chunks the body but the connection
-// stays open (e.g. helm repo add with ~600KB index responses).
-func forwardTLS(conn net.Conn, resp *http.Response) {
-	if resp.ContentLength < 0 && resp.Body != nil {
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			// On read error, send what we have.
-			resp.Body = io.NopCloser(bytes.NewReader(body))
-			resp.ContentLength = int64(len(body))
-		} else {
-			resp.Body = io.NopCloser(bytes.NewReader(body))
-			resp.ContentLength = int64(len(body))
-		}
-		resp.TransferEncoding = nil
-	}
-	resp.Write(conn)
-}
-
-// write502TLS sends a minimal 502 Bad Gateway response to a raw net.Conn.
-func write502TLS(conn net.Conn) {
-	resp := &http.Response{
-		StatusCode: http.StatusBadGateway,
-		ProtoMajor: 1,
-		ProtoMinor: 1,
-		Header:     make(http.Header),
-	}
-	resp.Write(conn)
-}
-
-// ServeHTTP handles both HTTP requests and HTTPS CONNECT tunnels.
-func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodConnect {
-		p.handleConnect(w, r)
-	} else {
-		p.handleHTTP(w, r)
-	}
 }
 
 // extractHost returns the host (without port) from the request.
@@ -241,137 +155,102 @@ func (p *Proxy) authenticateOptional(r *http.Request) (*auth.Skill, error) {
 	return skill, nil
 }
 
-// checkApproval verifies the host+path is approved using three levels:
-//  1. Global (skillID="" and sourceIP="") — applies to all agents on all VMs
-//  2. VM-specific (skillID="" and sourceIP set) — applies to all agents on that VM
-//  3. Skill-specific (skillID set) — applies to agents using that skill
-//
-// Checks are performed broadest-first. If no existing decision is found,
-// a pending entry is registered at the most specific applicable level.
-// The path parameter enables fine-grained URL path approval; empty path
-// means host-level only (used for blind CONNECT tunnels).
-func (p *Proxy) checkApproval(host, path string, skill *auth.Skill, sourceIP string) approval.Status {
-	// Check pre-approved hosts for authenticated requests.
-	if skill != nil && p.Skills.IsHostPreApproved(skill.Token, host) {
-		return approval.StatusApproved
-	}
-
-	// 1. Check global approval (host+path approved/denied for all agents).
-	if globalStatus, exists := p.Approvals.CheckExistingWithPath(host, path, "", ""); exists && globalStatus != approval.StatusPending {
-		return globalStatus
-	}
-
-	// 2. Check VM-specific approval.
-	if sourceIP != "" {
-		if vmStatus, exists := p.Approvals.CheckExistingWithPath(host, path, "", sourceIP); exists && vmStatus != approval.StatusPending {
-			return vmStatus
-		}
-	}
-
-	// 3. Check skill-specific approval.
-	if skill != nil {
-		if skillStatus, exists := p.Approvals.CheckExistingWithPath(host, path, skill.ID, ""); exists && skillStatus != approval.StatusPending {
-			return skillStatus
-		}
-	}
-
-	// No decision found. Register as pending at the most specific level.
-	// Skill-specific takes precedence over VM-specific.
+// getLoggingMode returns the logging mode for the request's host/path.
+func (p *Proxy) getLoggingMode(host, path string, skill *auth.Skill, sourceIP string) approval.LoggingMode {
 	sid := getSkillID(skill)
-	pendingIP := sourceIP
-	if sid != "" {
-		pendingIP = "" // skill-level pending, not VM-level
-	}
-	status := p.Approvals.Check(host, sid, pendingIP, path)
-	if status == approval.StatusPending {
-		if p.LearningMode {
-			return approval.StatusApproved
-		}
-		status = p.Approvals.WaitForDecision(host, sid, pendingIP, path, p.ApprovalTimeout)
-	}
-	return status
+	return p.Approvals.GetLoggingMode(host, path, sid, sourceIP)
 }
 
-// checkHostApproval checks if any approval (host-only or path-specific)
-// exists for the host. Used for CONNECT+MITM where the tunnel must be
-// allowed if any path-specific approval exists, since per-request checks
-// will enforce path restrictions inside the tunnel.
-func (p *Proxy) checkHostApproval(host string, skill *auth.Skill, sourceIP string) approval.Status {
-	// Check pre-approved hosts.
-	if skill != nil && p.Skills.IsHostPreApproved(skill.Token, host) {
-		return approval.StatusApproved
-	}
+// --- Error response helpers ---
 
-	// 1. Global: any approval for this host.
-	if status, exists := p.Approvals.CheckExistingForHost(host, "", ""); exists && status != approval.StatusPending {
-		return status
+// statusToHTTPCode maps an approval status to the appropriate HTTP status code.
+func statusToHTTPCode(status approval.Status) int {
+	if status == approval.StatusPendingTimeout {
+		return http.StatusProxyAuthRequired // 407
 	}
-
-	// 2. VM-specific.
-	if sourceIP != "" {
-		if status, exists := p.Approvals.CheckExistingForHost(host, "", sourceIP); exists && status != approval.StatusPending {
-			return status
-		}
-	}
-
-	// 3. Skill-specific.
-	if skill != nil {
-		if status, exists := p.Approvals.CheckExistingForHost(host, skill.ID, ""); exists && status != approval.StatusPending {
-			return status
-		}
-	}
-
-	// No approval found. Register pending at host level (no path) and wait.
-	sid := getSkillID(skill)
-	pendingIP := sourceIP
-	if sid != "" {
-		pendingIP = ""
-	}
-	status := p.Approvals.Check(host, sid, pendingIP, "")
-	if status == approval.StatusPending {
-		if p.LearningMode {
-			return approval.StatusApproved
-		}
-		status = p.Approvals.WaitForDecision(host, sid, pendingIP, "", p.ApprovalTimeout)
-	}
-	return status
+	return http.StatusForbidden // 403
 }
 
-// checkImageApproval performs three-level image approval for registry manifests.
-func (p *Proxy) checkImageApproval(imageRef string, skill *auth.Skill, sourceIP string) approval.Status {
-	sid := getSkillID(skill)
-
-	// 1. Global.
-	if status, ok := p.ImageApprovals.CheckExistingWithMatcher(imageRef, "", "", registry.MatchImageRef); ok && status != approval.StatusPending {
-		return status
+// denialMessage returns a clear plain text error message for denied/pending requests.
+func denialMessage(status approval.Status, resource string) string {
+	if status == approval.StatusPendingTimeout {
+		return fmt.Sprintf("Firewall4AI: Access to %s is waiting for admin approval. Your request has been registered and an administrator needs to approve it. Please retry later.", resource)
 	}
-	// 2. VM-specific.
-	if sourceIP != "" {
-		if status, ok := p.ImageApprovals.CheckExistingWithMatcher(imageRef, "", sourceIP, registry.MatchImageRef); ok && status != approval.StatusPending {
-			return status
-		}
-	}
-	// 3. Skill-specific.
-	if sid != "" {
-		if status, ok := p.ImageApprovals.CheckExistingWithMatcher(imageRef, sid, "", registry.MatchImageRef); ok && status != approval.StatusPending {
-			return status
-		}
-	}
-
-	// Register pending at the most specific level and wait.
-	pendingIP := sourceIP
-	if sid != "" {
-		pendingIP = ""
-	}
-	status := p.ImageApprovals.Check(imageRef, sid, pendingIP, "")
-	if status == approval.StatusPending {
-		if p.LearningMode {
-			return approval.StatusApproved
-		}
-		return p.ImageApprovals.WaitForDecision(imageRef, sid, pendingIP, "", p.ApprovalTimeout)
-	}
-	return status
+	return fmt.Sprintf("Firewall4AI: Access to %s is denied by firewall policy. Contact your administrator to request access.", resource)
 }
+
+// writeErrorResponse writes a plain text error response to an http.ResponseWriter.
+func writeErrorResponse(w http.ResponseWriter, status approval.Status, resource string) {
+	code := statusToHTTPCode(status)
+	msg := denialMessage(status, resource)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(code)
+	fmt.Fprintln(w, msg)
+}
+
+// writeErrorResponseConn writes a plain text error HTTP response to a raw net.Conn.
+func writeErrorResponseConn(conn net.Conn, status approval.Status, resource string) {
+	code := statusToHTTPCode(status)
+	msg := denialMessage(status, resource)
+	resp := &http.Response{
+		StatusCode: code,
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(msg + "\n")),
+	}
+	resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	resp.ContentLength = int64(len(msg) + 1)
+	resp.Write(conn)
+}
+
+// --- Forwarding helpers ---
+
+// forwardHTTP copies the upstream response headers, status, and body to an
+// http.ResponseWriter.
+func forwardHTTP(w http.ResponseWriter, resp *http.Response) {
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// forwardTLS writes the upstream response to a raw net.Conn using HTTP/1.1 wire format.
+// When the upstream response uses chunked Transfer-Encoding (no Content-Length),
+// the body is fully read and Content-Length is set explicitly. This prevents
+// clients from hanging when resp.Write() re-chunks the body but the connection
+// stays open (e.g. helm repo add with ~600KB index responses).
+func forwardTLS(conn net.Conn, resp *http.Response) {
+	if resp.ContentLength < 0 && resp.Body != nil {
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			resp.ContentLength = int64(len(body))
+		} else {
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			resp.ContentLength = int64(len(body))
+		}
+		resp.TransferEncoding = nil
+	}
+	resp.Write(conn)
+}
+
+// write502TLS sends a minimal 502 Bad Gateway response to a raw net.Conn.
+func write502TLS(conn net.Conn) {
+	resp := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+	}
+	resp.Write(conn)
+}
+
+// --- Body capture helpers ---
 
 // captureRequestBody reads the request body (up to maxFullLogBody) and replaces it
 // with a new reader so the request can still be forwarded.
@@ -401,22 +280,16 @@ func captureResponseBody(resp *http.Response) string {
 	maxBody := config.GetMaxFullLogBody()
 	origBody := resp.Body
 
-	// Read only the prefix for logging (decompression + UI display).
-	// The upstream body stream now sits at the *remaining* bytes.
 	prefix, err := io.ReadAll(io.LimitReader(origBody, int64(maxBody)+1))
 	if err != nil && err != io.EOF {
-		// On real read error we still want to forward whatever we can.
 		prefix = nil
 	}
 
-	// Reconstruct the *full* original body for the client:
-	// prefix (for logging) + remaining bytes from upstream.
 	resp.Body = &responseBodyWrapper{
 		Reader:   io.MultiReader(bytes.NewReader(prefix), origBody),
 		original: origBody,
 	}
 
-	// Decompress for display if needed.
 	decoded := prefix
 	switch strings.ToLower(resp.Header.Get("Content-Encoding")) {
 	case "gzip":
@@ -463,1120 +336,4 @@ func captureInjectedHeaders(before map[string][]string, after http.Header) map[s
 		return nil
 	}
 	return diff
-}
-
-// getLoggingMode returns the logging mode for the request's host/path.
-func (p *Proxy) getLoggingMode(host, path string, skill *auth.Skill, sourceIP string) approval.LoggingMode {
-	sid := getSkillID(skill)
-	return p.Approvals.GetLoggingMode(host, path, sid, sourceIP)
-}
-
-func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	host := extractHost(r)
-	sourceIP := extractSourceIP(r.RemoteAddr)
-	if p.OnActivity != nil {
-		p.OnActivity(sourceIP)
-	}
-
-	skill, err := p.authenticateOptional(r)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			Method: r.Method,
-			Host:   host,
-			Path:   r.URL.Path,
-			Status: "denied",
-			Detail: "auth failed: " + err.Error(),
-		})
-		http.Error(w, "Proxy authentication failed: "+err.Error(), http.StatusProxyAuthRequired)
-		return
-	}
-
-	sid := getSkillID(skill)
-
-	// Remove our custom header before forwarding.
-	r.Header.Del(AuthHeader)
-
-	// Check if this is a Helm chart repository request.
-	if repo := library.RepoForHost(host, p.HelmRepos); repo != nil {
-		p.handleHelmChartRepoHTTPRequest(w, r, host, sourceIP, skill, repo, start)
-		return
-	}
-
-	// Check if this is a package repository request.
-	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
-		p.handlePackageRepoHTTPRequest(w, r, host, sourceIP, skill, repo, true, start)
-		return
-	}
-	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
-		p.handlePackageRepoHTTPRequest(w, r, host, sourceIP, skill, repo, false, start)
-		return
-	}
-
-	status := p.checkApproval(host, r.URL.Path, skill, sourceIP)
-	if status != approval.StatusApproved {
-		resource := host + r.URL.Path
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  r.Method,
-			Host:    host,
-			Path:    r.URL.Path,
-			Status:  string(status),
-			Detail:  "host not approved",
-		})
-		writeErrorResponse(w, status, resource)
-		return
-	}
-
-	// Check logging mode before injecting credentials (capture pre-injection headers).
-	logMode := p.getLoggingMode(host, r.URL.Path, skill, sourceIP)
-	var fullDetail *proxylog.FullDetail
-	if logMode == approval.LoggingModeFull {
-		reqBody := captureRequestBody(r)
-		fullDetail = &proxylog.FullDetail{
-			RequestHeaders: r.Header.Clone(),
-			RequestBody:    reqBody,
-		}
-	}
-
-	// Inject credentials and capture injected headers for full logging.
-	p.Credentials.InjectForRequest(r, sourceIP)
-	if fullDetail != nil {
-		fullDetail.InjectedHeaders = captureInjectedHeaders(fullDetail.RequestHeaders, r.Header)
-	}
-
-	// Forward the request.
-	r.RequestURI = ""
-	if r.URL.Scheme == "" {
-		r.URL.Scheme = "http"
-	}
-	if r.URL.Host == "" {
-		r.URL.Host = r.Host
-	}
-
-	resp, err := p.Transport.RoundTrip(r)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:    sid,
-			Method:     r.Method,
-			Host:       host,
-			Path:       r.URL.Path,
-			Status:     "error",
-			Detail:     err.Error(),
-			Duration:   time.Since(start).Milliseconds(),
-			HasFullLog: fullDetail != nil,
-			FullDetail: fullDetail,
-		})
-		http.Error(w, "Proxy error: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if fullDetail != nil {
-		fullDetail.ResponseHeaders = resp.Header.Clone()
-		fullDetail.ResponseStatus = resp.StatusCode
-		fullDetail.ResponseBody = captureResponseBody(resp)
-	}
-
-	p.Logger.Add(proxylog.Entry{
-		SkillID:    sid,
-		Method:     r.Method,
-		Host:       host,
-		Path:       r.URL.Path,
-		Status:     "allowed",
-		Detail:     fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration:   time.Since(start).Milliseconds(),
-		HasFullLog: fullDetail != nil,
-		FullDetail: fullDetail,
-	})
-
-	forwardHTTP(w, resp)
-}
-
-func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	targetHost := r.Host
-	host := targetHost
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	sourceIP := extractSourceIP(r.RemoteAddr)
-	if p.OnActivity != nil {
-		p.OnActivity(sourceIP)
-	}
-
-	skill, err := p.authenticateOptional(r)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			Method: "CONNECT",
-			Host:   host,
-			Status: "denied",
-			Detail: "auth failed: " + err.Error(),
-		})
-		http.Error(w, "Proxy authentication failed: "+err.Error(), http.StatusProxyAuthRequired)
-		return
-	}
-
-	// For CONNECT with MITM, auto-approve hosts that belong to configured
-	// infrastructure (registries, Helm repos, package repos, code libraries)
-	// since the real access control happens per-item inside the tunnel.
-	// For other hosts, check host-level approval. Per-request path checks
-	// happen in handleMITMRequest.
-	// For blind tunnels (no MITM), use host-only check since we can't inspect paths.
-	var status approval.Status
-	if p.CA != nil && p.isConfiguredRepoHost(host) {
-		status = approval.StatusApproved
-	} else if p.CA != nil {
-		status = p.checkHostApproval(host, skill, sourceIP)
-	} else {
-		status = p.checkApproval(host, "", skill, sourceIP)
-	}
-	if status != approval.StatusApproved {
-		p.Logger.Add(proxylog.Entry{
-			SkillID: getSkillID(skill),
-			Method:  "CONNECT",
-			Host:    host,
-			Status:  string(status),
-			Detail:  "host not approved",
-		})
-		writeErrorResponse(w, status, host)
-		return
-	}
-
-	// Hijack the client connection.
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
-		return
-	}
-	clientConn, _, err := hijacker.Hijack()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Send 200 OK to tell the client the tunnel is established.
-	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-
-	// If we have a CA, perform TLS MITM inspection.
-	if p.CA != nil {
-		p.handleMITM(clientConn, host, targetHost, skill, sourceIP, start)
-		return
-	}
-
-	// Fallback: blind tunnel (no inspection).
-	p.handleBlindTunnel(clientConn, host, targetHost, skill, start)
-}
-
-// newMITMTLSConfig returns a shared TLS configuration for MITM interception.
-// The getCertFunc callback is invoked during the TLS handshake to provide the
-// appropriate certificate for the connecting client.
-func newMITMTLSConfig(getCertFunc func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *tls.Config {
-	return &tls.Config{
-		GetCertificate: getCertFunc,
-
-		// Allow also TLS 1.0 and 1.1 (Go 1.22 set minimum to TLS 1.2)
-		MinVersion: tls.VersionTLS10,
-		MaxVersion: tls.VersionTLS13,
-
-		// Disable experimental X25519Kyber768Draft00 (Go 1.23 enables it by default)
-		// and disable X25519MLKEM768 (Go 1.24 enables it by default) by listing curve list from:
-		// https://github.com/golang/go/blob/go1.23.5/src/crypto/tls/defaults.go#L20
-		CurvePreferences: []tls.CurveID{
-			tls.X25519,
-			tls.CurveP256,
-			tls.CurveP384,
-			tls.CurveP521,
-		},
-
-		// Allow all ciphers, including those marked "insecure" by Go
-		CipherSuites: func() []uint16 {
-			all := append([]*tls.CipherSuite{}, tls.CipherSuites()...)
-			all = append(all, tls.InsecureCipherSuites()...)
-			var ids []uint16
-			for _, cs := range all {
-				ids = append(ids, cs.ID)
-			}
-			return ids
-		}(),
-
-		// Force HTTP/1.1 to avoid issues with HTTP/2 connection.
-		NextProtos: []string{"http/1.1"},
-	}
-}
-
-// handleMITM performs TLS MITM: terminates the client TLS with a generated cert,
-// reads the inner HTTP requests, applies auth/approval/credential injection,
-// and forwards them to the real target over a new TLS connection.
-func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, sourceIP string, start time.Time) {
-	defer clientConn.Close()
-
-	sid := getSkillID(skill)
-
-	// Present a CA-signed certificate for this host to the client.
-	hostCert, err := p.CA.GenerateHostCert(host)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  "CONNECT",
-			Host:    host,
-			Status:  "error",
-			Detail:  "generate host cert: " + err.Error(),
-		})
-		return
-	}
-	tlsConfig := newMITMTLSConfig(func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		if info.ServerName != "" && info.ServerName != host {
-			return p.CA.GenerateHostCert(info.ServerName)
-		}
-		return hostCert, nil
-	})
-
-	tlsClientConn := tls.Server(clientConn, tlsConfig)
-	if err := tlsClientConn.Handshake(); err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  "CONNECT",
-			Host:    host,
-			Status:  "error",
-			Detail:  "MITM TLS handshake failed: " + err.Error(),
-		})
-		return
-	}
-	defer tlsClientConn.Close()
-
-	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   "CONNECT",
-		Host:     host,
-		Status:   "allowed",
-		Detail:   "TLS MITM tunnel established",
-		Duration: time.Since(start).Milliseconds(),
-	})
-
-	// Read HTTP requests from the decrypted client connection.
-	reader := bufio.NewReader(tlsClientConn)
-	for {
-		req, err := http.ReadRequest(reader)
-		if err != nil {
-			if err != io.EOF {
-				p.Logger.Add(proxylog.Entry{
-					SkillID: sid,
-					Method:  "CONNECT",
-					Host:    host,
-					Status:  "error",
-					Detail:  "read request: " + err.Error(),
-				})
-			}
-			return
-		}
-
-		// Ensure targetAddr has a port for upstream forwarding.
-		upstreamAddr := targetAddr
-		if !strings.Contains(upstreamAddr, ":") {
-			upstreamAddr += ":443"
-		}
-		p.handleTLSRequest(tlsClientConn, req, host, upstreamAddr, skill, sourceIP)
-	}
-}
-
-// handleTLSRequest processes a single HTTP request from either a MITM'd
-// explicit CONNECT tunnel or a transparent TLS interception. The targetAddr
-// is used as the upstream host:port for forwarding (e.g. "example.com:443").
-func (p *Proxy) handleTLSRequest(clientConn net.Conn, req *http.Request, host, targetAddr string, skill *auth.Skill, sourceIP string) {
-	start := time.Now()
-	sid := getSkillID(skill)
-
-	// Remove proxy auth header if client re-sent it inside the tunnel.
-	req.Header.Del(AuthHeader)
-
-	// Check if this is a container registry request.
-	if reg := registry.RegistryForHost(host, p.Registries); reg != nil {
-		p.handleRegistryTLSRequest(clientConn, req, host, sourceIP, skill, reg, start)
-		return
-	}
-
-	// Check if this is a Helm chart repository request.
-	if repo := library.RepoForHost(host, p.HelmRepos); repo != nil {
-		p.handleHelmChartRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, start)
-		return
-	}
-
-	// Check if this is a package repository request.
-	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
-		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, true, start)
-		return
-	}
-	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
-		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, false, start)
-		return
-	}
-
-	// Check path-level approval for this specific request.
-	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
-	if status != approval.StatusApproved {
-		resource := host + req.URL.Path
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  req.Method,
-			Host:    host,
-			Path:    req.URL.Path,
-			Status:  string(status),
-			Detail:  "path not approved",
-		})
-		writeErrorResponseConn(clientConn, status, resource)
-		return
-	}
-
-	// Check logging mode.
-	logMode := p.getLoggingMode(host, req.URL.Path, skill, sourceIP)
-	var fullDetail *proxylog.FullDetail
-	if logMode == approval.LoggingModeFull {
-		reqBody := captureRequestBody(req)
-		fullDetail = &proxylog.FullDetail{
-			RequestHeaders: req.Header.Clone(),
-			RequestBody:    reqBody,
-		}
-	}
-
-	// Set the URL for forwarding.
-	req.URL.Scheme = "https"
-	req.URL.Host = targetAddr
-	req.RequestURI = ""
-
-	// Inject credentials for HTTPS requests.
-	p.Credentials.InjectForRequest(req, sourceIP)
-	if fullDetail != nil {
-		fullDetail.InjectedHeaders = captureInjectedHeaders(fullDetail.RequestHeaders, req.Header)
-	}
-
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:    sid,
-			Method:     req.Method,
-			Host:       host,
-			Path:       req.URL.Path,
-			Status:     "error",
-			Detail:     err.Error(),
-			Duration:   time.Since(start).Milliseconds(),
-			HasFullLog: fullDetail != nil,
-			FullDetail: fullDetail,
-		})
-		write502TLS(clientConn)
-		return
-	}
-	defer resp.Body.Close()
-
-	if fullDetail != nil {
-		fullDetail.ResponseHeaders = resp.Header.Clone()
-		fullDetail.ResponseStatus = resp.StatusCode
-		fullDetail.ResponseBody = captureResponseBody(resp)
-	}
-
-	p.Logger.Add(proxylog.Entry{
-		SkillID:    sid,
-		Method:     req.Method,
-		Host:       host,
-		Path:       req.URL.Path,
-		Status:     "allowed",
-		Detail:     fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration:   time.Since(start).Milliseconds(),
-		HasFullLog: fullDetail != nil,
-		FullDetail: fullDetail,
-	})
-
-	forwardTLS(clientConn, resp)
-}
-
-// handleBlindTunnel is the fallback when no CA is configured: just pipe bytes.
-func (p *Proxy) handleBlindTunnel(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, start time.Time) {
-	if !strings.Contains(targetAddr, ":") {
-		targetAddr += ":443"
-	}
-
-	sid := getSkillID(skill)
-
-	targetConn, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   "CONNECT",
-			Host:     host,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
-		})
-		clientConn.Close()
-		return
-	}
-
-	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   "CONNECT",
-		Host:     host,
-		Status:   "allowed",
-		Detail:   "blind tunnel (no TLS inspection)",
-		Duration: time.Since(start).Milliseconds(),
-	})
-
-	// Bidirectional copy.
-	go func() {
-		defer targetConn.Close()
-		defer clientConn.Close()
-		io.Copy(targetConn, clientConn)
-	}()
-	go func() {
-		defer targetConn.Close()
-		defer clientConn.Close()
-		io.Copy(clientConn, targetConn)
-	}()
-}
-
-// HandleTransparentTLS handles a raw TCP connection redirected by iptables
-// for transparent HTTPS interception. It terminates TLS using SNI to
-// determine the target host, then reads and forwards HTTP requests.
-func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
-	defer clientConn.Close()
-
-	if p.CA == nil {
-		return
-	}
-
-	sourceIP := extractSourceIP(clientConn.RemoteAddr().String())
-	if p.OnActivity != nil {
-		p.OnActivity(sourceIP)
-	}
-	var sniHost string
-
-	tlsConfig := newMITMTLSConfig(func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		sniHost = info.ServerName
-		if sniHost == "" {
-			return nil, fmt.Errorf("no SNI provided for transparent TLS")
-		}
-		return p.CA.GenerateHostCert(sniHost)
-	})
-
-	tlsConn := tls.Server(clientConn, tlsConfig)
-	if err := tlsConn.Handshake(); err != nil {
-		p.Logger.Add(proxylog.Entry{
-			Method: "TRANSPARENT",
-			Status: "error",
-			Detail: "TLS handshake failed: " + err.Error(),
-		})
-		return
-	}
-	defer tlsConn.Close()
-
-	if sniHost == "" {
-		return
-	}
-
-	// Read HTTP requests from the decrypted connection.
-	reader := bufio.NewReader(tlsConn)
-	for {
-		req, err := http.ReadRequest(reader)
-		if err != nil {
-			if err != io.EOF {
-				p.Logger.Add(proxylog.Entry{
-					Method: "TRANSPARENT",
-					Host:   sniHost,
-					Status: "error",
-					Detail: "read request: " + err.Error(),
-				})
-			}
-			return
-		}
-
-		p.handleTransparentTLSRequest(tlsConn, req, sniHost, sourceIP)
-	}
-}
-
-// handleTransparentTLSRequest authenticates a request from a transparent TLS
-// connection and delegates to the unified handleTLSRequest handler.
-func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string) {
-	// Authenticate (optional in transparent mode).
-	skill, err := p.authenticateOptional(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			Method: req.Method,
-			Host:   host,
-			Path:   req.URL.Path,
-			Status: "denied",
-			Detail: "auth failed: " + err.Error(),
-		})
-		msg := "Firewall4AI: Proxy authentication failed: " + err.Error()
-		resp := &http.Response{
-			StatusCode: http.StatusProxyAuthRequired,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(msg + "\n")),
-		}
-		resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
-		resp.ContentLength = int64(len(msg) + 1)
-		resp.Write(clientConn)
-		return
-	}
-
-	p.handleTLSRequest(clientConn, req, host, host+":443", skill, sourceIP)
-}
-
-// handleRegistryTLSRequest handles a request to a known container registry host.
-// Manifest requests trigger image-level approval; blob requests use repo-level
-// approval; all other registry traffic (auth, /v2/ pings) is auto-approved.
-func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, reg *config.RegistryConfig, start time.Time) {
-	sid := getSkillID(skill)
-	urlPath := req.URL.Path
-
-	name, _, pathType, isV2 := registry.ParsePath(urlPath)
-
-	if isV2 && (pathType == "manifests" || pathType == "blobs") {
-		// Manifest and blob requests use repo-level approval.
-		// Approving a repo allows all tags, digests, and layers.
-		// In learning mode, skip the fast-path check since pending entries
-		// won't match; go through checkImageApproval which handles learning mode.
-		repo := registry.ParseImageRepo(reg.Name, name)
-		if p.LearningMode || !registry.CheckRepoApproval(p.ImageApprovals, repo) {
-			if pathType == "blobs" && !p.LearningMode {
-				// Blobs don't create pending entries; they are only
-				// allowed if the repo was already approved via a manifest.
-				// In learning mode, blobs are allowed like manifests.
-				p.Logger.Add(proxylog.Entry{
-					SkillID: sid,
-					Method:  req.Method,
-					Host:    host,
-					Path:    urlPath,
-					Status:  "denied",
-					Detail:  "repository not approved: " + repo,
-				})
-				writeErrorResponseConn(clientConn, approval.StatusDenied, "container image "+repo)
-				return
-			}
-			// Manifest (or blob in learning mode): register pending and wait.
-			status := p.checkImageApproval(repo, skill, sourceIP)
-			if status != approval.StatusApproved {
-				p.Logger.Add(proxylog.Entry{
-					SkillID: sid,
-					Method:  req.Method,
-					Host:    host,
-					Path:    urlPath,
-					Status:  string(status),
-					Detail:  "image not approved: " + repo,
-				})
-				writeErrorResponseConn(clientConn, status, "container image "+repo)
-				return
-			}
-		}
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   repo,
-			Duration: time.Since(start).Milliseconds(),
-		})
-	} else {
-		// Other registry traffic (auth, /v2/ ping, etc.): auto-approve.
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   "registry infra",
-			Duration: time.Since(start).Milliseconds(),
-		})
-	}
-
-	// Forward to the real backend.
-	req.URL.Scheme = "https"
-	req.URL.Host = host + ":443"
-	req.RequestURI = ""
-
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
-		})
-		write502TLS(clientConn)
-		return
-	}
-	defer resp.Body.Close()
-
-	forwardTLS(clientConn, resp)
-}
-
-// checkHelmChartRepoAccess parses the Helm chart name from the URL and runs
-// the approval logic using the HelmChartApprovals manager.
-// Refs use the format "helm:<host>" for repo-level (metadata) requests and
-// "helm:<host>/<chartName>" for chart-specific requests. Approving a repo
-// with wildcard "helm:<host>/*" auto-approves all charts from that repo.
-func (p *Proxy) checkHelmChartRepoAccess(req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) (deniedStatus approval.Status, resource string) {
-	sid := getSkillID(skill)
-	urlPath := req.URL.Path
-	repoType := library.PackageType(repo.Type)
-
-	chartName, ok := library.ParsePackageName(urlPath, repoType)
-	if !ok {
-		// Unrecognized path — auto-approve as repo infra.
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   "helm repo infra (" + repo.Name + ")",
-			Duration: time.Since(start).Milliseconds(),
-		})
-		return "", ""
-	}
-
-	// Build the approval ref. Metadata (index.yaml) uses "helm:<host>",
-	// chart-specific requests use "helm:<host>/<chartName>".
-	var ref string
-	if chartName == "" {
-		ref = "helm:" + host
-	} else {
-		ref = "helm:" + host + "/" + chartName
-	}
-
-	if !p.LearningMode && checkHelmApprovalFastPath(p.HelmChartApprovals, ref) {
-		// already approved — fast path
-	} else {
-		status := p.checkHelmChartApproval(ref, skill, sourceIP)
-		if status != approval.StatusApproved {
-			if chartName == "" {
-				resource = "Helm repo " + repo.Name + " (" + host + ")"
-			} else {
-				resource = "Helm chart " + host + "/" + chartName
-			}
-			p.Logger.Add(proxylog.Entry{
-				SkillID: sid,
-				Method:  req.Method,
-				Host:    host,
-				Path:    urlPath,
-				Status:  string(status),
-				Detail:  "helm not approved: " + ref,
-			})
-			return status, resource
-		}
-	}
-	detail := ref
-	if chartName == "" {
-		detail = "helm metadata (" + repo.Name + ")"
-	}
-	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   req.Method,
-		Host:     host,
-		Path:     urlPath,
-		Status:   "allowed",
-		Detail:   detail,
-		Duration: time.Since(start).Milliseconds(),
-	})
-	return "", ""
-}
-
-// matchHelmRef checks if a stored approval pattern matches a Helm chart reference.
-// Supports:
-//   - Exact match: "helm:host/chart" == "helm:host/chart"
-//   - Wildcard: "helm:host/*" matches "helm:host/chart"
-//   - Repo-level: "helm:host" matches "helm:host/chart" (approving repo covers all charts)
-func matchHelmRef(pattern, ref string) bool {
-	if pattern == ref {
-		return true
-	}
-	// Wildcard: "helm:host/*" matches "helm:host/chart"
-	if strings.HasSuffix(pattern, "/*") {
-		prefix := pattern[:len(pattern)-1] // include trailing /
-		return strings.HasPrefix(ref, prefix)
-	}
-	// Repo-level: approving "helm:host" implicitly covers "helm:host/chart"
-	if !strings.Contains(pattern, "/") && strings.HasPrefix(ref, pattern+"/") {
-		return true
-	}
-	return false
-}
-
-// checkHelmApprovalFastPath returns true if the Helm ref (or a broader pattern)
-// has already been approved.
-func checkHelmApprovalFastPath(mgr *approval.Manager, ref string) bool {
-	// Exact match.
-	if status, ok := mgr.CheckExisting(ref, "", "", ""); ok && status == approval.StatusApproved {
-		return true
-	}
-	// Wildcard/repo-level match.
-	if status, ok := mgr.CheckExistingWithMatcher(ref, "", "", matchHelmRef); ok && status == approval.StatusApproved {
-		return true
-	}
-	return false
-}
-
-// checkHelmChartApproval performs three-level approval for a Helm chart.
-// Uses matchHelmRef which supports wildcard patterns ("helm:host/*") and
-// repo-level approval (approving "helm:host" implicitly covers "helm:host/chart").
-func (p *Proxy) checkHelmChartApproval(ref string, skill *auth.Skill, sourceIP string) approval.Status {
-	sid := getSkillID(skill)
-
-	// 1. Global.
-	if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", "", matchHelmRef); ok && status != approval.StatusPending {
-		return status
-	}
-	// 2. VM-specific.
-	if sourceIP != "" {
-		if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", sourceIP, matchHelmRef); ok && status != approval.StatusPending {
-			return status
-		}
-	}
-	// 3. Skill-specific.
-	if sid != "" {
-		if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, sid, "", matchHelmRef); ok && status != approval.StatusPending {
-			return status
-		}
-	}
-
-	// Register pending at the most specific level and wait.
-	pendingIP := sourceIP
-	if sid != "" {
-		pendingIP = ""
-	}
-	status := p.HelmChartApprovals.Check(ref, sid, pendingIP, "")
-	if status == approval.StatusPending {
-		if p.LearningMode {
-			return approval.StatusApproved
-		}
-		return p.HelmChartApprovals.WaitForDecision(ref, sid, pendingIP, "", p.ApprovalTimeout)
-	}
-	return status
-}
-
-// handleHelmChartRepoTLSRequest handles TLS requests to Helm chart repositories.
-func (p *Proxy) handleHelmChartRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) {
-	sid := getSkillID(skill)
-
-	deniedStatus, resource := p.checkHelmChartRepoAccess(req, host, sourceIP, skill, repo, start)
-	if deniedStatus != "" {
-		writeErrorResponseConn(clientConn, deniedStatus, resource)
-		return
-	}
-
-	// Forward to the real backend.
-	req.URL.Scheme = "https"
-	req.URL.Host = host + ":443"
-	req.RequestURI = ""
-
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     req.URL.Path,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
-		})
-		write502TLS(clientConn)
-		return
-	}
-	defer resp.Body.Close()
-
-	forwardTLS(clientConn, resp)
-}
-
-// handleHelmChartRepoHTTPRequest handles plain HTTP requests to Helm chart repositories.
-func (p *Proxy) handleHelmChartRepoHTTPRequest(w http.ResponseWriter, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) {
-	sid := getSkillID(skill)
-
-	deniedStatus, resource := p.checkHelmChartRepoAccess(req, host, sourceIP, skill, repo, start)
-	if deniedStatus != "" {
-		writeErrorResponse(w, deniedStatus, resource)
-		return
-	}
-
-	// Forward the request.
-	req.RequestURI = ""
-	if req.URL.Scheme == "" {
-		req.URL.Scheme = "http"
-	}
-	if req.URL.Host == "" {
-		req.URL.Host = host
-	}
-
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     req.URL.Path,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
-		})
-		http.Error(w, "Proxy error: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	forwardHTTP(w, resp)
-}
-
-// checkPackageRepoAccess checks disabled-type, parses the package name, runs
-// approval logic, and logs the result. It returns (status, resource) where
-// status is empty string on success or the denial status on failure. The
-// resource string is set only when access is denied (for error messages).
-func (p *Proxy) checkPackageRepoAccess(req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) (deniedStatus approval.Status, resource string) {
-	sid := getSkillID(skill)
-	urlPath := req.URL.Path
-	repoType := library.PackageType(repo.Type)
-
-	// Check if this language/distro type is disabled entirely.
-	disabled := false
-	if isOSPkg {
-		disabled = config.IsDistroDisabled(repo.Type)
-	} else {
-		disabled = config.IsLanguageDisabled(repo.Type)
-	}
-	if disabled {
-		label := library.TypeLabel(repoType)
-		resource = label + " packages"
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  req.Method,
-			Host:    host,
-			Path:    urlPath,
-			Status:  "denied",
-			Detail:  label + " is disabled by policy",
-		})
-		return approval.StatusDenied, resource
-	}
-
-	pkgName, ok := library.ParsePackageName(urlPath, repoType)
-	if !ok {
-		// Unrecognized path — auto-approve as repo infra.
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   "package repo infra (" + repo.Name + ")",
-			Duration: time.Since(start).Milliseconds(),
-		})
-		return "", ""
-	}
-	if pkgName == "" {
-		// Metadata request (index, dist, etc.) — auto-approve.
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   "package metadata (" + repo.Name + ")",
-			Duration: time.Since(start).Milliseconds(),
-		})
-		return "", ""
-	}
-
-	// Package-specific request — check approval.
-	mgr := p.LibraryApprovals
-	if isOSPkg {
-		mgr = p.PackageApprovals
-	}
-
-	// In learning mode, skip the fast-path check since pending entries
-	// (created by learning mode) won't match. Go directly through
-	// checkLibraryApproval which handles learning mode.
-	if !p.LearningMode && library.CheckPackageApproval(mgr, pkgName) {
-		// already approved — fast path
-	} else {
-		status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
-		if status != approval.StatusApproved {
-			resource = string(repoType) + " package " + pkgName
-			p.Logger.Add(proxylog.Entry{
-				SkillID: sid,
-				Method:  req.Method,
-				Host:    host,
-				Path:    urlPath,
-				Status:  string(status),
-				Detail:  "package not approved: " + string(repoType) + ":" + pkgName,
-			})
-			return status, resource
-		}
-	}
-	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   req.Method,
-		Host:     host,
-		Path:     urlPath,
-		Status:   "allowed",
-		Detail:   string(repoType) + ":" + pkgName,
-		Duration: time.Since(start).Milliseconds(),
-	})
-	return "", ""
-}
-
-// handlePackageRepoHTTPRequest handles plain HTTP requests to package repositories.
-func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
-	sid := getSkillID(skill)
-
-	deniedStatus, resource := p.checkPackageRepoAccess(req, host, sourceIP, skill, repo, isOSPkg, start)
-	if deniedStatus != "" {
-		writeErrorResponse(w, deniedStatus, resource)
-		return
-	}
-
-	// Forward the request.
-	req.RequestURI = ""
-	if req.URL.Scheme == "" {
-		req.URL.Scheme = "http"
-	}
-	if req.URL.Host == "" {
-		req.URL.Host = host
-	}
-
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     req.URL.Path,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
-		})
-		http.Error(w, "Proxy error: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   req.Method,
-		Host:     host,
-		Path:     req.URL.Path,
-		Status:   "allowed",
-		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration: time.Since(start).Milliseconds(),
-	})
-
-	forwardHTTP(w, resp)
-}
-
-// handlePackageRepoTLSRequest handles TLS requests to package repositories.
-// Package-specific requests trigger package-level approval; metadata requests are
-// auto-approved since the repo host is configured explicitly.
-func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
-	sid := getSkillID(skill)
-
-	deniedStatus, resource := p.checkPackageRepoAccess(req, host, sourceIP, skill, repo, isOSPkg, start)
-	if deniedStatus != "" {
-		writeErrorResponseConn(clientConn, deniedStatus, resource)
-		return
-	}
-
-	// Forward to the real backend.
-	req.URL.Scheme = "https"
-	req.URL.Host = host + ":443"
-	req.RequestURI = ""
-
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     req.URL.Path,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
-		})
-		write502TLS(clientConn)
-		return
-	}
-	defer resp.Body.Close()
-
-	forwardTLS(clientConn, resp)
-}
-
-// checkLibraryApproval performs three-level approval for a package/library.
-// The Host field in the approval contains "type:packageName" (e.g., "golang:github.com/gorilla/mux").
-func (p *Proxy) checkLibraryApproval(mgr *approval.Manager, pkgName string, repoType library.PackageType, skill *auth.Skill, sourceIP string) approval.Status {
-	ref := string(repoType) + ":" + pkgName
-	sid := getSkillID(skill)
-
-	// 1. Global.
-	if status, ok := mgr.CheckExistingWithMatcher(ref, "", "", matchLibraryRef); ok && status != approval.StatusPending {
-		return status
-	}
-	// 2. VM-specific.
-	if sourceIP != "" {
-		if status, ok := mgr.CheckExistingWithMatcher(ref, "", sourceIP, matchLibraryRef); ok && status != approval.StatusPending {
-			return status
-		}
-	}
-	// 3. Skill-specific.
-	if sid != "" {
-		if status, ok := mgr.CheckExistingWithMatcher(ref, sid, "", matchLibraryRef); ok && status != approval.StatusPending {
-			return status
-		}
-	}
-
-	// Register pending at the most specific level and wait.
-	pendingIP := sourceIP
-	if sid != "" {
-		pendingIP = ""
-	}
-	status := mgr.Check(ref, sid, pendingIP, "")
-	if status == approval.StatusPending {
-		if p.LearningMode {
-			return approval.StatusApproved
-		}
-		return mgr.WaitForDecision(ref, sid, pendingIP, "", p.ApprovalTimeout)
-	}
-	return status
-}
-
-// matchLibraryRef checks if a stored approval pattern matches a library reference.
-// The pattern and ref are in "type:name" format. Delegates to library.MatchPackageRef
-// for the name part after checking type prefix.
-func matchLibraryRef(pattern, ref string) bool {
-	if pattern == ref {
-		return true
-	}
-	// Extract type prefix — both must match.
-	pIdx := strings.Index(pattern, ":")
-	rIdx := strings.Index(ref, ":")
-	if pIdx < 0 || rIdx < 0 {
-		return false
-	}
-	pType := pattern[:pIdx]
-	rType := ref[:rIdx]
-	if pType != rType {
-		return false
-	}
-	return library.MatchPackageRef(pattern[pIdx+1:], ref[rIdx+1:])
-}
-
-// ServeTransparentTLS accepts connections from the given listener and handles
-// them as transparent TLS interceptions.
-func (p *Proxy) ServeTransparentTLS(listener net.Listener) {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		go p.HandleTransparentTLS(conn)
-	}
 }
