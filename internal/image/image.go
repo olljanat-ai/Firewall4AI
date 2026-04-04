@@ -41,6 +41,7 @@ const (
 	AIToolGitHubCopilot AITool = "github_copilot"
 	AIToolClaudeCode    AITool = "claude_code"
 	AIToolOpenAICodex   AITool = "openai_codex"
+	AIToolQwenCode      AITool = "qwen_code"
 )
 
 // ContainerTool represents a container runtime that can be installed.

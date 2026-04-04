@@ -892,7 +892,7 @@ func installAITools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []st
 	needsCurl := false
 	for _, tool := range img.AITools {
 		switch tool {
-		case AIToolOpenCode, AIToolClaudeCode, AIToolOpenAICodex:
+		case AIToolOpenCode, AIToolClaudeCode, AIToolOpenAICodex, AIToolQwenCode:
 			needsNodeJS = true
 		case AIToolGitHubCopilot:
 			needsCurl = true
@@ -948,6 +948,12 @@ func installAITools(img *DiskImage, rootfsDir string, isDebian bool, debEnv []st
 			buildLog("Image build [%s v%s]: installing OpenAI Codex", img.Name, img.OSVersion)
 			if err := runChroot(rootfsDir, "npm", "install", "-g", "@openai/codex"); err != nil {
 				return fmt.Errorf("install OpenAI Codex: %w", err)
+			}
+
+		case AIToolQwenCode:
+			buildLog("Image build [%s v%s]: installing Qwen Code", img.Name, img.OSVersion)
+			if err := runChroot(rootfsDir, "npm", "install", "-g", "@qwen-code/qwen-code"); err != nil {
+				return fmt.Errorf("install Qwen Code: %w", err)
 			}
 
 		case AIToolGitHubCopilot:
