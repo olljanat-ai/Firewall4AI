@@ -16,8 +16,8 @@ type TemplateApplication struct {
 
 // ApprovalTemplate is a named set of approval rules that can be applied in bulk.
 type ApprovalTemplate struct {
-	ID        string                `json:"id"`
-	Name      string                `json:"name"`
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name"`
 	Rules     []ApprovalTemplateRule `json:"rules"`
 	AppliedTo []TemplateApplication  `json:"applied_to,omitempty"`
 }

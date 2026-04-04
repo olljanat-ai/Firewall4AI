@@ -1,6 +1,6 @@
 // Package auth handles AI agent skill-token authentication and rulesets.
 package auth
- 
+
 import (
 	"crypto/rand"
 	"encoding/hex"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 )
- 
+
 // Skill represents an AI agent skill with its own token and rules.
 type Skill struct {
 	ID          string   `json:"id"`
@@ -18,14 +18,14 @@ type Skill struct {
 	AllowedHost []string `json:"allowed_hosts"` // hosts pre-approved for this skill
 	Active      bool     `json:"active"`
 }
- 
+
 // SkillStore manages skills and their tokens.
 type SkillStore struct {
 	mu     sync.RWMutex
 	skills map[string]*Skill // keyed by token
 	byID   map[string]*Skill // keyed by ID
 }
- 
+
 // NewSkillStore creates a new empty skill store.
 func NewSkillStore() *SkillStore {
 	return &SkillStore{
@@ -33,7 +33,7 @@ func NewSkillStore() *SkillStore {
 		byID:   make(map[string]*Skill),
 	}
 }
- 
+
 // GenerateGUID creates a cryptographically random UUID v4 string.
 func GenerateGUID() string {
 	b := make([]byte, 16)
@@ -48,7 +48,7 @@ func GenerateGUID() string {
 func GenerateToken() (string, error) {
 	return GenerateGUID(), nil
 }
- 
+
 // AddSkill registers a new skill with its token.
 func (s *SkillStore) AddSkill(skill Skill) error {
 	s.mu.Lock()
@@ -60,7 +60,7 @@ func (s *SkillStore) AddSkill(skill Skill) error {
 	s.byID[skill.ID] = &skill
 	return nil
 }
- 
+
 // GetSkill returns a skill by ID.
 func (s *SkillStore) GetSkill(id string) (*Skill, bool) {
 	s.mu.RLock()
@@ -88,7 +88,7 @@ func (s *SkillStore) UpdateSkill(skill Skill) error {
 	s.skills[skill.Token] = existing
 	return nil
 }
- 
+
 // DeleteSkill removes a skill.
 func (s *SkillStore) DeleteSkill(id string) error {
 	s.mu.Lock()
@@ -101,7 +101,7 @@ func (s *SkillStore) DeleteSkill(id string) error {
 	delete(s.byID, id)
 	return nil
 }
- 
+
 // Authenticate checks a token and returns the associated skill.
 func (s *SkillStore) Authenticate(token string) (*Skill, bool) {
 	s.mu.RLock()
@@ -112,7 +112,7 @@ func (s *SkillStore) Authenticate(token string) (*Skill, bool) {
 	}
 	return skill, true
 }
- 
+
 // IsHostPreApproved checks if a host is in the skill's allowed list.
 func (s *SkillStore) IsHostPreApproved(token, host string) bool {
 	s.mu.RLock()
@@ -131,7 +131,7 @@ func (s *SkillStore) IsHostPreApproved(token, host string) bool {
 	}
 	return false
 }
- 
+
 // ListSkills returns all skills.
 func (s *SkillStore) ListSkills() []Skill {
 	s.mu.RLock()
@@ -142,7 +142,7 @@ func (s *SkillStore) ListSkills() []Skill {
 	}
 	return result
 }
- 
+
 // LoadSkills bulk-loads skills (used at startup).
 func (s *SkillStore) LoadSkills(skills []Skill) {
 	s.mu.Lock()

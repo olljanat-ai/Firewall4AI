@@ -143,7 +143,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates", "openssh", "git"}
 	allPkgs := append(basePkgs, img.Packages...)
 
-	if err := runChroot(rootfsDir, "apk", append([]string{"update"})...); err != nil {
+	if err := runChroot(rootfsDir, "apk", "update"); err != nil {
 		return fmt.Errorf("apk update: %w", err)
 	}
 	if err := runChroot(rootfsDir, "apk", append([]string{"add"}, allPkgs...)...); err != nil {

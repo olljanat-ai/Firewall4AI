@@ -1,13 +1,13 @@
 // Package store provides a simple JSON file-backed key-value store.
 package store
- 
+
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
 )
- 
+
 // JSONStore is a thread-safe JSON file-backed store.
 type JSONStore[T any] struct {
 	mu       sync.RWMutex
@@ -15,7 +15,7 @@ type JSONStore[T any] struct {
 	data     T
 	defaults T
 }
- 
+
 // New creates a new JSONStore with the given file path and default value.
 func New[T any](dir, filename string, defaults T) (*JSONStore[T], error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -30,7 +30,7 @@ func New[T any](dir, filename string, defaults T) (*JSONStore[T], error) {
 	}
 	return s, nil
 }
- 
+
 func (s *JSONStore[T]) load() error {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
@@ -42,7 +42,7 @@ func (s *JSONStore[T]) load() error {
 	}
 	return json.Unmarshal(data, &s.data)
 }
- 
+
 func (s *JSONStore[T]) save() error {
 	data, err := json.MarshalIndent(s.data, "", "  ")
 	if err != nil {
@@ -50,14 +50,14 @@ func (s *JSONStore[T]) save() error {
 	}
 	return os.WriteFile(s.path, data, 0o644)
 }
- 
+
 // Get returns the current data (read-only snapshot).
 func (s *JSONStore[T]) Get() T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.data
 }
- 
+
 // Update applies fn to the data and persists the result.
 func (s *JSONStore[T]) Update(fn func(*T)) error {
 	s.mu.Lock()

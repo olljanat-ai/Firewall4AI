@@ -158,4 +158,3 @@ func TestTLSConfigForMITM(t *testing.T) {
 		t.Fatal("should return a certificate")
 	}
 }
-

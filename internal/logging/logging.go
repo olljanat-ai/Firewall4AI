@@ -32,17 +32,17 @@ type FullDetail struct {
 
 // Entry represents a single proxy log entry.
 type Entry struct {
-	ID          int         `json:"id"`
-	Timestamp   time.Time   `json:"timestamp"`
-	SkillID     string      `json:"skill_id"`
-	Method      string      `json:"method"`
-	Host        string      `json:"host"`
-	Path        string      `json:"path"`
-	Status      string      `json:"status"` // "allowed", "denied", "pending", "error"
-	Detail      string      `json:"detail"`
-	Duration    int64       `json:"duration_ms"`
-	HasFullLog  bool        `json:"has_full_log,omitempty"`
-	FullDetail  *FullDetail `json:"-"` // excluded from list responses, served via detail endpoint
+	ID         int         `json:"id"`
+	Timestamp  time.Time   `json:"timestamp"`
+	SkillID    string      `json:"skill_id"`
+	Method     string      `json:"method"`
+	Host       string      `json:"host"`
+	Path       string      `json:"path"`
+	Status     string      `json:"status"` // "allowed", "denied", "pending", "error"
+	Detail     string      `json:"detail"`
+	Duration   int64       `json:"duration_ms"`
+	HasFullLog bool        `json:"has_full_log,omitempty"`
+	FullDetail *FullDetail `json:"-"` // excluded from list responses, served via detail endpoint
 }
 
 // Logger stores log entries in memory with a configurable max size,
@@ -213,7 +213,7 @@ func (l *Logger) rotateLocked() {
 		f.Write(data)
 	}
 }
- 
+
 // Recent returns the last n entries (newest first).
 func (l *Logger) Recent(n int) []Entry {
 	l.mu.RLock()
@@ -228,7 +228,7 @@ func (l *Logger) Recent(n int) []Entry {
 	}
 	return result
 }
- 
+
 // Since returns all entries after the given ID (for polling).
 func (l *Logger) Since(afterID int) []Entry {
 	l.mu.RLock()
@@ -241,7 +241,7 @@ func (l *Logger) Since(afterID int) []Entry {
 	}
 	return result
 }
- 
+
 // GetByID returns a single entry by ID including full detail data.
 func (l *Logger) GetByID(id int) (Entry, bool) {
 	l.mu.RLock()

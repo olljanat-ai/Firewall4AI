@@ -39,27 +39,27 @@ var Version = "dev"
 
 // storeData holds the persisted state.
 type storeData struct {
-	Skills            []auth.Skill              `json:"skills"`
-	Approvals         []approval.HostApproval   `json:"approvals"`
-	Creds             []credentials.Credential  `json:"credentials"`
-	ImageApprovals    []approval.HostApproval   `json:"image_approvals"`
-	HelmChartApprovals []approval.HostApproval  `json:"helm_chart_approvals"`
-	PackageApprovals  []approval.HostApproval   `json:"package_approvals"`
-	LibraryApprovals  []approval.HostApproval   `json:"library_approvals"`
-	Categories        []string                  `json:"categories"`
-	LearningMode      bool                      `json:"learning_mode"`
-	DisabledLanguages []string                  `json:"disabled_languages"`
-	DisabledDistros   []string                  `json:"disabled_distros"`
-	MaxFullLogBody    int                       `json:"max_full_log_body"`
-	Databases         []database.DatabaseConfig `json:"databases"`
-	DiskImages        []image.DiskImage         `json:"disk_images"`
-	Agents            []agent.Agent             `json:"agents"`
-	DHCPLeases        []dhcp.Lease              `json:"dhcp_leases"`
-	Keyboard          string                    `json:"keyboard"`
-	Timezone          string                    `json:"timezone"`
-	SSHAuthorizedKeys map[string]string         `json:"ssh_authorized_keys"`
-	Templates         []api.ApprovalTemplate    `json:"templates"`
-	GitConfig         config.GitConfig          `json:"git_config"`
+	Skills             []auth.Skill              `json:"skills"`
+	Approvals          []approval.HostApproval   `json:"approvals"`
+	Creds              []credentials.Credential  `json:"credentials"`
+	ImageApprovals     []approval.HostApproval   `json:"image_approvals"`
+	HelmChartApprovals []approval.HostApproval   `json:"helm_chart_approvals"`
+	PackageApprovals   []approval.HostApproval   `json:"package_approvals"`
+	LibraryApprovals   []approval.HostApproval   `json:"library_approvals"`
+	Categories         []string                  `json:"categories"`
+	LearningMode       bool                      `json:"learning_mode"`
+	DisabledLanguages  []string                  `json:"disabled_languages"`
+	DisabledDistros    []string                  `json:"disabled_distros"`
+	MaxFullLogBody     int                       `json:"max_full_log_body"`
+	Databases          []database.DatabaseConfig `json:"databases"`
+	DiskImages         []image.DiskImage         `json:"disk_images"`
+	Agents             []agent.Agent             `json:"agents"`
+	DHCPLeases         []dhcp.Lease              `json:"dhcp_leases"`
+	Keyboard           string                    `json:"keyboard"`
+	Timezone           string                    `json:"timezone"`
+	SSHAuthorizedKeys  map[string]string         `json:"ssh_authorized_keys"`
+	Templates          []api.ApprovalTemplate    `json:"templates"`
+	GitConfig          config.GitConfig          `json:"git_config"`
 }
 
 func main() {
@@ -226,12 +226,12 @@ func main() {
 		HelmChartApprovals: helmChartApprovals,
 		PackageApprovals:   packageApprovals,
 		LibraryApprovals:   libraryApprovals,
-		Credentials:      creds,
-		DatabaseManager:  dbMgr,
-		ImageManager:     imageMgr,
-		Logger:           logger,
-		Version:          Version,
-		AgentManager:     agentMgr,
+		Credentials:        creds,
+		DatabaseManager:    dbMgr,
+		ImageManager:       imageMgr,
+		Logger:             logger,
+		Version:            Version,
+		AgentManager:       agentMgr,
 	}
 	apiHandler.LoadCategories(state.Categories)
 	apiHandler.LoadVMSettings(state.Keyboard, state.Timezone, state.SSHAuthorizedKeys)
@@ -424,16 +424,12 @@ func main() {
 		log.Printf("Admin UI using provided TLS certificate")
 	}
 
-	eth0IP, err := getInterfaceIPv4("eth0")
-	if err != nil {
-		log.Fatalf("Error: %v", err)
-	}
-	adminServerPort := "80"
+	adminServerPort := "5000"
 	if adminTLSConfig != nil {
-		adminServerPort = "443"
+		adminServerPort = "5443"
 	}
 	adminServer := &http.Server{
-		Addr:         eth0IP + ":" + adminServerPort,
+		Addr:         "0.0.0.0:" + adminServerPort,
 		Handler:      adminMux,
 		TLSConfig:    adminTLSConfig,
 		ReadTimeout:  30 * time.Second,
@@ -448,13 +444,13 @@ func main() {
 		HelmChartApprovals: helmChartApprovals,
 		PackageApprovals:   packageApprovals,
 		LibraryApprovals:   libraryApprovals,
-		Skills:           skills,
-		CACertPEM:        ca.CertPEM,
-		DatabaseManager:  dbMgr,
-		AgentManager:     agentMgr,
-		NetbootManager:   netbootMgr,
-		ImageManager:     imageMgr,
-		GetSSHKeys:       apiHandler.GetSSHAuthorizedKeys,
+		Skills:             skills,
+		CACertPEM:          ca.CertPEM,
+		DatabaseManager:    dbMgr,
+		AgentManager:       agentMgr,
+		NetbootManager:     netbootMgr,
+		ImageManager:       imageMgr,
+		GetSSHKeys:         apiHandler.GetSSHAuthorizedKeys,
 	}
 	agentHandler.RegisterAgentRoutes(agentAPIMux)
 	agentAPIServer := &http.Server{
@@ -489,19 +485,22 @@ func main() {
 	go func() {
 		log.Printf("Proxy server listening on %s (HTTP proxy + transparent HTTP)", cfg.ListenAddr)
 		if err := proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Proxy server error: %v", err)
+			log.Printf("Proxy server error (non-fatal in dev): %v", err)
 		}
 	}()
 
 	// Start transparent TLS listener for iptables-redirected HTTPS traffic.
 	transparentListener, err := net.Listen("tcp", cfg.TransparentTLSAddr)
 	if err != nil {
-		log.Fatalf("Failed to start transparent TLS listener: %v", err)
+		log.Printf("Warning: Failed to start transparent TLS listener (non-fatal in dev): %v", err)
+		transparentListener = nil
 	}
-	go func() {
-		log.Printf("Transparent TLS listener on %s (iptables REDIRECT :443 -> %s)", cfg.TransparentTLSAddr, cfg.TransparentTLSAddr)
-		p.ServeTransparentTLS(transparentListener)
-	}()
+	if transparentListener != nil {
+		go func() {
+			log.Printf("Transparent TLS listener on %s (iptables REDIRECT :443 -> %s)", cfg.TransparentTLSAddr, cfg.TransparentTLSAddr)
+			p.ServeTransparentTLS(transparentListener)
+		}()
+	}
 
 	// Start admin server.
 	go func() {
@@ -543,38 +542,11 @@ func main() {
 	}
 
 	dbMgr.Close()
-	transparentListener.Close()
+	if transparentListener != nil {
+		transparentListener.Close()
+	}
 	proxyServer.Shutdown(ctx)
 	adminServer.Shutdown(ctx)
 	agentAPIServer.Shutdown(ctx)
 	log.Println("Stopped.")
-}
-
-func getInterfaceIPv4(ifaceName string) (string, error) {
-	iface, err := net.InterfaceByName(ifaceName)
-	if err != nil {
-		return "", fmt.Errorf("could not find interface %q: %v", ifaceName, err)
-	}
-
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return "", fmt.Errorf("could not get addresses for %q: %v", ifaceName, err)
-	}
-
-	for _, addr := range addrs {
-		var ip net.IP
-		switch v := addr.(type) {
-		case *net.IPNet:
-			ip = v.IP
-		case *net.IPAddr:
-			ip = v.IP
-		}
-
-		// Return first non-loopback IPv4
-		if ip != nil && ip.To4() != nil && !ip.IsLoopback() {
-			return ip.String(), nil
-		}
-	}
-
-	return "", fmt.Errorf("no IPv4 address found for interface %q", ifaceName)
 }
