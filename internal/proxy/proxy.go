@@ -1116,6 +1116,9 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 
 // checkHelmChartRepoAccess parses the Helm chart name from the URL and runs
 // the approval logic using the HelmChartApprovals manager.
+// Refs use the format "helm:<host>" for repo-level (metadata) requests and
+// "helm:<host>/<chartName>" for chart-specific requests. Approving a repo
+// with wildcard "helm:<host>/*" auto-approves all charts from that repo.
 func (p *Proxy) checkHelmChartRepoAccess(req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) (deniedStatus approval.Status, resource string) {
 	sid := getSkillID(skill)
 	urlPath := req.URL.Path
@@ -1135,38 +1138,40 @@ func (p *Proxy) checkHelmChartRepoAccess(req *http.Request, host, sourceIP strin
 		})
 		return "", ""
 	}
+
+	// Build the approval ref. Metadata (index.yaml) uses "helm:<host>",
+	// chart-specific requests use "helm:<host>/<chartName>".
+	var ref string
 	if chartName == "" {
-		// Metadata request (index.yaml, etc.) — auto-approve.
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   "helm metadata (" + repo.Name + ")",
-			Duration: time.Since(start).Milliseconds(),
-		})
-		return "", ""
+		ref = "helm:" + host
+	} else {
+		ref = "helm:" + host + "/" + chartName
 	}
 
-	// Chart-specific request — check approval.
-	ref := "helm:" + chartName
-	if !p.LearningMode && library.CheckPackageApproval(p.HelmChartApprovals, ref) {
+	if !p.LearningMode && checkHelmApprovalFastPath(p.HelmChartApprovals, ref) {
 		// already approved — fast path
 	} else {
 		status := p.checkHelmChartApproval(ref, skill, sourceIP)
 		if status != approval.StatusApproved {
-			resource = "helm chart " + chartName
+			if chartName == "" {
+				resource = "Helm repo " + repo.Name + " (" + host + ")"
+			} else {
+				resource = "Helm chart " + host + "/" + chartName
+			}
 			p.Logger.Add(proxylog.Entry{
 				SkillID: sid,
 				Method:  req.Method,
 				Host:    host,
 				Path:    urlPath,
 				Status:  string(status),
-				Detail:  "helm chart not approved: " + ref,
+				Detail:  "helm not approved: " + ref,
 			})
 			return status, resource
 		}
+	}
+	detail := ref
+	if chartName == "" {
+		detail = "helm metadata (" + repo.Name + ")"
 	}
 	p.Logger.Add(proxylog.Entry{
 		SkillID:  sid,
@@ -1174,29 +1179,66 @@ func (p *Proxy) checkHelmChartRepoAccess(req *http.Request, host, sourceIP strin
 		Host:     host,
 		Path:     urlPath,
 		Status:   "allowed",
-		Detail:   ref,
+		Detail:   detail,
 		Duration: time.Since(start).Milliseconds(),
 	})
 	return "", ""
 }
 
+// matchHelmRef checks if a stored approval pattern matches a Helm chart reference.
+// Supports:
+//   - Exact match: "helm:host/chart" == "helm:host/chart"
+//   - Wildcard: "helm:host/*" matches "helm:host/chart"
+//   - Repo-level: "helm:host" matches "helm:host/chart" (approving repo covers all charts)
+func matchHelmRef(pattern, ref string) bool {
+	if pattern == ref {
+		return true
+	}
+	// Wildcard: "helm:host/*" matches "helm:host/chart"
+	if strings.HasSuffix(pattern, "/*") {
+		prefix := pattern[:len(pattern)-1] // include trailing /
+		return strings.HasPrefix(ref, prefix)
+	}
+	// Repo-level: approving "helm:host" implicitly covers "helm:host/chart"
+	if !strings.Contains(pattern, "/") && strings.HasPrefix(ref, pattern+"/") {
+		return true
+	}
+	return false
+}
+
+// checkHelmApprovalFastPath returns true if the Helm ref (or a broader pattern)
+// has already been approved.
+func checkHelmApprovalFastPath(mgr *approval.Manager, ref string) bool {
+	// Exact match.
+	if status, ok := mgr.CheckExisting(ref, "", "", ""); ok && status == approval.StatusApproved {
+		return true
+	}
+	// Wildcard/repo-level match.
+	if status, ok := mgr.CheckExistingWithMatcher(ref, "", "", matchHelmRef); ok && status == approval.StatusApproved {
+		return true
+	}
+	return false
+}
+
 // checkHelmChartApproval performs three-level approval for a Helm chart.
+// Uses matchHelmRef which supports wildcard patterns ("helm:host/*") and
+// repo-level approval (approving "helm:host" implicitly covers "helm:host/chart").
 func (p *Proxy) checkHelmChartApproval(ref string, skill *auth.Skill, sourceIP string) approval.Status {
 	sid := getSkillID(skill)
 
 	// 1. Global.
-	if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", "", library.MatchPackageRef); ok && status != approval.StatusPending {
+	if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", "", matchHelmRef); ok && status != approval.StatusPending {
 		return status
 	}
 	// 2. VM-specific.
 	if sourceIP != "" {
-		if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", sourceIP, library.MatchPackageRef); ok && status != approval.StatusPending {
+		if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", sourceIP, matchHelmRef); ok && status != approval.StatusPending {
 			return status
 		}
 	}
 	// 3. Skill-specific.
 	if sid != "" {
-		if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, sid, "", library.MatchPackageRef); ok && status != approval.StatusPending {
+		if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, sid, "", matchHelmRef); ok && status != approval.StatusPending {
 			return status
 		}
 	}

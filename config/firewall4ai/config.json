@@ -17,7 +17,8 @@
   "helm_repos": [
     {"name": "Jetstack", "type": "helm", "hosts": ["charts.jetstack.io"]},
     {"name": "Bitnami", "type": "helm", "hosts": ["charts.bitnami.com"]},
-    {"name": "Ingress NGINX", "type": "helm", "hosts": ["kubernetes.github.io"]}
+    {"name": "Ingress NGINX", "type": "helm", "hosts": ["kubernetes.github.io"]},
+    {"name": "Rancher", "type": "helm", "hosts": ["releases.rancher.com"]}
   ],
   "os_packages": [
     {"name": "Debian", "type": "debian", "hosts": ["deb.debian.org", "security.debian.org", "ftp.debian.org", "httpredir.debian.org", "cdn-fastly.deb.debian.org", "metadata.ftp-master.debian.org", "download.docker.com"]},
