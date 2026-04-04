@@ -1,3 +1,6 @@
+// proxy_helm.go handles Helm chart repository traffic: detecting chart
+// requests, applying per-chart approval, and forwarding to upstream repos.
+
 package proxy
 
 import (

@@ -1,3 +1,6 @@
+// api_images.go contains admin API handlers for container image approval
+// management: listing, deciding (approve/deny), deleting, and categorizing.
+
 package api
 
 import (

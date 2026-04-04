@@ -127,10 +127,10 @@ func TestParsePackageName_PyPI(t *testing.T) {
 		{"/simple/requests/", "requests", true},
 		{"/simple/requests", "requests", true},
 		{"/simple/Flask/", "flask", true},           // normalized to lowercase
-		{"/simple/my_package/", "my-package", true},  // underscores -> hyphens
+		{"/simple/my_package/", "my-package", true}, // underscores -> hyphens
 		{"/pypi/requests/json", "requests", true},
 		{"/pypi/requests/3.31.0/json", "requests", true},
-		{"/simple/", "", true},                        // index page
+		{"/simple/", "", true}, // index page
 		{"/packages/ab/cd/ef01/requests-2.31.0-py3-none-any.whl", "requests", true},
 	}
 	for _, tt := range tests {
@@ -235,7 +235,7 @@ func TestParsePackageName_Alpine(t *testing.T) {
 		{"/v3.19/main/x86_64/curl-8.5.0-r0.apk", "curl", true},
 		{"/v3.19/community/x86_64/docker-24.0.7-r0.apk", "docker", true},
 		{"/v3.19/main/x86_64/APKINDEX.tar.gz", "", true}, // metadata
-		{"/v3.19/main/x86_64/", "", true},                 // index
+		{"/v3.19/main/x86_64/", "", true},                // index
 	}
 	for _, tt := range tests {
 		name, ok := ParsePackageName(tt.path, "alpine")

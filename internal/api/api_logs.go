@@ -1,3 +1,6 @@
+// api_logs.go contains admin API handlers for viewing proxy request logs,
+// log statistics, and individual log entry details.
+
 package api
 
 import (

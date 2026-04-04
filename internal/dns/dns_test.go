@@ -90,8 +90,8 @@ type testResponseWriter struct {
 	msg *mdns.Msg
 }
 
-func (w *testResponseWriter) LocalAddr() net.Addr       { return &net.UDPAddr{} }
-func (w *testResponseWriter) RemoteAddr() net.Addr      { return &net.UDPAddr{} }
+func (w *testResponseWriter) LocalAddr() net.Addr        { return &net.UDPAddr{} }
+func (w *testResponseWriter) RemoteAddr() net.Addr       { return &net.UDPAddr{} }
 func (w *testResponseWriter) WriteMsg(m *mdns.Msg) error { w.msg = m; return nil }
 func (w *testResponseWriter) Write([]byte) (int, error)  { return 0, nil }
 func (w *testResponseWriter) Close() error               { return nil }

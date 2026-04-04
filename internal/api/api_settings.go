@@ -1,3 +1,7 @@
+// api_settings.go contains admin API handlers for system settings: learning mode,
+// disabled languages/distros, SSH configuration, VM settings (keyboard, timezone),
+// system logs, upgrades, reboots, and git configuration.
+
 package api
 
 import (

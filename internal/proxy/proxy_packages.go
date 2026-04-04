@@ -1,3 +1,7 @@
+// proxy_packages.go handles OS package repository and code library traffic:
+// detecting package requests, applying per-package approval, and forwarding
+// to upstream package repositories (APT, APK, npm, PyPI, etc.).
+
 package proxy
 
 import (

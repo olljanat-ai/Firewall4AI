@@ -1,3 +1,6 @@
+// proxy_approval.go contains the three-level approval logic used by the proxy
+// to check whether a host+path combination is approved for a given skill and VM.
+
 package proxy
 
 import (

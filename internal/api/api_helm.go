@@ -1,3 +1,6 @@
+// api_helm.go contains admin API handlers for Helm chart approval management:
+// listing, deciding (approve/deny), deleting, and categorizing.
+
 package api
 
 import (

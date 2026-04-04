@@ -1,22 +1,22 @@
 // Package credentials manages credential injection for outgoing proxy requests.
 package credentials
- 
+
 import (
 	"net/http"
 	"strings"
 	"sync"
 )
- 
+
 // InjectionType defines how credentials are injected.
 type InjectionType string
- 
+
 const (
 	InjectHeader InjectionType = "header"
 	InjectBasic  InjectionType = "basic_auth"
 	InjectBearer InjectionType = "bearer"
 	InjectQuery  InjectionType = "query_param"
 )
- 
+
 // Credential represents a credential to inject for a specific host pattern.
 type Credential struct {
 	ID            string        `json:"id"`
@@ -33,27 +33,27 @@ type Credential struct {
 	ParamValue    string        `json:"param_value,omitempty"`  // for query_param
 	Active        bool          `json:"active"`
 }
- 
+
 // Manager manages credentials and injects them into outgoing requests.
 type Manager struct {
 	mu    sync.RWMutex
 	creds map[string]*Credential // keyed by ID
 }
- 
+
 // NewManager creates a new credential manager.
 func NewManager() *Manager {
 	return &Manager{
 		creds: make(map[string]*Credential),
 	}
 }
- 
+
 // Add registers a new credential.
 func (m *Manager) Add(c Credential) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.creds[c.ID] = &c
 }
- 
+
 // Get returns a credential by ID.
 func (m *Manager) Get(id string) (*Credential, bool) {
 	m.mu.RLock()
@@ -73,14 +73,14 @@ func (m *Manager) Update(c Credential) error {
 	m.creds[c.ID] = &c
 	return nil
 }
- 
+
 // Delete removes a credential by ID.
 func (m *Manager) Delete(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.creds, id)
 }
- 
+
 // List returns all credentials.
 func (m *Manager) List() []Credential {
 	m.mu.RLock()
@@ -91,7 +91,7 @@ func (m *Manager) List() []Credential {
 	}
 	return result
 }
- 
+
 // matchHost checks if a host matches the credential's pattern.
 func matchHost(pattern, host string) bool {
 	if pattern == host {
@@ -103,7 +103,7 @@ func matchHost(pattern, host string) bool {
 	}
 	return false
 }
- 
+
 // InjectForRequest applies matching credentials to an HTTP request.
 // sourceIP is the client VM's IP address for VM-specific credential matching.
 func (m *Manager) InjectForRequest(req *http.Request, sourceIP string) {
@@ -134,7 +134,7 @@ func (m *Manager) InjectForRequest(req *http.Request, sourceIP string) {
 		m.apply(req, c)
 	}
 }
- 
+
 func (m *Manager) apply(req *http.Request, c *Credential) {
 	switch c.InjectionType {
 	case InjectHeader:
@@ -149,7 +149,7 @@ func (m *Manager) apply(req *http.Request, c *Credential) {
 		req.URL.RawQuery = q.Encode()
 	}
 }
- 
+
 // LoadCredentials bulk-loads credentials (used at startup).
 func (m *Manager) LoadCredentials(creds []Credential) {
 	m.mu.Lock()

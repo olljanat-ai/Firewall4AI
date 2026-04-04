@@ -230,12 +230,12 @@ func TestMatchPath(t *testing.T) {
 		requestPath string
 		want        bool
 	}{
-		{"", "/anything", true},           // empty prefix matches everything
-		{"", "", true},                    // empty prefix matches empty path
-		{"/foo/", "/foo/bar", true},       // prefix match
-		{"/foo/", "/foo/", true},          // exact prefix match
-		{"/foo/", "/foobar", false},       // must match at boundary
-		{"/foo/", "", false},              // path restriction but no path
+		{"", "/anything", true},     // empty prefix matches everything
+		{"", "", true},              // empty prefix matches empty path
+		{"/foo/", "/foo/bar", true}, // prefix match
+		{"/foo/", "/foo/", true},    // exact prefix match
+		{"/foo/", "/foobar", false}, // must match at boundary
+		{"/foo/", "", false},        // path restriction but no path
 		{"/org/repo", "/org/repo/x", true},
 		{"/org/repo", "/org/other", false},
 	}

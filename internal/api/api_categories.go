@@ -1,3 +1,6 @@
+// api_categories.go contains admin API handlers for category management,
+// health checks, version info, DHCP lease listing, and backup/restore.
+
 package api
 
 import (

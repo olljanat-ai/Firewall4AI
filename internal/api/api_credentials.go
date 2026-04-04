@@ -1,3 +1,7 @@
+// api_credentials.go contains admin API handlers for credential management:
+// CRUD operations with password/token masking in responses and preservation
+// of existing secrets on partial updates.
+
 package api
 
 import (

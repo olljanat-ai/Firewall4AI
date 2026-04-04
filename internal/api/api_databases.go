@@ -1,3 +1,6 @@
+// api_databases.go contains admin API handlers for SQL database connection
+// management: CRUD operations with password masking in responses.
+
 package api
 
 import (

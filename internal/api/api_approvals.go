@@ -1,3 +1,6 @@
+// api_approvals.go contains admin API handlers for managing URL/host approval
+// entries: listing, deciding (approve/deny), deleting, and categorizing.
+
 package api
 
 import (

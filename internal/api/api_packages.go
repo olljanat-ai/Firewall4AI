@@ -1,3 +1,7 @@
+// api_packages.go contains admin API handlers for OS package and code library
+// approval management: listing, deciding, deleting, and categorizing for both
+// OS-level packages (e.g., Debian APT) and language-level libraries (e.g., npm, PyPI).
+
 package api
 
 import (

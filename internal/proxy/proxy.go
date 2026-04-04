@@ -44,23 +44,23 @@ func (w *responseBodyWrapper) Close() error {
 
 // Proxy is the main proxy server.
 type Proxy struct {
-	Skills              *auth.SkillStore
-	Approvals           *approval.Manager
-	ImageApprovals      *approval.Manager // image-level approvals for container registries
-	HelmChartApprovals  *approval.Manager // Helm chart approvals
-	PackageApprovals    *approval.Manager // OS Packages (e.g., Debian)
-	LibraryApprovals    *approval.Manager // Code Libraries (e.g., Go, npm, PyPI, NuGet)
-	Registries          []config.RegistryConfig
-	HelmRepos           []config.PackageRepoConfig
-	OSPackages          []config.PackageRepoConfig
-	CodeLibraries       []config.PackageRepoConfig
-	Credentials         *credentials.Manager
-	Logger              *proxylog.Logger
-	Transport           http.RoundTripper
-	CA                  *certgen.CA
-	ApprovalTimeout     time.Duration
-	LearningMode        bool                  // when true, allow all traffic by default (still logged)
-	OnActivity          func(sourceIP string) // called on each request with the source IP
+	Skills             *auth.SkillStore
+	Approvals          *approval.Manager
+	ImageApprovals     *approval.Manager // image-level approvals for container registries
+	HelmChartApprovals *approval.Manager // Helm chart approvals
+	PackageApprovals   *approval.Manager // OS Packages (e.g., Debian)
+	LibraryApprovals   *approval.Manager // Code Libraries (e.g., Go, npm, PyPI, NuGet)
+	Registries         []config.RegistryConfig
+	HelmRepos          []config.PackageRepoConfig
+	OSPackages         []config.PackageRepoConfig
+	CodeLibraries      []config.PackageRepoConfig
+	Credentials        *credentials.Manager
+	Logger             *proxylog.Logger
+	Transport          http.RoundTripper
+	CA                 *certgen.CA
+	ApprovalTimeout    time.Duration
+	LearningMode       bool                  // when true, allow all traffic by default (still logged)
+	OnActivity         func(sourceIP string) // called on each request with the source IP
 }
 
 // New creates a new Proxy with the given dependencies.

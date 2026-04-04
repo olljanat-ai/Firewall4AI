@@ -23,18 +23,18 @@ import (
 // It provides policy information, CA certificates, boot files, and database
 // query access to AI agents.
 type AgentHandler struct {
-	Approvals        *approval.Manager
+	Approvals          *approval.Manager
 	ImageApprovals     *approval.Manager
 	HelmChartApprovals *approval.Manager
 	PackageApprovals   *approval.Manager
-	LibraryApprovals *approval.Manager
-	Skills           *auth.SkillStore
-	CACertPEM        []byte // PEM-encoded CA certificate
-	AgentManager     *agent.Manager
-	NetbootManager   *netboot.Manager
-	ImageManager     *image.Manager
-	DatabaseManager  *database.Manager
-	GetSSHKeys       func() []string // returns global SSH authorized keys
+	LibraryApprovals   *approval.Manager
+	Skills             *auth.SkillStore
+	CACertPEM          []byte // PEM-encoded CA certificate
+	AgentManager       *agent.Manager
+	NetbootManager     *netboot.Manager
+	ImageManager       *image.Manager
+	DatabaseManager    *database.Manager
+	GetSSHKeys         func() []string // returns global SSH authorized keys
 }
 
 // RegisterAgentRoutes sets up the agent API routes.

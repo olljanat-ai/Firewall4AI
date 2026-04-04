@@ -1,3 +1,6 @@
+// proxy_http.go handles plain HTTP proxy requests: approval checking,
+// credential injection, request forwarding, and response logging.
+
 package proxy
 
 import (

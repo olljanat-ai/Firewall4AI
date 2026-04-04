@@ -1,3 +1,6 @@
+// api_skills.go contains admin API handlers for skill (AI agent token)
+// management: CRUD operations and token generation.
+
 package api
 
 import (
