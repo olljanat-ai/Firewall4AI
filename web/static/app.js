@@ -1095,11 +1095,11 @@ async function loadHelmCharts() {
     currentHelmCharts = items;
     currentFilteredHelmCharts = items;
     currentCategories = meta.categories || [];
-    populateSelect('filter-helm-chart-category', currentCategories.map(c => ({ value: c, label: c })), 'All categories');
+    populateSelect('filter-helm_chart-category', currentCategories.map(c => ({ value: c, label: c })), 'All categories');
     const skillOpts = (meta.skill_ids || []).map(id => ({ value: id, label: skillNameByID(id) }));
     skillOpts.sort((a, b) => a.label.localeCompare(b.label));
-    populateSelect('filter-helm-chart-skill', skillOpts, 'All skills');
-    populateSelect('filter-helm-chart-ip', (meta.source_ips || []).map(ip => ({ value: ip, label: ip })), 'All source IPs');
+    populateSelect('filter-helm_chart-skill', skillOpts, 'All skills');
+    populateSelect('filter-helm_chart-ip', (meta.source_ips || []).map(ip => ({ value: ip, label: ip })), 'All source IPs');
     const tbody = document.getElementById('helm-charts-tbody');
     const rows = [];
     if (items.length === 0) {
