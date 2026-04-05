@@ -349,8 +349,7 @@ func main() {
 	}
 
 	// Setup proxy server with CA for MITM and registry awareness.
-	p := proxy.New(skills, approvals, creds, logger)
-	p.CA = ca
+	p := proxy.New(skills, approvals, creds, logger, ca)
 	p.ImageApprovals = imageApprovals
 	p.HelmChartApprovals = helmChartApprovals
 	p.PackageApprovals = packageApprovals
