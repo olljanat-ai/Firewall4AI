@@ -1,5 +1,5 @@
-// proxy_connect.go handles HTTP CONNECT tunnels: both blind TCP tunneling
-// and TLS MITM interception with per-request approval and credential injection.
+// proxy_connect.go handles HTTP CONNECT tunnels via goproxy: MITM TLS
+// inspection with per-request approval, and blind TCP tunneling fallback.
 
 package proxy
 
@@ -13,88 +13,76 @@ import (
 	"strings"
 	"time"
 
+	"github.com/elazarl/goproxy"
+
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
-	"github.com/olljanat-ai/firewall4ai/internal/auth"
-	"github.com/olljanat-ai/firewall4ai/internal/library"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
-	"github.com/olljanat-ai/firewall4ai/internal/registry"
 )
 
-// handleConnect handles HTTPS CONNECT tunnel requests, with optional TLS MITM
-// inspection when a CA is configured.
-func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
+// handleConnectDecision is the goproxy CONNECT handler. It decides whether to
+// MITM (for TLS inspection), blind tunnel, or reject the connection.
+func (p *Proxy) handleConnectDecision(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
 	start := time.Now()
-	targetHost := r.Host
-	host := targetHost
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
+	h := host
+	if hp, _, err := net.SplitHostPort(host); err == nil {
+		h = hp
 	}
-	sourceIP := extractSourceIP(r.RemoteAddr)
+	sourceIP := extractSourceIP(ctx.Req.RemoteAddr)
 	if p.OnActivity != nil {
 		p.OnActivity(sourceIP)
 	}
 
-	skill, err := p.authenticateOptional(r)
+	skill, err := p.authenticateOptional(ctx.Req)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
 			Method: "CONNECT",
-			Host:   host,
+			Host:   h,
 			Status: "denied",
 			Detail: "auth failed: " + err.Error(),
 		})
-		http.Error(w, "Proxy authentication failed: "+err.Error(), http.StatusProxyAuthRequired)
-		return
+		ctx.Resp = errorResponse(ctx.Req, http.StatusProxyAuthRequired,
+			"Proxy authentication failed: "+err.Error())
+		return goproxy.RejectConnect, host
 	}
 
 	// For CONNECT with MITM, auto-approve hosts that belong to configured
 	// infrastructure (registries, Helm repos, package repos, code libraries)
 	// since the real access control happens per-item inside the tunnel.
 	// For other hosts, check host-level approval. Per-request path checks
-	// happen in handleMITMRequest.
+	// happen in handleMITMRequest via processRequest.
 	// For blind tunnels (no MITM), use host-only check since we can't inspect paths.
 	var status approval.Status
-	if p.CA != nil && p.isConfiguredRepoHost(host) {
+	if p.CA != nil && p.isConfiguredRepoHost(h) {
 		status = approval.StatusApproved
 	} else if p.CA != nil {
-		status = p.checkHostApproval(host, skill, sourceIP)
+		status = p.checkHostApproval(h, skill, sourceIP)
 	} else {
-		status = p.checkApproval(host, "", skill, sourceIP)
+		status = p.checkApproval(h, "", skill, sourceIP)
 	}
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
 			SkillID: getSkillID(skill),
 			Method:  "CONNECT",
-			Host:    host,
+			Host:    h,
 			Status:  string(status),
 			Detail:  "host not approved",
 		})
-		writeErrorResponse(w, status, host)
-		return
+		ctx.Resp = errorResponse(ctx.Req, statusToHTTPCode(status), denialMessage(status, h))
+		return goproxy.RejectConnect, host
 	}
 
-	// Hijack the client connection.
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
-		return
-	}
-	clientConn, _, err := hijacker.Hijack()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Send 200 OK to tell the client the tunnel is established.
-	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-
-	// If we have a CA, perform TLS MITM inspection.
-	if p.CA != nil {
-		p.handleMITM(clientConn, host, targetHost, skill, sourceIP, start)
-		return
-	}
-
-	// Fallback: blind tunnel (no inspection).
-	p.handleBlindTunnel(clientConn, host, targetHost, skill, start)
+	// Use ConnectHijack to take over the connection and handle MITM/blind tunnel ourselves.
+	// This preserves the CONNECT-level skill for inner MITM'd requests.
+	return &goproxy.ConnectAction{
+		Action: goproxy.ConnectHijack,
+		Hijack: func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
+			if p.CA != nil {
+				p.handleMITM(client, h, host, skill, sourceIP, start)
+			} else {
+				p.handleBlindTunnel(client, h, host, skill, start)
+			}
+		},
+	}, host
 }
 
 // newMITMTLSConfig returns a shared TLS configuration for MITM interception.
@@ -135,8 +123,8 @@ func newMITMTLSConfig(getCertFunc func(*tls.ClientHelloInfo) (*tls.Certificate, 
 }
 
 // handleMITM performs TLS MITM: terminates the client TLS with a generated cert,
-// reads the inner HTTP requests, applies auth/approval/credential injection,
-// and forwards them to the real target over a new TLS connection.
+// reads the inner HTTP requests, applies auth/approval/credential injection via
+// processRequest, and writes responses back.
 func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, sourceIP string, start time.Time) {
 	defer clientConn.Close()
 
@@ -205,117 +193,21 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 		if !strings.Contains(upstreamAddr, ":") {
 			upstreamAddr += ":443"
 		}
-		p.handleTLSRequest(tlsClientConn, req, host, upstreamAddr, skill, sourceIP)
-	}
-}
 
-// handleTLSRequest processes a single HTTP request from either a MITM'd
-// explicit CONNECT tunnel or a transparent TLS interception. The targetAddr
-// is used as the upstream host:port for forwarding (e.g. "example.com:443").
-func (p *Proxy) handleTLSRequest(clientConn net.Conn, req *http.Request, host, targetAddr string, skill *auth.Skill, sourceIP string) {
-	start := time.Now()
-	sid := getSkillID(skill)
+		// Set URL for HTTPS forwarding.
+		req.URL.Scheme = "https"
+		req.URL.Host = upstreamAddr
+		req.Host = host
 
-	// Remove proxy auth header if client re-sent it inside the tunnel.
-	req.Header.Del(AuthHeader)
+		// Process the request using the skill from the CONNECT auth.
+		resp, _ := p.processRequest(req, sourceIP, skill)
 
-	// Check if this is a container registry request.
-	if reg := registry.RegistryForHost(host, p.Registries); reg != nil {
-		p.handleRegistryTLSRequest(clientConn, req, host, sourceIP, skill, reg, start)
-		return
-	}
-
-	// Check if this is a Helm chart repository request.
-	if repo := library.RepoForHost(host, p.HelmRepos); repo != nil {
-		p.handleHelmChartRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, start)
-		return
-	}
-
-	// Check if this is a package repository request.
-	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
-		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, true, start)
-		return
-	}
-	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
-		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, false, start)
-		return
-	}
-
-	// Check path-level approval for this specific request.
-	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
-	if status != approval.StatusApproved {
-		resource := host + req.URL.Path
-		p.Logger.Add(proxylog.Entry{
-			SkillID: sid,
-			Method:  req.Method,
-			Host:    host,
-			Path:    req.URL.Path,
-			Status:  string(status),
-			Detail:  "path not approved",
-		})
-		writeErrorResponseConn(clientConn, status, resource)
-		return
-	}
-
-	// Check logging mode.
-	logMode := p.getLoggingMode(host, req.URL.Path, skill, sourceIP)
-	var fullDetail *proxylog.FullDetail
-	if logMode == approval.LoggingModeFull {
-		reqBody := captureRequestBody(req)
-		fullDetail = &proxylog.FullDetail{
-			RequestHeaders: req.Header.Clone(),
-			RequestBody:    reqBody,
+		// Write response to the TLS connection.
+		forwardTLS(tlsClientConn, resp)
+		if resp.Body != nil {
+			resp.Body.Close()
 		}
 	}
-
-	// Set the URL for forwarding.
-	req.URL.Scheme = "https"
-	req.URL.Host = targetAddr
-	req.RequestURI = ""
-
-	// Inject credentials for HTTPS requests.
-	p.Credentials.InjectForRequest(req, sourceIP)
-	if fullDetail != nil {
-		fullDetail.InjectedHeaders = captureInjectedHeaders(fullDetail.RequestHeaders, req.Header)
-	}
-
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:    sid,
-			Method:     req.Method,
-			Host:       host,
-			Path:       req.URL.Path,
-			Status:     "error",
-			Detail:     err.Error(),
-			Duration:   time.Since(start).Milliseconds(),
-			HasFullLog: fullDetail != nil,
-			FullDetail: fullDetail,
-		})
-		write502TLS(clientConn)
-		return
-	}
-	defer resp.Body.Close()
-
-	if fullDetail != nil {
-		fullDetail.ResponseHeaders = resp.Header.Clone()
-		fullDetail.ResponseStatus = resp.StatusCode
-		fullDetail.ResponseBody = captureResponseBody(resp)
-	}
-
-	p.Logger.Add(proxylog.Entry{
-		SkillID:    sid,
-		Method:     req.Method,
-		Host:       host,
-		Path:       req.URL.Path,
-		Status:     "allowed",
-		Detail:     fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration:   time.Since(start).Milliseconds(),
-		HasFullLog: fullDetail != nil,
-		FullDetail: fullDetail,
-	})
-
-	forwardTLS(clientConn, resp)
 }
 
 // handleBlindTunnel is the fallback when no CA is configured: just pipe bytes.

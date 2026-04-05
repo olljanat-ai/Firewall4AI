@@ -1,6 +1,7 @@
 // proxy_transparent.go handles transparent TLS interception: accepting
 // connections redirected by iptables, extracting the SNI hostname from
-// the TLS ClientHello, and performing MITM inspection with per-request approval.
+// the TLS ClientHello, and performing MITM inspection with per-request approval
+// via the shared processRequest function.
 
 package proxy
 
@@ -30,7 +31,8 @@ func (p *Proxy) ServeTransparentTLS(listener net.Listener) {
 
 // HandleTransparentTLS handles a raw TCP connection redirected by iptables
 // for transparent HTTPS interception. It terminates TLS using SNI to
-// determine the target host, then reads and forwards HTTP requests.
+// determine the target host, then reads and forwards HTTP requests via
+// processRequest.
 func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	defer clientConn.Close()
 
@@ -88,9 +90,14 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 }
 
 // handleTransparentTLSRequest authenticates a request from a transparent TLS
-// connection and delegates to the unified handleTLSRequest handler.
+// connection and processes it via processRequest.
 func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string) {
-	// Authenticate (optional in transparent mode).
+	// Set URL for HTTPS forwarding.
+	req.URL.Scheme = "https"
+	req.URL.Host = host + ":443"
+	req.Host = host
+
+	// Authenticate from the inner request (transparent mode).
 	skill, err := p.authenticateOptional(req)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
@@ -114,5 +121,11 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 		return
 	}
 
-	p.handleTLSRequest(clientConn, req, host, host+":443", skill, sourceIP)
+	resp, _ := p.processRequest(req, sourceIP, skill)
+
+	// Write response to the TLS connection.
+	forwardTLS(clientConn, resp)
+	if resp.Body != nil {
+		resp.Body.Close()
+	}
 }

@@ -201,17 +201,6 @@ func (ca *CA) generateHostCertLocked(host string) (*tls.Certificate, error) {
 	return tlsCert, nil
 }
 
-// TLSConfigForMITM returns a tls.Config that dynamically generates certificates
-// for each host using the CA.
-func (ca *CA) TLSConfigForMITM() *tls.Config {
-	return &tls.Config{
-		GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			return ca.GenerateHostCert(info.ServerName)
-		},
-		MinVersion: tls.VersionTLS12,
-	}
-}
-
 func randomSerial() (*big.Int, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {

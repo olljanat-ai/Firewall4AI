@@ -4,14 +4,10 @@
 package proxy
 
 import (
-	"fmt"
-	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
-	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/library"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
@@ -61,77 +57,31 @@ func (p *Proxy) checkHelmApprovalFastPath(ref string) bool {
 	return false
 }
 
-// handleHelmChartRepoHTTPRequest handles plain-HTTP requests to a Helm chart repository.
+// handleHelmChartRequest handles requests to a Helm chart repository.
 // Index/metadata requests use repo-level approval; chart downloads use chart-level approval.
-func (p *Proxy) handleHelmChartRepoHTTPRequest(w http.ResponseWriter, r *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) {
-	sid := getSkillID(skill)
-	urlPath := r.URL.Path
+// Returns the response to send to the client.
+func (p *Proxy) handleHelmChartRequest(req *http.Request, rc *requestContext, repo *config.PackageRepoConfig) *http.Response {
+	sid := getSkillID(rc.skill)
+	urlPath := req.URL.Path
+	host := rc.host
 
 	chartName, ok := library.ParsePackageName(urlPath, library.PackageType(repo.Type))
 	if !ok {
 		// Unknown path type — fall through to normal host approval.
-		status := p.checkApproval(host, urlPath, skill, sourceIP)
+		status := p.checkApproval(host, urlPath, rc.skill, rc.sourceIP)
 		if status != approval.StatusApproved {
-			writeErrorResponse(w, status, host+urlPath)
-			return
+			rc.logged = true
+			return errorResponse(req, statusToHTTPCode(status),
+				denialMessage(status, host+urlPath))
 		}
-		p.forwardHTTPRequest(w, r, host, sid, urlPath, start)
-		return
+		return p.forwardAndLog(req, rc, "")
 	}
 
 	ref := helmRef(host, chartName)
 	if chartName != "" && p.checkHelmApprovalFastPath(ref) {
 		// Fast-path: an existing approval already covers this chart.
 	} else {
-		status := p.checkRefApproval(p.HelmChartApprovals, ref, skill, sourceIP, matchHelmRef)
-		if status != approval.StatusApproved {
-			p.Logger.Add(proxylog.Entry{
-				SkillID: sid,
-				Method:  r.Method,
-				Host:    host,
-				Path:    urlPath,
-				Status:  string(status),
-				Detail:  "helm chart not approved: " + ref,
-			})
-			writeErrorResponse(w, status, "helm chart "+ref)
-			return
-		}
-	}
-
-	p.Logger.Add(proxylog.Entry{
-		SkillID: sid,
-		Method:  r.Method,
-		Host:    host,
-		Path:    urlPath,
-		Status:  "allowed",
-		Detail:  ref,
-	})
-	p.forwardHTTPRequest(w, r, host, sid, urlPath, start)
-}
-
-// handleHelmChartRepoTLSRequest handles HTTPS requests to a Helm chart repository
-// over a raw net.Conn (from CONNECT+MITM or transparent TLS interception).
-func (p *Proxy) handleHelmChartRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) {
-	sid := getSkillID(skill)
-	urlPath := req.URL.Path
-
-	chartName, ok := library.ParsePackageName(urlPath, library.PackageType(repo.Type))
-	if !ok {
-		// Unknown path type — fall through to normal host approval.
-		status := p.checkApproval(host, urlPath, skill, sourceIP)
-		if status != approval.StatusApproved {
-			writeErrorResponseConn(clientConn, status, host+urlPath)
-			return
-		}
-		p.forwardTLSRequest(clientConn, req, host, sid, urlPath, start)
-		return
-	}
-
-	ref := helmRef(host, chartName)
-	if chartName != "" && p.checkHelmApprovalFastPath(ref) {
-		// Fast-path: existing approval covers this chart.
-	} else {
-		status := p.checkRefApproval(p.HelmChartApprovals, ref, skill, sourceIP, matchHelmRef)
+		status := p.checkRefApproval(p.HelmChartApprovals, ref, rc.skill, rc.sourceIP, matchHelmRef)
 		if status != approval.StatusApproved {
 			p.Logger.Add(proxylog.Entry{
 				SkillID: sid,
@@ -141,87 +91,19 @@ func (p *Proxy) handleHelmChartRepoTLSRequest(clientConn net.Conn, req *http.Req
 				Status:  string(status),
 				Detail:  "helm chart not approved: " + ref,
 			})
-			writeErrorResponseConn(clientConn, status, "helm chart "+ref)
-			return
+			rc.logged = true
+			return errorResponse(req, statusToHTTPCode(status),
+				denialMessage(status, "helm chart "+ref))
 		}
 	}
 
 	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   req.Method,
-		Host:     host,
-		Path:     urlPath,
-		Status:   "allowed",
-		Detail:   ref,
-		Duration: time.Since(start).Milliseconds(),
+		SkillID: sid,
+		Method:  req.Method,
+		Host:    host,
+		Path:    urlPath,
+		Status:  "allowed",
+		Detail:  ref,
 	})
-	p.forwardTLSRequest(clientConn, req, host, sid, urlPath, start)
-}
-
-// forwardHTTPRequest forwards a pre-approved request over plain HTTP and logs the result.
-func (p *Proxy) forwardHTTPRequest(w http.ResponseWriter, r *http.Request, host, sid, urlPath string, start time.Time) {
-	r.RequestURI = ""
-	if r.URL.Scheme == "" {
-		r.URL.Scheme = "http"
-	}
-	if r.URL.Host == "" {
-		r.URL.Host = r.Host
-	}
-	resp, err := p.Transport.RoundTrip(r)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   r.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
-		})
-		http.Error(w, "Proxy error: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   r.Method,
-		Host:     host,
-		Path:     urlPath,
-		Status:   "allowed",
-		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration: time.Since(start).Milliseconds(),
-	})
-	forwardHTTP(w, resp)
-}
-
-// forwardTLSRequest forwards a pre-approved request over TLS (raw conn) and logs the result.
-func (p *Proxy) forwardTLSRequest(clientConn net.Conn, req *http.Request, host, sid, urlPath string, start time.Time) {
-	req.URL.Scheme = "https"
-	req.URL.Host = host + ":443"
-	req.RequestURI = ""
-	resp, err := p.Transport.RoundTrip(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "error",
-			Detail:   err.Error(),
-			Duration: time.Since(start).Milliseconds(),
-		})
-		write502TLS(clientConn)
-		return
-	}
-	defer resp.Body.Close()
-	p.Logger.Add(proxylog.Entry{
-		SkillID:  sid,
-		Method:   req.Method,
-		Host:     host,
-		Path:     urlPath,
-		Status:   "allowed",
-		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
-		Duration: time.Since(start).Milliseconds(),
-	})
-	forwardTLS(clientConn, resp)
+	return p.forwardAndLog(req, rc, ref)
 }

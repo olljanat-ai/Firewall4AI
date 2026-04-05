@@ -1,5 +1,5 @@
 // Package proxy implements the transparent HTTP+HTTPS proxy with approval gates
-// and TLS MITM inspection for HTTPS traffic.
+// and TLS MITM inspection for HTTPS traffic, built on top of goproxy.
 package proxy
 
 import (
@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/elazarl/goproxy"
 
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
@@ -61,11 +63,13 @@ type Proxy struct {
 	ApprovalTimeout    time.Duration
 	LearningMode       bool                  // when true, allow all traffic by default (still logged)
 	OnActivity         func(sourceIP string) // called on each request with the source IP
+
+	goProxy *goproxy.ProxyHttpServer
 }
 
 // New creates a new Proxy with the given dependencies.
 func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credentials.Manager, logger *proxylog.Logger) *Proxy {
-	return &Proxy{
+	p := &Proxy{
 		Skills:          skills,
 		Approvals:       approvals,
 		Credentials:     creds,
@@ -79,15 +83,26 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 			ResponseHeaderTimeout: 30 * time.Second,
 		},
 	}
+
+	gp := goproxy.NewProxyHttpServer()
+	gp.Verbose = false
+
+	// CONNECT handler: decide MITM vs blind tunnel vs reject.
+	gp.OnRequest().HandleConnect(goproxy.FuncHttpsHandler(p.handleConnectDecision))
+
+	// Request handler: auth, approval, credential injection, forwarding.
+	gp.OnRequest().DoFunc(p.onRequest)
+
+	// Response handler: no-op (logging done in onRequest/processRequest).
+	gp.OnResponse().DoFunc(p.onResponse)
+
+	p.goProxy = gp
+	return p
 }
 
 // ServeHTTP handles both HTTP requests and HTTPS CONNECT tunnels.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodConnect {
-		p.handleConnect(w, r)
-	} else {
-		p.handleHTTP(w, r)
-	}
+	p.goProxy.ServeHTTP(w, r)
 }
 
 // --- Host / source helpers ---
@@ -204,19 +219,24 @@ func writeErrorResponseConn(conn net.Conn, status approval.Status, resource stri
 	resp.Write(conn)
 }
 
-// --- Forwarding helpers ---
-
-// forwardHTTP copies the upstream response headers, status, and body to an
-// http.ResponseWriter.
-func forwardHTTP(w http.ResponseWriter, resp *http.Response) {
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
+// errorResponse creates an *http.Response with the given status code and plain text message.
+func errorResponse(req *http.Request, code int, msg string) *http.Response {
+	body := msg + "\n"
+	resp := &http.Response{
+		StatusCode:    code,
+		Status:        fmt.Sprintf("%d %s", code, http.StatusText(code)),
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Request:       req,
 	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	return resp
 }
+
+// --- Forwarding helpers (for transparent TLS only) ---
 
 // forwardTLS writes the upstream response to a raw net.Conn using HTTP/1.1 wire format.
 // When the upstream response uses chunked Transfer-Encoding (no Content-Length),

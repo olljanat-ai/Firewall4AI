@@ -1,7 +1,6 @@
 package certgen
 
 import (
-	"crypto/tls"
 	"crypto/x509"
 	"os"
 	"path/filepath"
@@ -135,26 +134,3 @@ func TestGenerateHostCert_Cached(t *testing.T) {
 	}
 }
 
-func TestTLSConfigForMITM(t *testing.T) {
-	ca, err := generateCA()
-	if err != nil {
-		t.Fatalf("generateCA() error: %v", err)
-	}
-
-	cfg := ca.TLSConfigForMITM()
-	if cfg == nil {
-		t.Fatal("TLS config should not be nil")
-	}
-	if cfg.GetCertificate == nil {
-		t.Fatal("GetCertificate should be set")
-	}
-
-	// Test that GetCertificate works.
-	cert, err := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "test.example.com"})
-	if err != nil {
-		t.Fatalf("GetCertificate() error: %v", err)
-	}
-	if cert == nil {
-		t.Fatal("should return a certificate")
-	}
-}
