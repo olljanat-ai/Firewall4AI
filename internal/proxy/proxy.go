@@ -67,13 +67,30 @@ type Proxy struct {
 	goProxy *goproxy.ProxyHttpServer
 }
 
+// goproxyLogBridge adapts our proxylog.Logger to goproxy's Logger interface,
+// routing goproxy internal messages through our unified logging.
+type goproxyLogBridge struct {
+	logger *proxylog.Logger
+}
+
+func (b *goproxyLogBridge) Printf(format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+	b.logger.Add(proxylog.Entry{
+		Method: "GOPROXY",
+		Status: "info",
+		Detail: msg,
+	})
+}
+
 // New creates a new Proxy with the given dependencies.
-func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credentials.Manager, logger *proxylog.Logger) *Proxy {
+// The ca parameter is optional; when non-nil it enables TLS MITM inspection.
+func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credentials.Manager, logger *proxylog.Logger, ca *certgen.CA) *Proxy {
 	p := &Proxy{
 		Skills:          skills,
 		Approvals:       approvals,
 		Credentials:     creds,
 		Logger:          logger,
+		CA:              ca,
 		ApprovalTimeout: approvalTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
@@ -86,6 +103,7 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 
 	gp := goproxy.NewProxyHttpServer()
 	gp.Verbose = false
+	gp.Logger = &goproxyLogBridge{logger: logger}
 
 	// CONNECT handler: decide MITM vs blind tunnel vs reject.
 	gp.OnRequest().HandleConnect(goproxy.FuncHttpsHandler(p.handleConnectDecision))
@@ -219,21 +237,10 @@ func writeErrorResponseConn(conn net.Conn, status approval.Status, resource stri
 	resp.Write(conn)
 }
 
-// errorResponse creates an *http.Response with the given status code and plain text message.
+// errorResponse creates an *http.Response using goproxy.NewResponse to keep
+// goproxy's internal state consistent when used within OnRequest handlers.
 func errorResponse(req *http.Request, code int, msg string) *http.Response {
-	body := msg + "\n"
-	resp := &http.Response{
-		StatusCode:    code,
-		Status:        fmt.Sprintf("%d %s", code, http.StatusText(code)),
-		ProtoMajor:    1,
-		ProtoMinor:    1,
-		Header:        make(http.Header),
-		Body:          io.NopCloser(strings.NewReader(body)),
-		ContentLength: int64(len(body)),
-		Request:       req,
-	}
-	resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
-	return resp
+	return goproxy.NewResponse(req, "text/plain; charset=utf-8", code, msg+"\n")
 }
 
 // --- Forwarding helpers (for transparent TLS only) ---
@@ -245,15 +252,10 @@ func errorResponse(req *http.Request, code int, msg string) *http.Response {
 // stays open (e.g. helm repo add with ~600KB index responses).
 func forwardTLS(conn net.Conn, resp *http.Response) {
 	if resp.ContentLength < 0 && resp.Body != nil {
-		body, err := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if err != nil {
-			resp.Body = io.NopCloser(bytes.NewReader(body))
-			resp.ContentLength = int64(len(body))
-		} else {
-			resp.Body = io.NopCloser(bytes.NewReader(body))
-			resp.ContentLength = int64(len(body))
-		}
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		resp.ContentLength = int64(len(body))
 		resp.TransferEncoding = nil
 	}
 	resp.Write(conn)

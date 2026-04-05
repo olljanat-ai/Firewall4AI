@@ -33,19 +33,23 @@ func setupProxy(t *testing.T) (*Proxy, *auth.SkillStore, *approval.Manager) {
 	approvals := approval.NewManager()
 	creds := credentials.NewManager()
 	logger := proxylog.NewLogger(100)
-	p := New(skills, approvals, creds, logger)
+	p := New(skills, approvals, creds, logger, nil)
 	p.ApprovalTimeout = 50 * time.Millisecond // short timeout for tests
 	return p, skills, approvals
 }
 
 func setupProxyWithCA(t *testing.T) (*Proxy, *auth.SkillStore, *approval.Manager, *certgen.CA) {
 	t.Helper()
-	p, skills, approvals := setupProxy(t)
+	skills := auth.NewSkillStore()
+	approvals := approval.NewManager()
+	creds := credentials.NewManager()
+	logger := proxylog.NewLogger(100)
 	ca, err := certgen.LoadOrGenerateCA(t.TempDir())
 	if err != nil {
 		t.Fatalf("LoadOrGenerateCA() error: %v", err)
 	}
-	p.CA = ca
+	p := New(skills, approvals, creds, logger, ca)
+	p.ApprovalTimeout = 50 * time.Millisecond // short timeout for tests
 	return p, skills, approvals, ca
 }
 
