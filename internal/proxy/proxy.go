@@ -103,6 +103,40 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 	gp.Verbose = false
 	gp.Logger = &goproxyLogBridge{logger: logger}
 
+	// NonproxyHandler handles transparent HTTP requests that arrive with
+	// relative URLs (from iptables REDIRECT of port 80 -> 8080). We
+	// reconstruct the full URL from the Host header and delegate to
+	// processRequest for approval checking and forwarding.
+	gp.NonproxyHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Host == "" {
+			http.Error(w, "Firewall4AI: transparent request with no Host header", http.StatusBadRequest)
+			return
+		}
+		req.URL.Scheme = "http"
+		req.URL.Host = req.Host
+
+		sourceIP := extractSourceIP(req.RemoteAddr)
+		if p.OnActivity != nil {
+			p.OnActivity(sourceIP)
+		}
+
+		resp, _ := p.processRequest(req, sourceIP)
+		if resp == nil {
+			http.Error(w, "Firewall4AI: no response from upstream", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		// Copy response headers and status.
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	})
+
 	// CONNECT handler: decide MITM vs blind tunnel vs reject.
 	gp.OnRequest().HandleConnect(goproxy.FuncHttpsHandler(p.handleConnectDecision))
 

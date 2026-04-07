@@ -275,6 +275,64 @@ func TestProxy_HostApproval_CoversAllPaths(t *testing.T) {
 	}
 }
 
+// --- Transparent HTTP tests ---
+
+func TestProxy_TransparentHTTP_Approved(t *testing.T) {
+	p, _, approvals := setupProxy(t)
+	approvals.Decide("transparent.example.com", "", "", "", StatusApproved, "ok")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("transparent ok"))
+	}))
+	defer backend.Close()
+
+	// Redirect transport so the request goes to our test backend.
+	p.Transport = &testRedirectTransport{
+		inner:      http.DefaultTransport,
+		targetHost: backend.Listener.Addr().String(),
+	}
+
+	// Simulate transparent redirect: relative URL, Host header set by client.
+	req := httptest.NewRequest("GET", "/data", nil)
+	req.Host = "transparent.example.com"
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for transparent HTTP approved host, got %d", w.Code)
+	}
+}
+
+func TestProxy_TransparentHTTP_Unapproved(t *testing.T) {
+	p, _, _ := setupProxy(t)
+
+	// Simulate transparent redirect: relative URL, no approval.
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Host = "blocked.example.com"
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	// No approval → times out → 407.
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Errorf("expected 407 for transparent HTTP unapproved host, got %d", w.Code)
+	}
+}
+
+func TestProxy_TransparentHTTP_NoHost(t *testing.T) {
+	p, _, _ := setupProxy(t)
+
+	// Transparent redirect with no Host header should return 400.
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Host = ""
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for transparent HTTP with no Host header, got %d", w.Code)
+	}
+}
+
 // --- Learning mode tests ---
 
 func TestProxy_LearningMode(t *testing.T) {
