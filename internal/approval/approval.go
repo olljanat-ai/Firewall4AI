@@ -108,30 +108,6 @@ func (m *Manager) CheckExisting(host, skillID, sourceIP, pathPrefix string) (Sta
 	return a.Status, true
 }
 
-// CheckExistingWithWildcards is like CheckExisting but also matches wildcard
-// host patterns (e.g., *.example.com matches api.example.com).
-// It checks exact match first, then scans for wildcard patterns.
-// This method does NOT consider path prefixes — use CheckExistingWithPath
-// for path-aware checks.
-func (m *Manager) CheckExistingWithWildcards(host, skillID, sourceIP string) (Status, bool) {
-	// Try exact match first (fast path).
-	if status, ok := m.CheckExisting(host, skillID, sourceIP, ""); ok {
-		return status, true
-	}
-	// Scan for wildcard patterns (host-only, no path prefix).
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, a := range m.approvals {
-		if a.SkillID != skillID || a.SourceIP != sourceIP || a.PathPrefix != "" {
-			continue
-		}
-		if a.Host != host && MatchHost(a.Host, host) {
-			return a.Status, true
-		}
-	}
-	return "", false
-}
-
 // CheckExistingWithPath checks for an approval matching the host and path.
 // It considers both wildcard host patterns and path prefix matching.
 // An approval with empty PathPrefix covers all paths. An approval with
@@ -401,7 +377,7 @@ func (m *Manager) LoadApprovals(approvals []HostApproval) {
 	}
 }
 
-// CheckExistingWithMatcher is like CheckExistingWithWildcards but uses a
+// CheckExistingWithMatcher is like CheckExisting but uses a
 // caller-provided match function instead of MatchHost. This allows the
 // registry package to use image-reference-specific pattern matching.
 func (m *Manager) CheckExistingWithMatcher(host, skillID, sourceIP string, matcher func(pattern, host string) bool) (Status, bool) {

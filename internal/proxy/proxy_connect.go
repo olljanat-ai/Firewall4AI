@@ -32,18 +32,7 @@ func (p *Proxy) handleConnectDecision(host string, ctx *goproxy.ProxyCtx) (*gopr
 		p.OnActivity(sourceIP)
 	}
 
-	skill, err := p.authenticateOptional(ctx.Req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			Method: "CONNECT",
-			Host:   h,
-			Status: "denied",
-			Detail: "auth failed: " + err.Error(),
-		})
-		ctx.Resp = errorResponse(ctx.Req, http.StatusProxyAuthRequired,
-			"Proxy authentication failed: "+err.Error())
-		return goproxy.RejectConnect, host
-	}
+	var skill *auth.Skill // Agents are identified by IP, not by token.
 
 	// For CONNECT with MITM, auto-approve hosts that belong to configured
 	// infrastructure (registries, Helm repos, package repos, code libraries)
@@ -202,8 +191,7 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 		req.URL.Host = upstreamAddr
 		req.Host = host
 
-		// Process the request using the skill from the CONNECT auth.
-		resp, _ := p.processRequest(req, sourceIP, skill)
+		resp, _ := p.processRequest(req, sourceIP)
 
 		// Write response to the TLS connection.
 		forwardTLS(tlsClientConn, resp)

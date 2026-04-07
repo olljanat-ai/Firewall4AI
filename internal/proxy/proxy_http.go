@@ -37,7 +37,7 @@ func (p *Proxy) onRequest(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Reque
 		p.OnActivity(sourceIP)
 	}
 
-	resp, rc := p.processRequest(req, sourceIP, nil)
+	resp, rc := p.processRequest(req, sourceIP)
 	ctx.UserData = rc
 	return req, resp
 }
@@ -49,15 +49,12 @@ func (p *Proxy) onResponse(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Res
 }
 
 // processRequest handles the shared business logic for all request types:
-// authentication, routing to specialized handlers, approval checking,
+// routing to specialized handlers, approval checking,
 // credential injection, forwarding, and logging.
-//
-// If preAuthSkill is non-nil, it is used directly (e.g., from CONNECT auth).
-// If preAuthSkill is nil, authentication is attempted from the request headers.
 //
 // Returns the response to send to the client. The returned requestContext
 // contains logging state.
-func (p *Proxy) processRequest(req *http.Request, sourceIP string, preAuthSkill *auth.Skill) (*http.Response, *requestContext) {
+func (p *Proxy) processRequest(req *http.Request, sourceIP string) (*http.Response, *requestContext) {
 	start := time.Now()
 	host := extractHost(req)
 
@@ -66,32 +63,7 @@ func (p *Proxy) processRequest(req *http.Request, sourceIP string, preAuthSkill 
 		host:     host,
 		sourceIP: sourceIP,
 	}
-
-	// Authenticate.
-	var skill *auth.Skill
-	if preAuthSkill != nil {
-		skill = preAuthSkill
-	} else {
-		var err error
-		skill, err = p.authenticateOptional(req)
-		if err != nil {
-			p.Logger.Add(proxylog.Entry{
-				Method: req.Method,
-				Host:   host,
-				Path:   req.URL.Path,
-				Status: "denied",
-				Detail: "auth failed: " + err.Error(),
-			})
-			rc.logged = true
-			return errorResponse(req, http.StatusProxyAuthRequired,
-				"Proxy authentication failed: "+err.Error()), rc
-		}
-	}
-	rc.skill = skill
-	sid := getSkillID(skill)
-
-	// Remove our custom header before forwarding.
-	req.Header.Del(AuthHeader)
+	sid := getSkillID(rc.skill)
 
 	// Route to specialized handlers.
 	if reg := registry.RegistryForHost(host, p.Registries); reg != nil {
@@ -108,7 +80,7 @@ func (p *Proxy) processRequest(req *http.Request, sourceIP string, preAuthSkill 
 	}
 
 	// Generic host+path approval.
-	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
+	status := p.checkApproval(host, req.URL.Path, rc.skill, sourceIP)
 	if status != approval.StatusApproved {
 		resource := host + req.URL.Path
 		p.Logger.Add(proxylog.Entry{
@@ -124,7 +96,7 @@ func (p *Proxy) processRequest(req *http.Request, sourceIP string, preAuthSkill 
 	}
 
 	// Check logging mode before injecting credentials (capture pre-injection headers).
-	logMode := p.getLoggingMode(host, req.URL.Path, skill, sourceIP)
+	logMode := p.getLoggingMode(host, req.URL.Path, rc.skill, sourceIP)
 	rc.logMode = logMode
 	if logMode == approval.LoggingModeFull {
 		reqBody := captureRequestBody(req)

@@ -28,8 +28,6 @@ import (
 
 const (
 	approvalTimeout = 15 * time.Minute
-	// AuthHeader is used by AI agents to provide their skill token.
-	AuthHeader = "X-Firewall4AI-Token"
 )
 
 // responseBodyWrapper restores the full original response body (prefix for logging
@@ -171,21 +169,6 @@ func getSkillID(skill *auth.Skill) string {
 		return ""
 	}
 	return skill.ID
-}
-
-// authenticateOptional extracts and validates the skill token.
-// Returns (nil, nil) if no token is provided (anonymous access).
-// Returns (nil, error) if an invalid token is provided.
-func (p *Proxy) authenticateOptional(r *http.Request) (*auth.Skill, error) {
-	token := r.Header.Get(AuthHeader)
-	if token == "" {
-		return nil, nil
-	}
-	skill, ok := p.Skills.Authenticate(token)
-	if !ok {
-		return nil, fmt.Errorf("invalid or inactive token")
-	}
-	return skill, nil
 }
 
 // getLoggingMode returns the logging mode for the request's host/path.

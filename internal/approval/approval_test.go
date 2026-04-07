@@ -259,14 +259,14 @@ func TestManager_WildcardApproval(t *testing.T) {
 		t.Error("exact match should not exist for wildcard rule")
 	}
 
-	// Wildcard-aware check should match.
-	status, exists := m.CheckExistingWithWildcards("api.example.com", "", "")
+	// Path-aware check should match wildcards.
+	status, exists := m.CheckExistingWithPath("api.example.com", "/any", "", "")
 	if !exists || status != StatusApproved {
 		t.Errorf("expected wildcard match approved, got %s (exists=%v)", status, exists)
 	}
 
 	// Non-matching host should not match.
-	_, exists = m.CheckExistingWithWildcards("other.com", "", "")
+	_, exists = m.CheckExistingWithPath("other.com", "/any", "", "")
 	if exists {
 		t.Error("non-matching host should not match wildcard")
 	}
@@ -279,13 +279,13 @@ func TestManager_WildcardVMApproval(t *testing.T) {
 	m.Decide("*.github.com", "", "10.255.255.10", "", StatusApproved, "vm wildcard")
 
 	// Should match for that VM.
-	status, exists := m.CheckExistingWithWildcards("api.github.com", "", "10.255.255.10")
+	status, exists := m.CheckExistingWithPath("api.github.com", "/any", "", "10.255.255.10")
 	if !exists || status != StatusApproved {
 		t.Errorf("expected VM wildcard match, got %s (exists=%v)", status, exists)
 	}
 
 	// Should not match for different VM.
-	_, exists = m.CheckExistingWithWildcards("api.github.com", "", "10.255.255.11")
+	_, exists = m.CheckExistingWithPath("api.github.com", "/any", "", "10.255.255.11")
 	if exists {
 		t.Error("wildcard should not match different VM")
 	}

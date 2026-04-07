@@ -18,11 +18,6 @@ import (
 // The path parameter enables fine-grained URL path approval; empty path
 // means host-level only (used for blind CONNECT tunnels).
 func (p *Proxy) checkApproval(host, path string, skill *auth.Skill, sourceIP string) approval.Status {
-	// Check pre-approved hosts for authenticated requests.
-	if skill != nil && p.Skills.IsHostPreApproved(skill.Token, host) {
-		return approval.StatusApproved
-	}
-
 	// 1. Check global approval (host+path approved/denied for all agents).
 	if globalStatus, exists := p.Approvals.CheckExistingWithPath(host, path, "", ""); exists && globalStatus != approval.StatusPending {
 		return globalStatus
@@ -63,11 +58,6 @@ func (p *Proxy) checkApproval(host, path string, skill *auth.Skill, sourceIP str
 // allowed if any path-specific approval exists, since per-request checks
 // will enforce path restrictions inside the tunnel.
 func (p *Proxy) checkHostApproval(host string, skill *auth.Skill, sourceIP string) approval.Status {
-	// Check pre-approved hosts.
-	if skill != nil && p.Skills.IsHostPreApproved(skill.Token, host) {
-		return approval.StatusApproved
-	}
-
 	// 1. Global: any approval for this host.
 	if status, exists := p.Approvals.CheckExistingForHost(host, "", ""); exists && status != approval.StatusPending {
 		return status

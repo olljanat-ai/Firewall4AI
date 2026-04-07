@@ -83,13 +83,12 @@ func (h *Handler) updateSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("skill %q not found", req.ID), http.StatusNotFound)
 		return
 	}
-	// Preserve token and allowed hosts (internal fields).
+	// Preserve token (internal field).
 	updated := auth.Skill{
 		ID:          existing.ID,
 		Name:        req.Name,
 		Description: req.Description,
 		Token:       existing.Token,
-		AllowedHost: existing.AllowedHost,
 		Active:      req.Active,
 	}
 	if err := h.Skills.UpdateSkill(updated); err != nil {

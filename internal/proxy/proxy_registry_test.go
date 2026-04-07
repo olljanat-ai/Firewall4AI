@@ -28,7 +28,7 @@ func TestProxy_LearningMode_RegistryBlob(t *testing.T) {
 	blobReq.Host = "registry.example.com"
 	blobReq.RemoteAddr = "10.0.0.1:12345"
 
-	resp, _ := p.processRequest(blobReq, "10.0.0.1", nil)
+	resp, _ := p.processRequest(blobReq, "10.0.0.1")
 
 	if resp.StatusCode == http.StatusForbidden {
 		t.Error("learning mode: blob request should not be denied (got 403)")
@@ -60,7 +60,7 @@ func TestProxy_LearningMode_RegistryBlob_DeniedWhenOff(t *testing.T) {
 	blobReq.Host = "registry.example.com"
 	blobReq.RemoteAddr = "10.0.0.1:12345"
 
-	resp, _ := p.processRequest(blobReq, "10.0.0.1", nil)
+	resp, _ := p.processRequest(blobReq, "10.0.0.1")
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("default-deny: blob request should be denied, got %d", resp.StatusCode)

@@ -103,37 +103,22 @@ func TestGetSkillID(t *testing.T) {
 	}
 }
 
-func TestProxy_NoAuthHeader_Anonymous(t *testing.T) {
+func TestProxy_Anonymous_Unapproved(t *testing.T) {
 	p, _, _ := setupProxy(t)
 	req := httptest.NewRequest("GET", "http://example.com/test", nil)
 	w := httptest.NewRecorder()
 	p.ServeHTTP(w, req)
 
-	// Without token, request is anonymous. No approval exists, so it times
-	// out waiting for admin approval (407).
+	// No approval exists, so it times out waiting for admin approval (407).
 	if w.Code != http.StatusProxyAuthRequired {
 		t.Errorf("expected 407 for anonymous unapproved host, got %d", w.Code)
 	}
 }
 
-func TestProxy_InvalidToken(t *testing.T) {
-	p, _, _ := setupProxy(t)
-	req := httptest.NewRequest("GET", "http://example.com/test", nil)
-	req.Header.Set(AuthHeader, "bad-token")
-	w := httptest.NewRecorder()
-	p.ServeHTTP(w, req)
-
-	if w.Code != http.StatusProxyAuthRequired {
-		t.Errorf("expected 407, got %d", w.Code)
-	}
-}
-
 func TestProxy_HostNotApproved(t *testing.T) {
-	p, skills, _ := setupProxy(t)
-	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
+	p, _, _ := setupProxy(t)
 
 	req := httptest.NewRequest("GET", "http://blocked.com/test", nil)
-	req.Header.Set(AuthHeader, "tok-1")
 	w := httptest.NewRecorder()
 	p.ServeHTTP(w, req)
 
@@ -143,34 +128,9 @@ func TestProxy_HostNotApproved(t *testing.T) {
 	}
 }
 
-func TestProxy_PreApprovedHost(t *testing.T) {
-	p, skills, _ := setupProxy(t)
-	skills.AddSkill(auth.Skill{
-		ID: "s1", Token: "tok-1", Active: true,
-		AllowedHost: []string{"target.example.com"},
-	})
-
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("hello from backend"))
-	}))
-	defer backend.Close()
-
-	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
-	req.Host = "target.example.com"
-	req.Header.Set(AuthHeader, "tok-1")
-	w := httptest.NewRecorder()
-	p.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-}
-
 func TestProxy_ApprovedHost(t *testing.T) {
-	p, skills, approvals := setupProxy(t)
-	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
-	approvals.Decide("target.example.com", "s1", "", "", approval.StatusApproved, "ok")
+	p, _, approvals := setupProxy(t)
+	approvals.Decide("target.example.com", "", "", "", approval.StatusApproved, "ok")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -179,7 +139,6 @@ func TestProxy_ApprovedHost(t *testing.T) {
 
 	req := httptest.NewRequest("GET", backend.URL+"/data", nil)
 	req.Host = "target.example.com"
-	req.Header.Set(AuthHeader, "tok-1")
 	w := httptest.NewRecorder()
 	p.ServeHTTP(w, req)
 
@@ -199,38 +158,14 @@ func TestProxy_GlobalApproval(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	// Anonymous request (no token) should pass via global approval.
+	// Anonymous request should pass via global approval.
 	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
 	req.Host = "global.example.com"
 	w := httptest.NewRecorder()
 	p.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 for globally approved host (anonymous), got %d", w.Code)
-	}
-}
-
-func TestProxy_GlobalApproval_WithSkill(t *testing.T) {
-	p, skills, approvals := setupProxy(t)
-	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
-
-	// Globally approve a host.
-	approvals.Decide("global.example.com", "", "", "", approval.StatusApproved, "global")
-
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer backend.Close()
-
-	// Authenticated request should also pass via global approval.
-	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
-	req.Host = "global.example.com"
-	req.Header.Set(AuthHeader, "tok-1")
-	w := httptest.NewRecorder()
-	p.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 for globally approved host (with skill), got %d", w.Code)
+		t.Errorf("expected 200 for globally approved host, got %d", w.Code)
 	}
 }
 
@@ -276,54 +211,6 @@ func TestProxy_WildcardGlobalApproval(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200 for wildcard-approved host, got %d", w.Code)
-	}
-}
-
-func TestProxy_WildcardPreApprovedHost(t *testing.T) {
-	p, skills, _ := setupProxy(t)
-	skills.AddSkill(auth.Skill{
-		ID: "s1", Token: "tok-1", Active: true,
-		AllowedHost: []string{"*.example.com"},
-	})
-
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer backend.Close()
-
-	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
-	req.Host = "api.example.com"
-	req.Header.Set(AuthHeader, "tok-1")
-	w := httptest.NewRecorder()
-	p.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 for wildcard pre-approved host, got %d", w.Code)
-	}
-}
-
-func TestProxy_AuthHeaderStripped(t *testing.T) {
-	p, skills, _ := setupProxy(t)
-	skills.AddSkill(auth.Skill{
-		ID: "s1", Token: "tok-1", Active: true,
-		AllowedHost: []string{"target.example.com"},
-	})
-
-	var gotHeader string
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotHeader = r.Header.Get(AuthHeader)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer backend.Close()
-
-	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
-	req.Host = "target.example.com"
-	req.Header.Set(AuthHeader, "tok-1")
-	w := httptest.NewRecorder()
-	p.ServeHTTP(w, req)
-
-	if gotHeader != "" {
-		t.Error("auth header should be stripped before forwarding")
 	}
 }
 
@@ -391,8 +278,7 @@ func TestProxy_HostApproval_CoversAllPaths(t *testing.T) {
 // --- Learning mode tests ---
 
 func TestProxy_LearningMode(t *testing.T) {
-	p, skills, approvals := setupProxy(t)
-	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
+	p, _, approvals := setupProxy(t)
 	p.LearningMode = true
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -403,7 +289,6 @@ func TestProxy_LearningMode(t *testing.T) {
 
 	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
 	req.Host = "unapproved.example.com"
-	req.Header.Set(AuthHeader, "tok-1")
 	w := httptest.NewRecorder()
 	p.ServeHTTP(w, req)
 
@@ -426,12 +311,10 @@ func TestProxy_LearningMode(t *testing.T) {
 }
 
 func TestProxy_LearningModeDisabled(t *testing.T) {
-	p, skills, _ := setupProxy(t)
-	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
+	p, _, _ := setupProxy(t)
 	p.LearningMode = false // default-deny
 
 	req := httptest.NewRequest("GET", "http://blocked.com/test", nil)
-	req.Header.Set(AuthHeader, "tok-1")
 	w := httptest.NewRecorder()
 	p.ServeHTTP(w, req)
 

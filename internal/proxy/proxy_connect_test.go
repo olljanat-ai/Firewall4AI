@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
 )
 
@@ -103,20 +102,19 @@ func TestProxy_CONNECT_NoAuth_Anonymous(t *testing.T) {
 	status, conn := connectViaProxy(t, proxyAddr, "example.com:443", nil)
 	defer conn.Close()
 
-	// Without token, CONNECT is anonymous. No approval -> timeout -> 407.
+	// No approval -> timeout -> 407.
 	if status != http.StatusProxyAuthRequired {
-		t.Errorf("expected 407 for anonymous unapproved CONNECT, got %d", status)
+		t.Errorf("expected 407 for unapproved CONNECT, got %d", status)
 	}
 }
 
 func TestProxy_CONNECT_HostNotApproved(t *testing.T) {
-	p, skills, _ := setupProxy(t)
-	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
+	p, _, _ := setupProxy(t)
 
 	proxyAddr, cleanup := startProxyServer(t, p)
 	defer cleanup()
 
-	status, conn := connectViaProxy(t, proxyAddr, "blocked.com:443", map[string]string{AuthHeader: "tok-1"})
+	status, conn := connectViaProxy(t, proxyAddr, "blocked.com:443", nil)
 	defer conn.Close()
 
 	// No approval exists, times out waiting → 407.
@@ -129,7 +127,7 @@ func TestProxy_CONNECT_HostNotApproved(t *testing.T) {
 // the client TLS, reads the inner HTTP request, injects credentials, and
 // forwards to the real HTTPS backend.
 func TestProxy_MITM_InspectsHTTPS(t *testing.T) {
-	p, skills, _, ca := setupProxyWithCA(t)
+	p, _, approvals, ca := setupProxyWithCA(t)
 
 	var receivedAuth string
 	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,10 +140,8 @@ func TestProxy_MITM_InspectsHTTPS(t *testing.T) {
 	backendURL, _ := url.Parse(backend.URL)
 	_, backendPort, _ := net.SplitHostPort(backendURL.Host)
 
-	skills.AddSkill(auth.Skill{
-		ID: "s1", Token: "tok-1", Active: true,
-		AllowedHost: []string{"127.0.0.1"},
-	})
+	// Approve the host via approval manager.
+	approvals.Decide("127.0.0.1", "", "", "", StatusApproved, "test")
 
 	p.Credentials.Add(credentials.Credential{
 		ID:            "cred-1",
@@ -160,8 +156,7 @@ func TestProxy_MITM_InspectsHTTPS(t *testing.T) {
 	proxyAddr, cleanup := startProxyServer(t, p)
 	defer cleanup()
 
-	status, proxyConn := connectViaProxy(t, proxyAddr, fmt.Sprintf("127.0.0.1:%s", backendPort),
-		map[string]string{AuthHeader: "tok-1"})
+	status, proxyConn := connectViaProxy(t, proxyAddr, fmt.Sprintf("127.0.0.1:%s", backendPort), nil)
 	defer proxyConn.Close()
 
 	if status != 200 {
@@ -203,17 +198,13 @@ func TestProxy_MITM_InspectsHTTPS(t *testing.T) {
 // TestProxy_MITM_HostCertVerifiable checks that the MITM'd connection
 // presents a valid certificate for the target host.
 func TestProxy_MITM_HostCertVerifiable(t *testing.T) {
-	p, skills, _, ca := setupProxyWithCA(t)
-	skills.AddSkill(auth.Skill{
-		ID: "s1", Token: "tok-1", Active: true,
-		AllowedHost: []string{"test.example.com"},
-	})
+	p, _, approvals, ca := setupProxyWithCA(t)
+	approvals.Decide("test.example.com", "", "", "", StatusApproved, "test")
 
 	proxyAddr, cleanup := startProxyServer(t, p)
 	defer cleanup()
 
-	status, proxyConn := connectViaProxy(t, proxyAddr, "test.example.com:443",
-		map[string]string{AuthHeader: "tok-1"})
+	status, proxyConn := connectViaProxy(t, proxyAddr, "test.example.com:443", nil)
 	defer proxyConn.Close()
 
 	if status != 200 {
@@ -246,7 +237,7 @@ func TestProxy_MITM_HostCertVerifiable(t *testing.T) {
 // TestProxy_MITM_ChunkedResponseComplete verifies that large chunked
 // responses are fully delivered through the MITM proxy without hanging.
 func TestProxy_MITM_ChunkedResponseComplete(t *testing.T) {
-	p, skills, _, ca := setupProxyWithCA(t)
+	p, _, approvals, ca := setupProxyWithCA(t)
 
 	largeBody := make([]byte, 100*1024)
 	for i := range largeBody {
@@ -263,18 +254,15 @@ func TestProxy_MITM_ChunkedResponseComplete(t *testing.T) {
 	backendURL, _ := url.Parse(backend.URL)
 	_, backendPort, _ := net.SplitHostPort(backendURL.Host)
 
-	skills.AddSkill(auth.Skill{
-		ID: "s1", Token: "tok-1", Active: true,
-		AllowedHost: []string{"127.0.0.1"},
-	})
+	// Approve the host via approval manager.
+	approvals.Decide("127.0.0.1", "", "", "", StatusApproved, "test")
 
 	p.Transport = backend.Client().Transport
 
 	proxyAddr, cleanup := startProxyServer(t, p)
 	defer cleanup()
 
-	status, proxyConn := connectViaProxy(t, proxyAddr, fmt.Sprintf("127.0.0.1:%s", backendPort),
-		map[string]string{AuthHeader: "tok-1"})
+	status, proxyConn := connectViaProxy(t, proxyAddr, fmt.Sprintf("127.0.0.1:%s", backendPort), nil)
 	defer proxyConn.Close()
 
 	if status != 200 {

@@ -12,7 +12,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
@@ -89,39 +88,15 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	}
 }
 
-// handleTransparentTLSRequest authenticates a request from a transparent TLS
-// connection and processes it via processRequest.
+// handleTransparentTLSRequest processes a request from a transparent TLS
+// connection via processRequest.
 func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string) {
 	// Set URL for HTTPS forwarding.
 	req.URL.Scheme = "https"
 	req.URL.Host = host + ":443"
 	req.Host = host
 
-	// Authenticate from the inner request (transparent mode).
-	skill, err := p.authenticateOptional(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			Method: req.Method,
-			Host:   host,
-			Path:   req.URL.Path,
-			Status: "denied",
-			Detail: "auth failed: " + err.Error(),
-		})
-		msg := "Firewall4AI: Proxy authentication failed: " + err.Error()
-		resp := &http.Response{
-			StatusCode: http.StatusProxyAuthRequired,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(msg + "\n")),
-		}
-		resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
-		resp.ContentLength = int64(len(msg) + 1)
-		resp.Write(clientConn)
-		return
-	}
-
-	resp, _ := p.processRequest(req, sourceIP, skill)
+	resp, _ := p.processRequest(req, sourceIP)
 
 	// Write response to the TLS connection.
 	forwardTLS(clientConn, resp)

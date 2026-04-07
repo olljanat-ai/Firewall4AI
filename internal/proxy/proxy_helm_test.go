@@ -32,7 +32,7 @@ func TestProxy_HelmChart_CertManager_Approved(t *testing.T) {
 	req.Host = "charts.jetstack.io"
 	req.RemoteAddr = "10.0.0.1:12345"
 
-	resp, _ := p.processRequest(req, "10.0.0.1", nil)
+	resp, _ := p.processRequest(req, "10.0.0.1")
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("approved cert-manager chart should return 200, got %d", resp.StatusCode)
@@ -50,7 +50,7 @@ func TestProxy_HelmChart_CertManager_Denied(t *testing.T) {
 	req.Host = "charts.jetstack.io"
 	req.RemoteAddr = "10.0.0.1:12345"
 
-	resp, _ := p.processRequest(req, "10.0.0.1", nil)
+	resp, _ := p.processRequest(req, "10.0.0.1")
 
 	if resp.StatusCode != http.StatusProxyAuthRequired {
 		t.Errorf("unapproved cert-manager chart should return 407 (pending timeout), got %d", resp.StatusCode)
@@ -81,7 +81,7 @@ func TestProxy_HelmChart_IndexYaml_CreatesRepoEntry(t *testing.T) {
 	req.Host = "charts.jetstack.io"
 	req.RemoteAddr = "10.0.0.1:12345"
 
-	resp, _ := p.processRequest(req, "10.0.0.1", nil)
+	resp, _ := p.processRequest(req, "10.0.0.1")
 
 	// index.yaml creates a pending repo-level entry (no longer auto-approved).
 	if resp.StatusCode != http.StatusProxyAuthRequired {
@@ -124,7 +124,7 @@ func TestProxy_HelmChart_IndexYaml_ApprovedRepo(t *testing.T) {
 	req.Host = "charts.jetstack.io"
 	req.RemoteAddr = "10.0.0.1:12345"
 
-	resp, _ := p.processRequest(req, "10.0.0.1", nil)
+	resp, _ := p.processRequest(req, "10.0.0.1")
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("approved repo index.yaml should return 200, got %d", resp.StatusCode)
@@ -153,7 +153,7 @@ func TestProxy_HelmChart_RepoApproval_CoversCharts(t *testing.T) {
 	req.Host = "charts.jetstack.io"
 	req.RemoteAddr = "10.0.0.1:12345"
 
-	resp, _ := p.processRequest(req, "10.0.0.1", nil)
+	resp, _ := p.processRequest(req, "10.0.0.1")
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("chart from approved repo should return 200, got %d", resp.StatusCode)
@@ -180,7 +180,7 @@ func TestProxy_HelmChart_LearningMode_CertManager(t *testing.T) {
 	req.Host = "charts.jetstack.io"
 	req.RemoteAddr = "10.0.0.1:12345"
 
-	resp, _ := p.processRequest(req, "10.0.0.1", nil)
+	resp, _ := p.processRequest(req, "10.0.0.1")
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("learning mode: cert-manager chart should be allowed, got %d", resp.StatusCode)

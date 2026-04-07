@@ -36,7 +36,7 @@ func TestGenerateGUID(t *testing.T) {
 	}
 }
 
-func TestSkillStore_AddAndAuthenticate(t *testing.T) {
+func TestSkillStore_AddAndGet(t *testing.T) {
 	s := NewSkillStore()
 
 	skill := Skill{ID: "test-skill", Name: "Test", Token: "tok-123", Active: true}
@@ -49,30 +49,19 @@ func TestSkillStore_AddAndAuthenticate(t *testing.T) {
 		t.Error("expected error adding duplicate skill")
 	}
 
-	// Authenticate with valid token.
-	got, ok := s.Authenticate("tok-123")
+	// Get by ID.
+	got, ok := s.GetSkill("test-skill")
 	if !ok {
-		t.Fatal("Authenticate() returned false for valid token")
+		t.Fatal("GetSkill() returned false for existing skill")
 	}
 	if got.ID != "test-skill" {
 		t.Errorf("expected skill ID %q, got %q", "test-skill", got.ID)
 	}
 
-	// Invalid token.
-	_, ok = s.Authenticate("bad-token")
+	// Non-existent skill.
+	_, ok = s.GetSkill("nonexistent")
 	if ok {
-		t.Error("Authenticate() should return false for invalid token")
-	}
-}
-
-func TestSkillStore_InactiveSkill(t *testing.T) {
-	s := NewSkillStore()
-	skill := Skill{ID: "inactive", Name: "Inactive", Token: "tok-inactive", Active: false}
-	s.AddSkill(skill)
-
-	_, ok := s.Authenticate("tok-inactive")
-	if ok {
-		t.Error("Authenticate() should return false for inactive skill")
+		t.Error("GetSkill() should return false for non-existent skill")
 	}
 }
 
@@ -85,19 +74,15 @@ func TestSkillStore_UpdateSkill(t *testing.T) {
 		t.Fatalf("UpdateSkill() error: %v", err)
 	}
 
-	// Old token should not work.
-	_, ok := s.Authenticate("tok-1")
-	if ok {
-		t.Error("old token should not authenticate after update")
-	}
-
-	// New token should work.
-	got, ok := s.Authenticate("tok-2")
+	got, ok := s.GetSkill("s1")
 	if !ok {
-		t.Fatal("new token should authenticate after update")
+		t.Fatal("GetSkill should find updated skill")
 	}
 	if got.Name != "Updated" {
 		t.Errorf("expected name %q, got %q", "Updated", got.Name)
+	}
+	if got.Token != "tok-2" {
+		t.Errorf("expected token %q, got %q", "tok-2", got.Token)
 	}
 
 	// Update non-existent.
@@ -114,31 +99,13 @@ func TestSkillStore_DeleteSkill(t *testing.T) {
 		t.Fatalf("DeleteSkill() error: %v", err)
 	}
 
-	_, ok := s.Authenticate("tok-1")
+	_, ok := s.GetSkill("s1")
 	if ok {
-		t.Error("deleted skill should not authenticate")
+		t.Error("deleted skill should not be found")
 	}
 
 	if err := s.DeleteSkill("s1"); err == nil {
 		t.Error("expected error deleting non-existent skill")
-	}
-}
-
-func TestSkillStore_IsHostPreApproved(t *testing.T) {
-	s := NewSkillStore()
-	s.AddSkill(Skill{
-		ID: "s1", Token: "tok-1", Active: true,
-		AllowedHost: []string{"api.example.com", "*"},
-	})
-
-	if !s.IsHostPreApproved("tok-1", "api.example.com") {
-		t.Error("expected api.example.com to be pre-approved")
-	}
-	if !s.IsHostPreApproved("tok-1", "anything.com") {
-		t.Error("expected wildcard * to match any host")
-	}
-	if s.IsHostPreApproved("bad-token", "api.example.com") {
-		t.Error("bad token should not have pre-approved hosts")
 	}
 }
 
@@ -158,8 +125,8 @@ func TestSkillStore_ListAndLoad(t *testing.T) {
 	if len(s2.ListSkills()) != 2 {
 		t.Error("LoadSkills should restore all skills")
 	}
-	_, ok := s2.Authenticate("t-a")
+	_, ok := s2.GetSkill("a")
 	if !ok {
-		t.Error("loaded skill should authenticate")
+		t.Error("loaded skill should be found by ID")
 	}
 }
