@@ -33,7 +33,9 @@ func NewSkillStore() *SkillStore {
 // GenerateGUID creates a cryptographically random UUID v4 string.
 func GenerateGUID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
 	h := hex.EncodeToString(b)
