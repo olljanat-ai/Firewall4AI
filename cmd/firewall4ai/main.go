@@ -358,15 +358,15 @@ func main() {
 	p.HelmRepos = cfg.HelmRepos
 	p.OSPackages = cfg.OSPackages
 	p.CodeLibraries = cfg.CodeLibraries
-	p.LearningMode = config.Get().LearningMode
-	if p.LearningMode {
+	p.SetLearningMode(config.Get().LearningMode)
+	if p.GetLearningMode() {
 		log.Printf("Learning mode is ENABLED — all connections will be allowed by default")
 	}
 	p.OnActivity = func(sourceIP string) {
 		agentMgr.SetLastSeen(sourceIP)
 	}
 	apiHandler.SetLearningModeFunc = func(enabled bool) {
-		p.LearningMode = enabled
+		p.SetLearningMode(enabled)
 		if enabled {
 			log.Printf("Learning mode ENABLED — all connections will be allowed by default")
 		} else {

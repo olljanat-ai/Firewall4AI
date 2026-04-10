@@ -73,7 +73,7 @@ func (p *Proxy) handlePackageRequest(req *http.Request, rc *requestContext, repo
 
 	// Package download: require explicit approval.
 	ref := packageRef(repo.Type, pkgName)
-	if library.CheckPackageApproval(mgr, pkgName) && !p.LearningMode {
+	if library.CheckPackageApproval(mgr, pkgName) && !p.GetLearningMode() {
 		// Fast-path: approved (wildcard or exact match).
 		p.Logger.Add(proxylog.Entry{
 			SkillID:  sid,

@@ -48,7 +48,7 @@ func helmRef(host, chartName string) string {
 // in HelmChartApprovals already covers the given ref — either by exact match or
 // because a repo-level approval covers a chart-level ref.
 func (p *Proxy) checkHelmApprovalFastPath(ref string) bool {
-	if p.LearningMode {
+	if p.GetLearningMode() {
 		return false // skip fast-path in learning mode; let checkRefApproval handle it
 	}
 	if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", "", matchHelmRef); ok && status == approval.StatusApproved {

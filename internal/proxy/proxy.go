@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/elazarl/goproxy"
@@ -59,10 +60,20 @@ type Proxy struct {
 	Transport          http.RoundTripper
 	CA                 *certgen.CA
 	ApprovalTimeout    time.Duration
-	LearningMode       bool                  // when true, allow all traffic by default (still logged)
+	learningMode       atomic.Bool           // when true, allow all traffic by default (still logged)
 	OnActivity         func(sourceIP string) // called on each request with the source IP
 
 	goProxy *goproxy.ProxyHttpServer
+}
+
+// SetLearningMode atomically updates the learning mode flag.
+func (p *Proxy) SetLearningMode(enabled bool) {
+	p.learningMode.Store(enabled)
+}
+
+// GetLearningMode atomically reads the learning mode flag.
+func (p *Proxy) GetLearningMode() bool {
+	return p.learningMode.Load()
 }
 
 // goproxyLogBridge adapts our proxylog.Logger to goproxy's Logger interface,

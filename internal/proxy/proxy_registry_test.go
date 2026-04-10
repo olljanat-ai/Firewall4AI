@@ -21,7 +21,7 @@ func TestProxy_LearningMode_RegistryBlob(t *testing.T) {
 	p.Registries = []config.RegistryConfig{
 		{Name: "test-registry", Hosts: []string{"registry.example.com"}},
 	}
-	p.LearningMode = true
+	p.SetLearningMode(true)
 	p.Transport = backend.Client().Transport
 
 	blobReq, _ := http.NewRequest("GET", "https://registry.example.com:443/v2/myapp/blobs/sha256:abc123", nil)
@@ -54,7 +54,7 @@ func TestProxy_LearningMode_RegistryBlob_DeniedWhenOff(t *testing.T) {
 	p.Registries = []config.RegistryConfig{
 		{Name: "test-registry", Hosts: []string{"registry.example.com"}},
 	}
-	p.LearningMode = false // default-deny
+	p.SetLearningMode(false) // default-deny
 
 	blobReq, _ := http.NewRequest("GET", "https://registry.example.com:443/v2/myapp/blobs/sha256:abc123", nil)
 	blobReq.Host = "registry.example.com"

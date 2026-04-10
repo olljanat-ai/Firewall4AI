@@ -82,7 +82,7 @@ func TestProxy_LearningMode_Package(t *testing.T) {
 	p.OSPackages = []config.PackageRepoConfig{
 		{Name: "Debian", Type: "debian", Hosts: []string{"deb.debian.org"}},
 	}
-	p.LearningMode = true
+	p.SetLearningMode(true)
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -119,7 +119,7 @@ func TestProxy_LearningMode_Library(t *testing.T) {
 	p.CodeLibraries = []config.PackageRepoConfig{
 		{Name: "Go Proxy", Type: "golang", Hosts: []string{"proxy.golang.org"}},
 	}
-	p.LearningMode = true
+	p.SetLearningMode(true)
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

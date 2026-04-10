@@ -45,7 +45,7 @@ func (p *Proxy) checkApproval(host, path string, skill *auth.Skill, sourceIP str
 	}
 	status := p.Approvals.Check(host, sid, pendingIP, path)
 	if status == approval.StatusPending {
-		if p.LearningMode {
+		if p.GetLearningMode() {
 			return approval.StatusApproved
 		}
 		status = p.Approvals.WaitForDecision(host, sid, pendingIP, path, p.ApprovalTimeout)
@@ -85,7 +85,7 @@ func (p *Proxy) checkHostApproval(host string, skill *auth.Skill, sourceIP strin
 	}
 	status := p.Approvals.Check(host, sid, pendingIP, "")
 	if status == approval.StatusPending {
-		if p.LearningMode {
+		if p.GetLearningMode() {
 			return approval.StatusApproved
 		}
 		status = p.Approvals.WaitForDecision(host, sid, pendingIP, "", p.ApprovalTimeout)
@@ -126,7 +126,7 @@ func (p *Proxy) checkRefApproval(mgr *approval.Manager, ref string, skill *auth.
 	}
 	status := mgr.Check(ref, sid, pendingIP, "")
 	if status == approval.StatusPending {
-		if p.LearningMode {
+		if p.GetLearningMode() {
 			return approval.StatusApproved
 		}
 		return mgr.WaitForDecision(ref, sid, pendingIP, "", p.ApprovalTimeout)

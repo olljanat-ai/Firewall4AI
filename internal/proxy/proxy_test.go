@@ -337,7 +337,7 @@ func TestProxy_TransparentHTTP_NoHost(t *testing.T) {
 
 func TestProxy_LearningMode(t *testing.T) {
 	p, _, approvals := setupProxy(t)
-	p.LearningMode = true
+	p.SetLearningMode(true)
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -370,7 +370,7 @@ func TestProxy_LearningMode(t *testing.T) {
 
 func TestProxy_LearningModeDisabled(t *testing.T) {
 	p, _, _ := setupProxy(t)
-	p.LearningMode = false // default-deny
+	p.SetLearningMode(false) // default-deny
 
 	req := httptest.NewRequest("GET", "http://blocked.com/test", nil)
 	w := httptest.NewRecorder()
