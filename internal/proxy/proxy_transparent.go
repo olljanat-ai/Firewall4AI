@@ -97,6 +97,10 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 	req.Host = host
 
 	resp, _ := p.processRequest(req, sourceIP)
+	if resp == nil {
+		write502TLS(clientConn)
+		return
+	}
 
 	// Write response to the TLS connection.
 	forwardTLS(clientConn, resp)
