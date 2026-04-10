@@ -2,6 +2,7 @@ package certgen
 
 import (
 	"crypto/x509"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,6 +132,35 @@ func TestGenerateHostCert_Cached(t *testing.T) {
 	// Should be the same pointer (cached).
 	if cert1 != cert2 {
 		t.Error("second call should return cached certificate")
+	}
+}
+
+func TestGenerateHostCert_CacheEviction(t *testing.T) {
+	ca, err := generateCA()
+	if err != nil {
+		t.Fatalf("generateCA() error: %v", err)
+	}
+
+	// Generate more certs than maxCacheSize to trigger eviction.
+	// Use a smaller number to keep the test fast — we just need to verify
+	// the cache doesn't grow unbounded.
+	for i := 0; i < 100; i++ {
+		host := fmt.Sprintf("host%d.example.com", i)
+		if _, err := ca.GenerateHostCert(host); err != nil {
+			t.Fatalf("GenerateHostCert(%q) error: %v", host, err)
+		}
+	}
+
+	ca.mu.Lock()
+	cacheLen := len(ca.cache)
+	orderLen := len(ca.order)
+	ca.mu.Unlock()
+
+	if cacheLen > maxCacheSize {
+		t.Errorf("cache size %d exceeds max %d", cacheLen, maxCacheSize)
+	}
+	if cacheLen != orderLen {
+		t.Errorf("cache size %d and order size %d should match", cacheLen, orderLen)
 	}
 }
 
