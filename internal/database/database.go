@@ -3,11 +3,22 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	// maxQueryLength is the maximum allowed SQL query length.
+	maxQueryLength = 64 * 1024 // 64 KB
+	// maxResultRows caps the number of rows returned from a single query
+	// to prevent unbounded memory usage from large result sets.
+	maxResultRows = 10000
+	// queryTimeout is the maximum execution time for a single query.
+	queryTimeout = 30 * time.Second
 )
 
 // DriverType identifies the database driver.
@@ -252,6 +263,9 @@ func (m *Manager) Query(id string, query string, args []interface{}) *QueryResul
 	if query == "" {
 		return &QueryResult{Error: "empty query"}
 	}
+	if len(query) > maxQueryLength {
+		return &QueryResult{Error: fmt.Sprintf("query too large (%d bytes, max %d)", len(query), maxQueryLength)}
+	}
 
 	// Determine if this is a SELECT/read query or a write query.
 	upper := strings.ToUpper(query)
@@ -262,8 +276,12 @@ func (m *Manager) Query(id string, query string, args []interface{}) *QueryResul
 }
 
 // queryRows executes a SELECT query and returns rows.
+// Results are capped at maxResultRows to prevent unbounded memory usage.
 func (m *Manager) queryRows(db *sql.DB, query string, args []interface{}) *QueryResult {
-	rows, err := db.Query(query, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return &QueryResult{Error: err.Error()}
 	}
@@ -279,7 +297,13 @@ func (m *Manager) queryRows(db *sql.DB, query string, args []interface{}) *Query
 		Rows:    [][]interface{}{},
 	}
 
+	truncated := false
 	for rows.Next() {
+		if len(result.Rows) >= maxResultRows {
+			truncated = true
+			break
+		}
+
 		values := make([]interface{}, len(cols))
 		scanArgs := make([]interface{}, len(cols))
 		for i := range values {
@@ -306,12 +330,19 @@ func (m *Manager) queryRows(db *sql.DB, query string, args []interface{}) *Query
 		return &QueryResult{Error: err.Error()}
 	}
 
+	if truncated {
+		result.Error = fmt.Sprintf("result truncated to %d rows", maxResultRows)
+	}
+
 	return result
 }
 
 // execStatement executes a non-SELECT statement.
 func (m *Manager) execStatement(db *sql.DB, query string, args []interface{}) *QueryResult {
-	result, err := db.Exec(query, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
+
+	result, err := db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return &QueryResult{Error: err.Error()}
 	}
