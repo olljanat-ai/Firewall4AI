@@ -23,7 +23,8 @@
   "os_packages": [
     {"name": "Debian", "type": "debian", "hosts": ["deb.debian.org", "security.debian.org", "ftp.debian.org", "httpredir.debian.org", "cdn-fastly.deb.debian.org", "metadata.ftp-master.debian.org", "download.docker.com"]},
     {"name": "Alpine", "type": "alpine", "hosts": ["dl-cdn.alpinelinux.org", "dl-2.alpinelinux.org", "dl-3.alpinelinux.org", "dl-4.alpinelinux.org", "dl-5.alpinelinux.org"]},
-    {"name": "Ubuntu", "type": "ubuntu", "hosts": ["archive.ubuntu.com", "security.ubuntu.com", "ppa.launchpadcontent.net", "ppa.launchpad.net"]}
+    {"name": "Ubuntu", "type": "ubuntu", "hosts": ["archive.ubuntu.com", "security.ubuntu.com", "ppa.launchpadcontent.net", "ppa.launchpad.net"]},
+    {"name": "Microsoft", "type": "debian", "hosts": ["packages.microsoft.com"]}
   ],
   "code_libraries": [
     {"name": "Go Modules", "type": "golang", "hosts": ["proxy.golang.org", "sum.golang.org", "storage.googleapis.com"]},

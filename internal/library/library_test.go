@@ -70,6 +70,29 @@ func TestParsePackageName_Debian(t *testing.T) {
 	}
 }
 
+func TestParsePackageName_Microsoft(t *testing.T) {
+	tests := []struct {
+		path string
+		name string
+		ok   bool
+	}{
+		// Microsoft apt repo uses /repos/<product>/pool/... and /repos/<product>/dists/...
+		{"/repos/azure-cli/pool/main/a/azure-cli/azure-cli_2.67.0-1~bookworm_all.deb", "azure-cli", true},
+		{"/repos/azure-cli/pool/main/p/python3-azext-devops/python3-azext-devops_1.0.1-1_all.deb", "python3-azext-devops", true},
+		{"/repos/azure-cli/dists/bookworm/main/binary-amd64/Packages", "", true},
+		{"/repos/azure-cli/dists/bookworm/InRelease", "", true},
+		// GPG key download — auto-approve as metadata
+		{"/keys/microsoft.asc", "", true},
+	}
+	for _, tt := range tests {
+		name, ok := ParsePackageName(tt.path, "debian")
+		if ok != tt.ok || name != tt.name {
+			t.Errorf("ParsePackageName(%q, debian) = (%q, %v), want (%q, %v)",
+				tt.path, name, ok, tt.name, tt.ok)
+		}
+	}
+}
+
 func TestParsePackageName_Go(t *testing.T) {
 	tests := []struct {
 		path string
