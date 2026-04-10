@@ -192,6 +192,10 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 		req.Host = host
 
 		resp, _ := p.processRequest(req, sourceIP)
+		if resp == nil {
+			write502TLS(tlsClientConn)
+			return
+		}
 
 		// Write response to the TLS connection.
 		forwardTLS(tlsClientConn, resp)
