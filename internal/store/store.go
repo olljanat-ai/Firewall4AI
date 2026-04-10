@@ -48,7 +48,13 @@ func (s *JSONStore[T]) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0o644)
+	// Atomic write: write to a temp file in the same directory, then rename.
+	// This prevents corruption if the process crashes mid-write.
+	tmpPath := s.path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, s.path)
 }
 
 // Get returns the current data (read-only snapshot).
