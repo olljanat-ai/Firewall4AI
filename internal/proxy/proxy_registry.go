@@ -27,8 +27,8 @@ func (p *Proxy) handleRegistryRequest(req *http.Request, rc *requestContext, reg
 	if isV2 && (pathType == "manifests" || pathType == "blobs") {
 		// Manifest and blob requests use repo-level approval.
 		repo := registry.ParseImageRepo(reg.Name, name)
-		if p.LearningMode || !registry.CheckRepoApproval(p.ImageApprovals, repo) {
-			if pathType == "blobs" && !p.LearningMode {
+		if p.GetLearningMode() || !registry.CheckRepoApproval(p.ImageApprovals, repo) {
+			if pathType == "blobs" && !p.GetLearningMode() {
 				// Blobs don't create pending entries; they are only
 				// allowed if the repo was already approved via a manifest.
 				p.Logger.Add(proxylog.Entry{

@@ -172,7 +172,7 @@ func TestProxy_HelmChart_LearningMode_CertManager(t *testing.T) {
 	p.HelmRepos = []config.PackageRepoConfig{
 		{Name: "Jetstack", Type: "helm", Hosts: []string{"charts.jetstack.io"}},
 	}
-	p.LearningMode = true
+	p.SetLearningMode(true)
 	backendURL, _ := url.Parse(backend.URL)
 	p.Transport = &testRedirectTransport{inner: backend.Client().Transport, targetHost: backendURL.Host}
 
