@@ -316,7 +316,7 @@ func (h *Handler) getRtkReleases(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20)) // 2 MB limit
 	if err != nil {
 		http.Error(w, "failed to read GitHub response", http.StatusBadGateway)
 		return

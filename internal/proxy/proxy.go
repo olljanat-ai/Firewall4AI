@@ -269,7 +269,8 @@ func errorResponse(req *http.Request, code int, msg string) *http.Response {
 // stays open (e.g. helm repo add with ~600KB index responses).
 func forwardTLS(conn net.Conn, resp *http.Response) {
 	if resp.ContentLength < 0 && resp.Body != nil {
-		body, _ := io.ReadAll(resp.Body)
+		const maxChunkedBody = 10 << 20 // 10 MB limit for buffering chunked responses
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxChunkedBody))
 		resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		resp.ContentLength = int64(len(body))
