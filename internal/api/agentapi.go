@@ -277,7 +277,7 @@ func (h *AgentHandler) queryDatabase(w http.ResponseWriter, r *http.Request) {
 		Args  []interface{} `json:"args"`
 	}
 	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodySize)).Decode(&req); err != nil {
 		http.Error(w, "Firewall4AI: invalid request body", http.StatusBadRequest)
 		return
 	}
