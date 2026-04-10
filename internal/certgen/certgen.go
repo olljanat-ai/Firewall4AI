@@ -19,6 +19,12 @@ import (
 	"time"
 )
 
+const (
+	// maxCacheSize limits the number of cached host certificates to prevent
+	// unbounded memory growth when the proxy sees many unique hostnames.
+	maxCacheSize = 10000
+)
+
 // CA holds a certificate authority used to sign per-host certificates.
 type CA struct {
 	Certificate *x509.Certificate
@@ -26,7 +32,15 @@ type CA struct {
 	CertPEM     []byte
 
 	mu    sync.Mutex
-	cache map[string]*tls.Certificate
+	cache map[string]*cacheEntry
+	order []string // insertion order for LRU-style eviction
+}
+
+// cacheEntry wraps a cached certificate with its creation time so that
+// expired certificates are not served from cache.
+type cacheEntry struct {
+	cert      *tls.Certificate
+	createdAt time.Time
 }
 
 // LoadOrGenerateCA loads a CA from dataDir or generates a new one.
@@ -108,7 +122,7 @@ func generateCA() (*CA, error) {
 		Certificate: cert,
 		PrivateKey:  key,
 		CertPEM:     certPEM,
-		cache:       make(map[string]*tls.Certificate),
+		cache:       make(map[string]*cacheEntry),
 	}, nil
 }
 
@@ -135,26 +149,53 @@ func parseCA(certPEM, keyPEM []byte) (*CA, error) {
 		Certificate: cert,
 		PrivateKey:  key,
 		CertPEM:     certPEM,
-		cache:       make(map[string]*tls.Certificate),
+		cache:       make(map[string]*cacheEntry),
 	}, nil
 }
 
 // GenerateHostCert creates a TLS certificate for the given hostname,
-// signed by this CA. Results are cached.
+// signed by this CA. Results are cached with size-bounded LRU eviction
+// and time-based expiry (certificates are valid for 24h).
 func (ca *CA) GenerateHostCert(host string) (*tls.Certificate, error) {
 	ca.mu.Lock()
 	defer ca.mu.Unlock()
 
-	if cert, ok := ca.cache[host]; ok {
-		return cert, nil
+	if entry, ok := ca.cache[host]; ok {
+		// Serve from cache if the cert was generated less than 12 hours ago
+		// (certs are valid for 24h, so 12h gives plenty of margin).
+		if time.Since(entry.createdAt) < 12*time.Hour {
+			return entry.cert, nil
+		}
+		// Expired — remove and regenerate.
+		delete(ca.cache, host)
+		ca.removeFromOrder(host)
 	}
 
 	cert, err := ca.generateHostCertLocked(host)
 	if err != nil {
 		return nil, err
 	}
-	ca.cache[host] = cert
+
+	// Evict oldest entries if cache is at capacity.
+	for len(ca.cache) >= maxCacheSize && len(ca.order) > 0 {
+		oldest := ca.order[0]
+		ca.order = ca.order[1:]
+		delete(ca.cache, oldest)
+	}
+
+	ca.cache[host] = &cacheEntry{cert: cert, createdAt: time.Now()}
+	ca.order = append(ca.order, host)
 	return cert, nil
+}
+
+// removeFromOrder removes a host from the insertion order slice.
+func (ca *CA) removeFromOrder(host string) {
+	for i, h := range ca.order {
+		if h == host {
+			ca.order = append(ca.order[:i], ca.order[i+1:]...)
+			return
+		}
+	}
 }
 
 func (ca *CA) generateHostCertLocked(host string) (*tls.Certificate, error) {
