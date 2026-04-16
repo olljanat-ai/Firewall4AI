@@ -29,6 +29,7 @@ import (
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 	"github.com/olljanat-ai/firewall4ai/internal/netboot"
 	"github.com/olljanat-ai/firewall4ai/internal/proxy"
+	"github.com/olljanat-ai/firewall4ai/internal/secret"
 	"github.com/olljanat-ai/firewall4ai/internal/store"
 	"github.com/olljanat-ai/firewall4ai/internal/tftp"
 	"github.com/olljanat-ai/firewall4ai/web"
@@ -75,6 +76,13 @@ func main() {
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Initialize the master encryption key used to seal secret fields in
+	// state.json. Must happen before the store is loaded so that previously
+	// persisted ciphertext can be decrypted for the managers.
+	if err := secret.Init(cfg.DataDir); err != nil {
+		log.Fatalf("Failed to initialize secret store: %v", err)
 	}
 
 	// Initialize store.
@@ -133,8 +141,10 @@ func main() {
 	// Initialize TFTP server.
 	tftpServer := tftp.NewServer(":69", netbootMgr.TFTPDir())
 
-	// Load persisted state.
+	// Load persisted state. Decrypt sealed secrets in place so that the
+	// downstream managers only ever see plaintext values.
 	state := dataStore.Get()
+	openStateSecrets(&state)
 	skills.LoadSkills(state.Skills)
 	approvals.LoadApprovals(state.Approvals)
 	imageApprovals.LoadApprovals(state.ImageApprovals)
@@ -336,6 +346,8 @@ func main() {
 			d.Timezone = tz
 			d.SSHAuthorizedKeys = apiHandler.GetSSHAuthorizedKeysMap()
 			d.Templates = apiHandler.ExportTemplates()
+			// Encrypt secret fields before the store serializes to disk.
+			sealStateSecrets(d)
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
