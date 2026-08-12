@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -54,13 +55,26 @@ type Proxy struct {
 	HelmRepos          []config.PackageRepoConfig
 	OSPackages         []config.PackageRepoConfig
 	CodeLibraries      []config.PackageRepoConfig
-	Credentials        *credentials.Manager
-	Logger             *proxylog.Logger
-	Transport          http.RoundTripper
-	CA                 *certgen.CA
-	ApprovalTimeout    time.Duration
-	learningMode       atomic.Bool           // when true, allow all traffic by default (still logged)
-	OnActivity         func(sourceIP string) // called on each request with the source IP
+	// TLSPassthroughHosts are never MITM'd; their traffic is tunneled as-is.
+	// Hosts that authenticate clients with certificates are detected
+	// automatically, so this list is only needed to force the behaviour.
+	TLSPassthroughHosts []string
+	Credentials         *credentials.Manager
+	Logger              *proxylog.Logger
+	Transport           http.RoundTripper
+	CA                  *certgen.CA
+	ApprovalTimeout     time.Duration
+	learningMode        atomic.Bool           // when true, allow all traffic by default (still logged)
+	OnActivity          func(sourceIP string) // called on each request with the source IP
+
+	// clientCertProbes caches, per upstream address, whether the server asks
+	// for a client certificate and therefore cannot be inspected.
+	probeMu          sync.Mutex
+	clientCertProbes map[string]clientCertProbe
+
+	// dialUpstream opens a raw TCP connection to an upstream server for TLS
+	// passthrough. Defaults to a plain dial; tests override it.
+	dialUpstream func(network, addr string) (net.Conn, error)
 
 	goProxy *goproxy.ProxyHttpServer
 }

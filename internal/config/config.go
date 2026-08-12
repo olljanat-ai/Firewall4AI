@@ -42,11 +42,16 @@ type Config struct {
 	HelmRepos          []PackageRepoConfig `json:"helm_repos"`
 	OSPackages         []PackageRepoConfig `json:"os_packages"`
 	CodeLibraries      []PackageRepoConfig `json:"code_libraries"`
-	LearningMode       bool                `json:"learning_mode"`
-	DisabledLanguages  []string            `json:"-"` // runtime only, persisted in state.json
-	DisabledDistros    []string            `json:"-"` // runtime only, persisted in state.json
-	MaxFullLogBody     int                 `json:"-"` // runtime only, persisted in state.json
-	Git                GitConfig           `json:"-"` // runtime only, persisted in state.json
+	// TLSPassthroughHosts are tunneled without TLS inspection. Hosts that
+	// authenticate clients with certificates (mutual TLS) are detected
+	// automatically; this list forces the behaviour for additional hosts.
+	// Supports `*.example.com` wildcards.
+	TLSPassthroughHosts []string  `json:"tls_passthrough_hosts"`
+	LearningMode        bool      `json:"learning_mode"`
+	DisabledLanguages   []string  `json:"-"` // runtime only, persisted in state.json
+	DisabledDistros     []string  `json:"-"` // runtime only, persisted in state.json
+	MaxFullLogBody      int       `json:"-"` // runtime only, persisted in state.json
+	Git                 GitConfig `json:"-"` // runtime only, persisted in state.json
 }
 
 // SetLearningMode updates the learning mode setting at runtime.

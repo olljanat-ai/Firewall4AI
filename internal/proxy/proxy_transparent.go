@@ -1,17 +1,18 @@
 // proxy_transparent.go handles transparent TLS interception: accepting
 // connections redirected by iptables, extracting the SNI hostname from
 // the TLS ClientHello, and performing MITM inspection with per-request approval
-// via the shared processRequest function.
+// via the shared processRequest function. Hosts that authenticate clients with
+// certificates are tunneled instead (see proxy_passthrough.go).
 
 package proxy
 
 import (
 	"bufio"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"time"
 
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
@@ -39,21 +40,45 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 		return
 	}
 
+	start := time.Now()
 	sourceIP := extractSourceIP(clientConn.RemoteAddr().String())
 	if p.OnActivity != nil {
 		p.OnActivity(sourceIP)
 	}
-	var sniHost string
+
+	// Read the ClientHello before answering it, so the destination is known
+	// while the client's handshake can still be handed over untouched to the
+	// upstream server if this host cannot be inspected.
+	sniHost, clientHello, err := peekClientHello(clientConn, clientHelloTimeout)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			Method: "TRANSPARENT",
+			Status: "error",
+			Detail: "read TLS client hello: " + err.Error(),
+		})
+		return
+	}
+	if sniHost == "" {
+		p.Logger.Add(proxylog.Entry{
+			Method: "TRANSPARENT",
+			Status: "error",
+			Detail: "no SNI provided for transparent TLS",
+		})
+		return
+	}
+
+	// Servers that authenticate clients with certificates cannot be MITM'd:
+	// the proxy has no access to the client's private key. Tunnel instead.
+	if p.shouldPassthrough(sniHost, net.JoinHostPort(sniHost, "443")) {
+		p.handleTLSPassthrough(clientConn, sniHost, clientHello, sourceIP, start)
+		return
+	}
 
 	tlsConfig := newMITMTLSConfig(func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		sniHost = info.ServerName
-		if sniHost == "" {
-			return nil, fmt.Errorf("no SNI provided for transparent TLS")
-		}
 		return p.CA.GenerateHostCert(sniHost)
 	})
 
-	tlsConn := tls.Server(clientConn, tlsConfig)
+	tlsConn := tls.Server(newReplayConn(clientConn, clientHello), tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
 		p.Logger.Add(proxylog.Entry{
 			Method: "TRANSPARENT",
@@ -63,10 +88,6 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 		return
 	}
 	defer tlsConn.Close()
-
-	if sniHost == "" {
-		return
-	}
 
 	// Read HTTP requests from the decrypted connection.
 	reader := bufio.NewReader(tlsConn)

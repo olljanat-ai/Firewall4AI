@@ -52,6 +52,35 @@ Configure credentials in the admin UI to automatically inject authentication int
 
 Credentials can be scoped to specific hosts (with wildcard support like `*.example.com`) and specific skills.
 
+### Client Certificate Authentication (mutual TLS)
+Some servers authenticate their clients with certificates instead of tokens — Kubernetes API servers are the common case, including AKS, EKS and GKE clusters. Such connections cannot be inspected: the proxy has no access to the client's private key, so an intercepted session would reach the server without any certificate and the server would answer `the server has asked for the client to provide credentials`.
+
+The proxy detects these servers automatically. Before intercepting a connection it checks whether the upstream server asks for a client certificate, and if it does, the connection is tunneled untouched so the client's own TLS session reaches the server. The result is cached per host for 30 minutes and shown in the request log:
+
+```
+TLS  onek8s-prototype.hcp.swedencentral.azmk8s.io
+     upstream requests a client certificate: TLS inspection disabled for this host
+```
+
+Tunneled connections are still subject to approval, but only at the host level — URL paths, packages and image references are invisible inside the tunnel, so a path-restricted approval does not authorize one. This makes `kubectl`, `helm` and Terraform's `kubernetes`/`helm` providers work against clusters that use certificate authentication.
+
+To force passthrough for hosts that are not detected automatically, list them in `config.json` (wildcards supported):
+```json
+{
+  "tls_passthrough_hosts": ["*.azmk8s.io", "vault.internal.example.com"]
+}
+```
+
+### Upstream Certificate Trust
+The proxy connects to upstream servers on behalf of agents, so it is the party that validates upstream certificates. Certificates that cannot be verified — internal PKI, self-signed appliances — are accepted rather than failing the request, and each one is recorded in the request log:
+
+```
+TLS  k8s.internal.example.com
+     untrusted upstream certificate accepted: x509: certificate signed by unknown authority
+```
+
+Access control stays with the approval system: an untrusted certificate does not grant access to a host that has not been approved.
+
 ### Container Registry Control
 Firewall4AI transparently intercepts container image pulls via the same TLS MITM proxy used for web traffic. **No Docker or containerd mirror configuration is needed on agent VMs** — image pulls are intercepted automatically, just like any other HTTPS traffic.
 
