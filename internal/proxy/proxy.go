@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -101,13 +100,20 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 		Logger:          logger,
 		CA:              ca,
 		ApprovalTimeout: approvalTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
-		},
+	}
+
+	// Outbound transport. TLS connections are established by dialUpstreamTLS,
+	// which accepts untrusted upstream certificates (and logs them) so that
+	// internal services with a private or self-signed CA stay reachable.
+	// Setting the dial hooks also keeps the transport on HTTP/1.1, matching
+	// the protocol offered to agents by the MITM listeners.
+	p.Transport = &http.Transport{
+		DialContext:           upstreamDialer.DialContext,
+		DialTLSContext:        p.dialUpstreamTLS,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
 	}
 
 	gp := goproxy.NewProxyHttpServer()

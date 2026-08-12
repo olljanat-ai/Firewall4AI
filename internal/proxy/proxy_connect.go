@@ -99,15 +99,7 @@ func newMITMTLSConfig(getCertFunc func(*tls.ClientHelloInfo) (*tls.Certificate, 
 		},
 
 		// Allow all ciphers, including those marked "insecure" by Go
-		CipherSuites: func() []uint16 {
-			all := append([]*tls.CipherSuite{}, tls.CipherSuites()...)
-			all = append(all, tls.InsecureCipherSuites()...)
-			var ids []uint16
-			for _, cs := range all {
-				ids = append(ids, cs.ID)
-			}
-			return ids
-		}(),
+		CipherSuites: allCipherSuites(),
 
 		// Force HTTP/1.1 to avoid issues with HTTP/2 connection.
 		NextProtos: []string{"http/1.1"},
