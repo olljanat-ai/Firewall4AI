@@ -34,6 +34,12 @@ func (p *Proxy) handleConnectDecision(host string, ctx *goproxy.ProxyCtx) (*gopr
 
 	var skill *auth.Skill // Agents are identified by IP, not by token.
 
+	// Servers that authenticate clients with certificates cannot be MITM'd:
+	// the proxy has no access to the client's private key, so the upstream
+	// session would carry no client certificate. Those hosts are tunneled
+	// untouched.
+	blind := p.CA == nil || p.shouldPassthrough(h, upstreamAddr(host))
+
 	// For CONNECT with MITM, auto-approve hosts that belong to configured
 	// infrastructure (registries, Helm repos, package repos, code libraries)
 	// since the real access control happens per-item inside the tunnel.
@@ -41,12 +47,13 @@ func (p *Proxy) handleConnectDecision(host string, ctx *goproxy.ProxyCtx) (*gopr
 	// happen in handleMITMRequest via processRequest.
 	// For blind tunnels (no MITM), use host-only check since we can't inspect paths.
 	var status approval.Status
-	if p.CA != nil && p.isConfiguredRepoHost(h) {
-		status = approval.StatusApproved
-	} else if p.CA != nil {
-		status = p.checkHostApproval(h, skill, sourceIP)
-	} else {
+	switch {
+	case blind:
 		status = p.checkApproval(h, "", skill, sourceIP)
+	case p.isConfiguredRepoHost(h):
+		status = approval.StatusApproved
+	default:
+		status = p.checkHostApproval(h, skill, sourceIP)
 	}
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
@@ -68,10 +75,10 @@ func (p *Proxy) handleConnectDecision(host string, ctx *goproxy.ProxyCtx) (*gopr
 			// goproxy's ConnectHijack does NOT write the 200 response;
 			// we must send it before starting TLS or blind tunnel.
 			client.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
-			if p.CA != nil {
-				p.handleMITM(client, h, host, skill, sourceIP, start)
-			} else {
+			if blind {
 				p.handleBlindTunnel(client, h, host, skill, start)
+			} else {
+				p.handleMITM(client, h, host, skill, sourceIP, start)
 			}
 		},
 	}, host

@@ -358,6 +358,7 @@ func main() {
 	p.HelmRepos = cfg.HelmRepos
 	p.OSPackages = cfg.OSPackages
 	p.CodeLibraries = cfg.CodeLibraries
+	p.TLSPassthroughHosts = cfg.TLSPassthroughHosts
 	p.SetLearningMode(config.Get().LearningMode)
 	if p.GetLearningMode() {
 		log.Printf("Learning mode is ENABLED — all connections will be allowed by default")
