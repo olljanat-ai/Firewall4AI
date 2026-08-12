@@ -76,6 +76,10 @@ type Proxy struct {
 	// passthrough. Defaults to a plain dial; tests override it.
 	dialUpstream func(network, addr string) (net.Conn, error)
 
+	// origDst recovers the pre-DNAT destination of a redirected connection.
+	// Defaults to the netfilter lookup; tests override it.
+	origDst func(conn net.Conn) (string, error)
+
 	goProxy *goproxy.ProxyHttpServer
 }
 

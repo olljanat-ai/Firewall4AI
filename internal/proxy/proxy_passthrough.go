@@ -151,10 +151,12 @@ func probeClientCertRequest(addr, serverName string) (bool, error) {
 }
 
 // handleTLSPassthrough tunnels a transparently intercepted TLS connection to
-// its destination without inspecting it. clientHello holds the ClientHello
-// bytes already consumed from clientConn; they are replayed to the upstream
-// server so the client's handshake continues end to end.
-func (p *Proxy) handleTLSPassthrough(clientConn net.Conn, host string, clientHello []byte, sourceIP string, start time.Time) {
+// its destination without inspecting it. addr is the upstream "host:port" to
+// dial, which for a client that sent no SNI is the pre-DNAT destination
+// recovered from netfilter. clientHello holds the ClientHello bytes already
+// consumed from clientConn; they are replayed to the upstream server so the
+// client's handshake continues end to end.
+func (p *Proxy) handleTLSPassthrough(clientConn net.Conn, host, addr string, clientHello []byte, sourceIP string, start time.Time) {
 	// Only host-level approvals authorize a passthrough: paths, packages and
 	// image references cannot be enforced on a stream the proxy cannot read.
 	status := p.checkApproval(host, "", nil, sourceIP)
@@ -175,7 +177,7 @@ func (p *Proxy) handleTLSPassthrough(clientConn net.Conn, host string, clientHel
 		}
 	}
 
-	upstream, err := dial("tcp", net.JoinHostPort(host, "443"))
+	upstream, err := dial("tcp", addr)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
 			Method:   "TRANSPARENT",

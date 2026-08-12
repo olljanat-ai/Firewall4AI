@@ -1,14 +1,17 @@
 // proxy_transparent.go handles transparent TLS interception: accepting
-// connections redirected by iptables, extracting the SNI hostname from
-// the TLS ClientHello, and performing MITM inspection with per-request approval
-// via the shared processRequest function. Hosts that authenticate clients with
-// certificates are tunneled instead (see proxy_passthrough.go).
+// connections redirected by iptables, determining the destination from the SNI
+// hostname of the TLS ClientHello (falling back to the pre-DNAT destination for
+// clients that send none, such as `curl https://10.0.0.5/`), and performing
+// MITM inspection with per-request approval via the shared processRequest
+// function. Hosts that authenticate clients with certificates are tunneled
+// instead (see proxy_passthrough.go).
 
 package proxy
 
 import (
 	"bufio"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -29,10 +32,10 @@ func (p *Proxy) ServeTransparentTLS(listener net.Listener) {
 	}
 }
 
-// HandleTransparentTLS handles a raw TCP connection redirected by iptables
-// for transparent HTTPS interception. It terminates TLS using SNI to
-// determine the target host, then reads and forwards HTTP requests via
-// processRequest.
+// HandleTransparentTLS handles a raw TCP connection redirected by iptables for
+// transparent HTTPS interception. The target host comes from the SNI server
+// name, or from the pre-DNAT destination when the client sent none, and TLS is
+// then terminated so requests can be read and forwarded via processRequest.
 func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	defer clientConn.Close()
 
@@ -58,24 +61,28 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 		})
 		return
 	}
-	if sniHost == "" {
+	// Clients that address a server by IP send no SNI; the destination then
+	// only exists in the kernel's connection tracking.
+	host, port, err := p.transparentDestination(clientConn, sniHost)
+	if err != nil {
 		p.Logger.Add(proxylog.Entry{
 			Method: "TRANSPARENT",
 			Status: "error",
-			Detail: "no SNI provided for transparent TLS",
+			Detail: "no SNI provided and original destination unavailable: " + err.Error(),
 		})
 		return
 	}
+	addr := net.JoinHostPort(host, port)
 
 	// Servers that authenticate clients with certificates cannot be MITM'd:
 	// the proxy has no access to the client's private key. Tunnel instead.
-	if p.shouldPassthrough(sniHost, net.JoinHostPort(sniHost, "443")) {
-		p.handleTLSPassthrough(clientConn, sniHost, clientHello, sourceIP, start)
+	if p.shouldPassthrough(host, addr) {
+		p.handleTLSPassthrough(clientConn, host, addr, clientHello, sourceIP, start)
 		return
 	}
 
 	tlsConfig := newMITMTLSConfig(func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		return p.CA.GenerateHostCert(sniHost)
+		return p.CA.GenerateHostCert(host)
 	})
 
 	tlsConn := tls.Server(newReplayConn(clientConn, clientHello), tlsConfig)
@@ -97,7 +104,7 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 			if err != io.EOF {
 				p.Logger.Add(proxylog.Entry{
 					Method: "TRANSPARENT",
-					Host:   sniHost,
+					Host:   host,
 					Status: "error",
 					Detail: "read request: " + err.Error(),
 				})
@@ -105,16 +112,64 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 			return
 		}
 
-		p.handleTransparentTLSRequest(tlsConn, req, sniHost, sourceIP)
+		p.handleTransparentTLSRequest(tlsConn, req, host, addr, sourceIP)
 	}
 }
 
+// transparentDestination resolves where a transparently intercepted connection
+// was originally headed, returning the host used for approvals, certificates
+// and SNI, plus the upstream port.
+//
+// The SNI server name wins when the client sent one: approvals and certificates
+// are keyed by hostname, and a redirected connection to a virtual host must not
+// collapse into the shared IP behind it. The pre-DNAT destination recovered
+// from netfilter supplies the port, and the host itself for clients that send
+// no SNI because they addressed the server by IP.
+func (p *Proxy) transparentDestination(conn net.Conn, sniHost string) (host, port string, err error) {
+	host, port = sniHost, "443"
+
+	origAddr, origErr := p.originalDst(conn)
+	if origErr == nil {
+		// A connection that reached this listener directly rather than through
+		// a REDIRECT reports the listener's own address, which says nothing
+		// about the client's intended destination.
+		if local := conn.LocalAddr(); local != nil && origAddr == local.String() {
+			origErr = errors.New("connection was not redirected")
+		}
+	}
+	if origErr == nil {
+		if origHost, origPort, splitErr := net.SplitHostPort(origAddr); splitErr == nil {
+			if host == "" {
+				host = origHost
+			}
+			port = origPort
+		} else {
+			origErr = splitErr
+		}
+	}
+
+	if host == "" {
+		return "", "", origErr
+	}
+	return host, port, nil
+}
+
+// originalDst returns the pre-DNAT destination of a redirected connection.
+// Tests replace the lookup, which needs a real netfilter conntrack entry.
+func (p *Proxy) originalDst(conn net.Conn) (string, error) {
+	if p.origDst != nil {
+		return p.origDst(conn)
+	}
+	return originalDestination(conn)
+}
+
 // handleTransparentTLSRequest processes a request from a transparent TLS
-// connection via processRequest.
-func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string) {
+// connection via processRequest. host identifies the destination for approvals
+// and logging, addr is the "host:port" the request is forwarded to.
+func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host, addr, sourceIP string) {
 	// Set URL for HTTPS forwarding.
 	req.URL.Scheme = "https"
-	req.URL.Host = host + ":443"
+	req.URL.Host = addr
 	req.Host = host
 
 	resp, _ := p.processRequest(req, sourceIP)
