@@ -122,7 +122,7 @@ func (p *Proxy) processRequest(req *http.Request, sourceIP string) (*http.Respon
 	}
 
 	// Forward the request.
-	resp, err := p.Transport.RoundTrip(req)
+	resp, err := p.roundTrip(req, rc)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
 			SkillID:    sid,
@@ -162,6 +162,19 @@ func (p *Proxy) processRequest(req *http.Request, sourceIP string) (*http.Respon
 	return resp, rc
 }
 
+// roundTrip forwards an approved request upstream, applying the per-URL
+// Transfer-Encoding policy first. Every upstream call from the proxy goes
+// through here so the setting applies to generic, registry, Helm and package
+// requests alike.
+func (p *Proxy) roundTrip(req *http.Request, rc *requestContext) (*http.Response, error) {
+	if p.transferEncodingDisabled(rc.host, req.URL.Path, rc.skill, rc.sourceIP) {
+		if err := stripRequestTransferEncoding(req); err != nil {
+			return nil, err
+		}
+	}
+	return p.Transport.RoundTrip(req)
+}
+
 // forwardAndLog performs RoundTrip, logs the result, and returns the response.
 // Used by specialized handlers after approval.
 func (p *Proxy) forwardAndLog(req *http.Request, rc *requestContext, detail string) *http.Response {
@@ -177,7 +190,7 @@ func (p *Proxy) forwardAndLog(req *http.Request, rc *requestContext, detail stri
 		req.URL.Host = req.Host
 	}
 
-	resp, err := p.Transport.RoundTrip(req)
+	resp, err := p.roundTrip(req, rc)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
 			SkillID:  sid,
@@ -231,7 +244,7 @@ func (p *Proxy) forwardRegistryAndLog(req *http.Request, rc *requestContext, app
 		req.URL.Host = rc.host + ":443"
 	}
 
-	resp, err := p.Transport.RoundTrip(req)
+	resp, err := p.roundTrip(req, rc)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
 			SkillID:  sid,

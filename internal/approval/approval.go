@@ -43,10 +43,16 @@ type HostApproval struct {
 	PathPrefix  string      `json:"path_prefix,omitempty"`
 	Category    string      `json:"category,omitempty"`
 	LoggingMode LoggingMode `json:"logging_mode,omitempty"`
-	Status      Status      `json:"status"`
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
-	Note        string      `json:"note"`
+	// DisableTransferEncoding makes the proxy forward requests for these URLs
+	// without a Transfer-Encoding header: the request body is buffered and an
+	// explicit Content-Length is sent instead. Servers that reject chunked
+	// requests (Azure Blob Storage answers `UnsupportedHeader` for
+	// `Transfer-Encoding`) need this.
+	DisableTransferEncoding bool      `json:"disable_transfer_encoding,omitempty"`
+	Status                  Status    `json:"status"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
+	Note                    string    `json:"note"`
 }
 
 // key returns the unique key for a host+skill+sourceIP+pathPrefix combination.
@@ -413,49 +419,78 @@ func (m *Manager) CheckExistingWithMatcher(host, skillID, sourceIP string, match
 	return "", false
 }
 
-// GetLoggingMode returns the logging mode for the best matching approval.
-// It checks global, VM-specific, and skill-specific levels broadest-first,
-// using the same path-matching logic as CheckExistingWithPath.
-// Returns LoggingModeNormal if no matching approval is found or if the
-// matched approval has no explicit logging mode set.
-func (m *Manager) GetLoggingMode(host, path, skillID, sourceIP string) LoggingMode {
+// levelsFor returns the approval levels applicable to a request,
+// broadest-first: global -> VM-specific -> skill-specific.
+func levelsFor(skillID, sourceIP string) []struct{ skillID, sourceIP string } {
+	levels := []struct{ skillID, sourceIP string }{{"", ""}}
+	if sourceIP != "" {
+		levels = append(levels, struct{ skillID, sourceIP string }{"", sourceIP})
+	}
+	if skillID != "" {
+		levels = append(levels, struct{ skillID, sourceIP string }{skillID, ""})
+	}
+	return levels
+}
+
+// bestMatchLocked returns the most specific approval (longest PathPrefix)
+// matching host+path at the given level, or nil when none matches.
+// The caller must hold m.mu.
+func (m *Manager) bestMatchLocked(host, path, skillID, sourceIP string) *HostApproval {
+	var bestMatch *HostApproval
+	bestLen := -1
+	for _, a := range m.approvals {
+		if a.SkillID != skillID || a.SourceIP != sourceIP {
+			continue
+		}
+		if !MatchHost(a.Host, host) {
+			continue
+		}
+		if !MatchPath(a.PathPrefix, path) {
+			continue
+		}
+		if len(a.PathPrefix) > bestLen {
+			bestMatch = a
+			bestLen = len(a.PathPrefix)
+		}
+	}
+	return bestMatch
+}
+
+// anyMatching reports whether the most specific approval matching host+path at
+// any applicable level satisfies pred. Levels are checked broadest-first, using
+// the same path-matching logic as CheckExistingWithPath, so a setting on a
+// global rule also applies to VM- and skill-level traffic.
+func (m *Manager) anyMatching(host, path, skillID, sourceIP string, pred func(*HostApproval) bool) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Check levels broadest-first: global -> VM -> skill.
-	levels := []struct{ sid, sip string }{
-		{"", ""},
+	for _, lvl := range levelsFor(skillID, sourceIP) {
+		if a := m.bestMatchLocked(host, path, lvl.skillID, lvl.sourceIP); a != nil && pred(a) {
+			return true
+		}
 	}
-	if sourceIP != "" {
-		levels = append(levels, struct{ sid, sip string }{"", sourceIP})
-	}
-	if skillID != "" {
-		levels = append(levels, struct{ sid, sip string }{skillID, ""})
-	}
+	return false
+}
 
-	for _, lvl := range levels {
-		var bestMatch *HostApproval
-		bestLen := -1
-		for _, a := range m.approvals {
-			if a.SkillID != lvl.sid || a.SourceIP != lvl.sip {
-				continue
-			}
-			if !MatchHost(a.Host, host) {
-				continue
-			}
-			if !MatchPath(a.PathPrefix, path) {
-				continue
-			}
-			if len(a.PathPrefix) > bestLen {
-				bestMatch = a
-				bestLen = len(a.PathPrefix)
-			}
-		}
-		if bestMatch != nil && bestMatch.LoggingMode == LoggingModeFull {
-			return LoggingModeFull
-		}
+// GetLoggingMode returns the logging mode for the best matching approval.
+// Returns LoggingModeNormal if no matching approval is found or if the
+// matched approval has no explicit logging mode set.
+func (m *Manager) GetLoggingMode(host, path, skillID, sourceIP string) LoggingMode {
+	if m.anyMatching(host, path, skillID, sourceIP, func(a *HostApproval) bool {
+		return a.LoggingMode == LoggingModeFull
+	}) {
+		return LoggingModeFull
 	}
 	return LoggingModeNormal
+}
+
+// GetDisableTransferEncoding reports whether requests matching host+path must
+// be forwarded without a Transfer-Encoding header. Returns false when no
+// matching approval requests it.
+func (m *Manager) GetDisableTransferEncoding(host, path, skillID, sourceIP string) bool {
+	return m.anyMatching(host, path, skillID, sourceIP, func(a *HostApproval) bool {
+		return a.DisableTransferEncoding
+	})
 }
 
 // SetLoggingMode updates the logging mode for an existing approval.
@@ -465,6 +500,18 @@ func (m *Manager) SetLoggingMode(host, skillID, sourceIP, pathPrefix string, mod
 	defer m.mu.Unlock()
 	if a, ok := m.approvals[k]; ok {
 		a.LoggingMode = mode
+		a.UpdatedAt = time.Now()
+	}
+}
+
+// SetDisableTransferEncoding updates the Transfer-Encoding policy for an
+// existing approval.
+func (m *Manager) SetDisableTransferEncoding(host, skillID, sourceIP, pathPrefix string, disable bool) {
+	k := key(host, skillID, sourceIP, pathPrefix)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if a, ok := m.approvals[k]; ok {
+		a.DisableTransferEncoding = disable
 		a.UpdatedAt = time.Now()
 	}
 }

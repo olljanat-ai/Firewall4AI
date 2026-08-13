@@ -320,3 +320,41 @@ func TestDeleteCredential_MissingID(t *testing.T) {
 		t.Errorf("expected 400, got %d", w.Code)
 	}
 }
+
+func TestDecideApproval_DisableTransferEncoding(t *testing.T) {
+	h, mux := setupHandler(t)
+
+	w := doRequest(mux, "POST", "/api/approvals/decide", map[string]any{
+		"host": "storage.example.com", "path_prefix": "/tfstate/",
+		"status": "approved", "disable_transfer_encoding": true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !h.Approvals.GetDisableTransferEncoding("storage.example.com", "/tfstate/dev.tfstate", "", "") {
+		t.Fatal("expected the rule to disable Transfer-Encoding")
+	}
+
+	// A decision that omits the field must not reset it.
+	w = doRequest(mux, "POST", "/api/approvals/decide", map[string]any{
+		"host": "storage.example.com", "path_prefix": "/tfstate/", "status": "approved",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !h.Approvals.GetDisableTransferEncoding("storage.example.com", "/tfstate/dev.tfstate", "", "") {
+		t.Error("omitting disable_transfer_encoding must leave the stored value alone")
+	}
+
+	// Explicitly turning it off works.
+	w = doRequest(mux, "POST", "/api/approvals/decide", map[string]any{
+		"host": "storage.example.com", "path_prefix": "/tfstate/",
+		"status": "approved", "disable_transfer_encoding": false,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if h.Approvals.GetDisableTransferEncoding("storage.example.com", "/tfstate/dev.tfstate", "", "") {
+		t.Error("expected disable_transfer_encoding=false to clear the setting")
+	}
+}

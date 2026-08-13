@@ -224,8 +224,11 @@ type decisionRequest struct {
 	PathPrefix  string               `json:"path_prefix"`
 	Category    string               `json:"category"`
 	LoggingMode approval.LoggingMode `json:"logging_mode"`
-	Status      approval.Status      `json:"status"`
-	Note        string               `json:"note"`
+	// DisableTransferEncoding is a pointer so that callers which omit the
+	// field (the quick approve/deny buttons) leave the stored value alone.
+	DisableTransferEncoding *bool           `json:"disable_transfer_encoding"`
+	Status                  approval.Status `json:"status"`
+	Note                    string          `json:"note"`
 }
 
 type deleteApprovalRequest struct {
