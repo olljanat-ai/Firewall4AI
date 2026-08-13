@@ -54,10 +54,17 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	// upstream server if this host cannot be inspected.
 	sniHost, clientHello, err := peekClientHello(clientConn, clientHelloTimeout)
 	if err != nil {
+		// Name the destination: a redirected port carrying something other
+		// than TLS ends up here, and without it the admin sees a failure with
+		// no indication of where the agent was going.
+		detail := "read TLS client hello: " + err.Error()
+		if origAddr, origErr := p.originalDst(clientConn); origErr == nil {
+			detail = "read TLS client hello from connection to " + origAddr + ": " + err.Error()
+		}
 		p.Logger.Add(proxylog.Entry{
 			Method: "TRANSPARENT",
 			Status: "error",
-			Detail: "read TLS client hello: " + err.Error(),
+			Detail: detail,
 		})
 		return
 	}

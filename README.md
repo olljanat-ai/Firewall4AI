@@ -34,7 +34,8 @@ Agent VM                      Firewall4AI VM                   Internet
     |                               |                               |
     |  curl https://api.com/data    |                               |
     | ------ TCP :443 ------------> |                               |
-    |     (iptables REDIRECT:8443)  |                               |
+    |  (iptables REDIRECT:8443 —    |                               |
+    |   also 6443/8443/9443/16443)  |                               |
     | <---- TLS (MITM cert) ------- |                               |
     | ------ HTTP inside TLS -----> |                               |
     |                               | --- TLS to real host -------> |
