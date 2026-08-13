@@ -116,7 +116,7 @@ func (p *Proxy) upstreamRequiresClientCert(host, addr string) bool {
 			Method: "TLS",
 			Host:   host,
 			Status: "allowed",
-			Detail: "upstream requests a client certificate: TLS inspection disabled for this host",
+			Detail: "upstream " + addr + " requests a client certificate: TLS inspection disabled for this host",
 		})
 	}
 	return required
@@ -165,7 +165,7 @@ func (p *Proxy) handleTLSPassthrough(clientConn net.Conn, host, addr string, cli
 			Method: "TRANSPARENT",
 			Host:   host,
 			Status: string(status),
-			Detail: "host not approved (TLS passthrough)",
+			Detail: "host not approved (TLS passthrough to " + addr + ")",
 		})
 		return
 	}
@@ -205,7 +205,7 @@ func (p *Proxy) handleTLSPassthrough(clientConn net.Conn, host, addr string, cli
 		Method:   "TRANSPARENT",
 		Host:     host,
 		Status:   "allowed",
-		Detail:   "TLS passthrough (client certificate authentication, no inspection)",
+		Detail:   "TLS passthrough to " + addr + " (client certificate authentication, no inspection)",
 		Duration: time.Since(start).Milliseconds(),
 	})
 

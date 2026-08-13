@@ -8,8 +8,9 @@ Type=simple
 ExecStartPre=/bin/mkdir -p /var/lib/firewall4ai
 ExecStart=/usr/bin/firewall4ai -config /etc/firewall4ai/config.json
 Restart=on-failure
-# DHCP server needs to send broadcast packets
-AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
+# DHCP server needs to send broadcast packets, and the transparent TLS
+# REDIRECT rules for the configured HTTPS ports need CAP_NET_ADMIN.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_NET_ADMIN
 
 [Install]
 WantedBy=multi-user.target

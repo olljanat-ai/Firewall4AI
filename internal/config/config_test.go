@@ -64,3 +64,49 @@ func TestGet(t *testing.T) {
 		t.Errorf("Get() should return current config")
 	}
 }
+
+func TestTransparentTLSPortList_Default(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	ports := cfg.TransparentTLSPortList()
+
+	// 443 alone is not enough: Kubernetes API servers on Oracle OKE, kubeadm
+	// and Rancher listen on 6443, and a port that is not redirected never
+	// reaches the proxy.
+	for _, want := range []int{443, 6443} {
+		found := false
+		for _, port := range ports {
+			if port == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("default transparent TLS ports %v must contain %d", ports, want)
+		}
+	}
+}
+
+func TestTransparentTLSPortList_Configured(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	os.WriteFile(cfgPath, []byte(`{"transparent_tls_ports":[443,6443,443,0,70000,-1]}`), 0644)
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	ports := cfg.TransparentTLSPortList()
+	if len(ports) != 2 || ports[0] != 443 || ports[1] != 6443 {
+		t.Errorf("TransparentTLSPortList() = %v, want [443 6443] with duplicates and invalid ports dropped", ports)
+	}
+}
+
+func TestTransparentTLSPortList_AllInvalidFallsBackToDefaults(t *testing.T) {
+	cfg := Config{TransparentTLSPorts: []int{0, -5}}
+	if got := cfg.TransparentTLSPortList(); len(got) != len(DefaultTransparentTLSPorts) {
+		t.Errorf("TransparentTLSPortList() = %v, want the defaults %v", got, DefaultTransparentTLSPorts)
+	}
+}

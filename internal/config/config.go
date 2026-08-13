@@ -46,12 +46,51 @@ type Config struct {
 	// authenticate clients with certificates (mutual TLS) are detected
 	// automatically; this list forces the behaviour for additional hosts.
 	// Supports `*.example.com` wildcards.
-	TLSPassthroughHosts []string  `json:"tls_passthrough_hosts"`
+	TLSPassthroughHosts []string `json:"tls_passthrough_hosts"`
+	// TransparentTLSPorts are the destination ports redirected to the
+	// transparent TLS listener. HTTPS is not always served on 443: Kubernetes
+	// API servers commonly listen on 6443 (kubeadm, Oracle OKE, Rancher) or
+	// 8443 (OpenShift, minikube), and traffic to a port that is not redirected
+	// never reaches the proxy at all — the agent just gets "connection
+	// refused". Empty means DefaultTransparentTLSPorts.
+	TransparentTLSPorts []int     `json:"transparent_tls_ports"`
 	LearningMode        bool      `json:"learning_mode"`
 	DisabledLanguages   []string  `json:"-"` // runtime only, persisted in state.json
 	DisabledDistros     []string  `json:"-"` // runtime only, persisted in state.json
 	MaxFullLogBody      int       `json:"-"` // runtime only, persisted in state.json
 	Git                 GitConfig `json:"-"` // runtime only, persisted in state.json
+}
+
+// DefaultTransparentTLSPorts are the destination ports redirected to the
+// transparent TLS listener when the config does not list any. Besides plain
+// HTTPS these are the ports Kubernetes API servers are commonly published on:
+// 6443 (kubeadm, Oracle OKE, Rancher/RKE), 8443 (OpenShift, minikube) and
+// 16443 (MicroK8s). Redirecting a port can only widen what agents can reach:
+// without a redirect the FORWARD chain rejects the connection outright.
+var DefaultTransparentTLSPorts = []int{443, 6443, 8443, 9443, 16443}
+
+// TransparentTLSPortList returns the transparent TLS ports to redirect,
+// falling back to DefaultTransparentTLSPorts when none are configured.
+// Invalid port numbers are dropped and duplicates removed, so the result can
+// be programmed into netfilter as-is.
+func (c Config) TransparentTLSPortList() []int {
+	ports := c.TransparentTLSPorts
+	if len(ports) == 0 {
+		ports = DefaultTransparentTLSPorts
+	}
+	seen := make(map[int]bool, len(ports))
+	out := make([]int, 0, len(ports))
+	for _, port := range ports {
+		if port < 1 || port > 65535 || seen[port] {
+			continue
+		}
+		seen[port] = true
+		out = append(out, port)
+	}
+	if len(out) == 0 {
+		return append([]int{}, DefaultTransparentTLSPorts...)
+	}
+	return out
 }
 
 // SetLearningMode updates the learning mode setting at runtime.

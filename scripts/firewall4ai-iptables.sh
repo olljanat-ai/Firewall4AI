@@ -83,7 +83,14 @@ iptables -A INPUT -i $INTERNAL_IF -j REJECT
 # FORWARD rules: reject ALL forwarding from internal network
 # Agents cannot route through this host to reach the internet.
 # All traffic is intercepted by the transparent proxy.
+#
+# Traffic to a port that is not redirected to the proxy lands here and the
+# agent sees "connection refused" without anything appearing in the
+# Firewall4AI request log (the proxy never saw the connection). Log those
+# packets to the kernel log so the reason is visible in journalctl.
 # ============================================================
+iptables -A FORWARD -i $INTERNAL_IF -m limit --limit 10/min --limit-burst 20 \
+    -j LOG --log-prefix "FW4AI-NOT-INTERCEPTED: " --log-level 4
 iptables -A FORWARD -i $INTERNAL_IF -j REJECT
 
 # ============================================================
@@ -97,6 +104,12 @@ iptables -A FORWARD -i $EXTERNAL_IF -j ACCEPT
 # NAT: Transparent proxy redirect rules
 # Intercept HTTP (80) and HTTPS (443) from agent network and
 # redirect to the local proxy. Agents need no proxy config.
+#
+# HTTPS on other ports (6443 for Kubernetes API servers on Oracle OKE,
+# kubeadm and Rancher, 8443 for OpenShift/minikube, ...) is redirected by
+# firewall4ai itself from "transparent_tls_ports" in config.json, so the
+# port list has a single source of truth. Those rules are re-checked once a
+# minute, which also restores them when this script is re-run.
 # ============================================================
 
 # Redirect HTTP to proxy server (transparent HTTP)

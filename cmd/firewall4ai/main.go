@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/image"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 	"github.com/olljanat-ai/firewall4ai/internal/netboot"
+	"github.com/olljanat-ai/firewall4ai/internal/netfilter"
 	"github.com/olljanat-ai/firewall4ai/internal/proxy"
 	"github.com/olljanat-ai/firewall4ai/internal/store"
 	"github.com/olljanat-ai/firewall4ai/internal/tftp"
@@ -36,6 +38,10 @@ import (
 
 // Version is set at build time via ldflags.
 var Version = "dev"
+
+// redirectRefreshInterval is how often the transparent TLS REDIRECT rules are
+// checked and reinstalled if something flushed the nat table.
+const redirectRefreshInterval = time.Minute
 
 // storeData holds the persisted state.
 type storeData struct {
@@ -510,10 +516,12 @@ func main() {
 		transparentListener = nil
 	}
 	if transparentListener != nil {
+		tlsPorts := cfg.TransparentTLSPortList()
 		go func() {
-			log.Printf("Transparent TLS listener on %s (iptables REDIRECT :443 -> %s)", cfg.TransparentTLSAddr, cfg.TransparentTLSAddr)
+			log.Printf("Transparent TLS listener on %s (iptables REDIRECT %v -> %s)", cfg.TransparentTLSAddr, tlsPorts, cfg.TransparentTLSAddr)
 			p.ServeTransparentTLS(transparentListener)
 		}()
+		applyTransparentRedirects(internalIface, serverIP.String(), cfg.TransparentTLSAddr, tlsPorts)
 	}
 
 	// Start admin server.
@@ -563,6 +571,52 @@ func main() {
 	adminServer.Shutdown(ctx)
 	agentAPIServer.Shutdown(ctx)
 	log.Println("Stopped.")
+}
+
+// applyTransparentRedirects programs the iptables REDIRECT rules that send
+// agent HTTPS traffic to the transparent TLS listener. The boot script only
+// covers 443; ports such as 6443 (Kubernetes API on Oracle OKE, kubeadm,
+// Rancher) reach the proxy solely because of these rules — without them the
+// FORWARD chain rejects the connection and the agent sees "connection refused"
+// with nothing in the request log.
+func applyTransparentRedirects(iface, excludeIP, listenAddr string, ports []int) {
+	_, portStr, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		log.Printf("Warning: cannot derive transparent TLS port from %q: %v", listenAddr, err)
+		return
+	}
+	toPort, err := strconv.Atoi(portStr)
+	if err != nil {
+		log.Printf("Warning: invalid transparent TLS port %q: %v", portStr, err)
+		return
+	}
+
+	redirector := &netfilter.Redirector{Interface: iface, ExcludeIP: excludeIP, ToPort: toPort}
+	added, errs := redirector.EnsureAll(ports)
+	for _, err := range errs {
+		log.Printf("Warning: could not install transparent TLS redirect (non-fatal in dev): %v", err)
+	}
+	if len(added) > 0 {
+		log.Printf("Transparent TLS redirects installed on %s for ports %v -> :%d", iface, added, toPort)
+	}
+	if len(errs) == len(ports) {
+		// No rule could be installed at all (no iptables, no privileges):
+		// this is a development box, so do not keep retrying in the log.
+		return
+	}
+	go maintainTransparentRedirects(redirector, ports)
+}
+
+// maintainTransparentRedirects reinstalls the REDIRECT rules if they disappear.
+// Reapplying the boot script flushes the nat table, which would silently take
+// the extra HTTPS ports offline again until the next restart.
+func maintainTransparentRedirects(redirector *netfilter.Redirector, ports []int) {
+	for range time.Tick(redirectRefreshInterval) {
+		added, _ := redirector.EnsureAll(ports)
+		if len(added) > 0 {
+			log.Printf("Transparent TLS redirects restored for ports %v", added)
+		}
+	}
 }
 
 func getInterfaceIPv4(ifaceName string) (string, error) {

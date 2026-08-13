@@ -6,6 +6,7 @@ Once agents trust the CA certificate, all HTTP/HTTPS traffic is intercepted auto
 # On the agent VM - just make normal requests:
 curl http://api.example.com/data      # Intercepted via iptables :80 -> :8080
 curl https://api.example.com/data     # Intercepted via iptables :443 -> :8443
+curl https://cluster.example.com:6443 # HTTPS on other ports is intercepted too
 ```
 
 The admin UI will show pending approval requests. Approve them globally (for all agents), per VM (by source IP), or create skills for granting additional permissions to specific agents.
@@ -70,6 +71,25 @@ To force passthrough for hosts that are not detected automatically, list them in
   "tls_passthrough_hosts": ["*.azmk8s.io", "vault.internal.example.com"]
 }
 ```
+
+### HTTPS on Non-Standard Ports
+Only traffic to a port that is redirected to the proxy is intercepted; everything else from the agent network is rejected outright. AKS, EKS and GKE publish their Kubernetes API on 443, but many other clusters do not — Oracle OKE, kubeadm and Rancher/RKE use 6443, OpenShift and minikube use 8443, MicroK8s uses 16443. Before these ports were redirected, an agent connecting to such a cluster got
+
+```
+Kubernetes cluster unreachable: Get "https://<ip>:6443/version":
+dial tcp <ip>:6443: connect: connection refused
+```
+
+with nothing in the request log, because the connection never reached the proxy.
+
+Ports 443, 6443, 8443, 9443 and 16443 are redirected by default. Override the list in `config.json`:
+```json
+{
+  "transparent_tls_ports": [443, 6443, 8443, 9443, 16443, 8006]
+}
+```
+
+The rules are installed at startup and re-checked every minute, so re-running the iptables script does not take them offline. A connection to a port that is *not* in the list is still rejected by the FORWARD chain; those packets are now logged to the kernel log, so `journalctl -k | grep FW4AI-NOT-INTERCEPTED` shows which destination an agent failed to reach.
 
 ### Upstream Certificate Trust
 The proxy connects to upstream servers on behalf of agents, so it is the party that validates upstream certificates. Certificates that cannot be verified — internal PKI, self-signed appliances — are accepted rather than failing the request, and each one is recorded in the request log:
