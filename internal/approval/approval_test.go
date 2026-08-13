@@ -481,3 +481,63 @@ func TestManager_PathPrefixPersistence(t *testing.T) {
 		t.Errorf("expected host-only denial after load, got %s (exists=%v)", status, exists)
 	}
 }
+
+func TestManager_DisableTransferEncoding(t *testing.T) {
+	m := NewManager()
+	m.Decide("*.blob.core.windows.net", "", "", "", StatusApproved, "")
+	m.SetDisableTransferEncoding("*.blob.core.windows.net", "", "", "", true)
+
+	if !m.GetDisableTransferEncoding("onek8stfstate.blob.core.windows.net", "/tfstate/dev.tfstate", "", "10.0.0.5") {
+		t.Error("expected wildcard rule to disable Transfer-Encoding")
+	}
+	if m.GetDisableTransferEncoding("example.com", "/", "", "10.0.0.5") {
+		t.Error("unrelated host must keep the default")
+	}
+}
+
+func TestManager_DisableTransferEncoding_MostSpecificWins(t *testing.T) {
+	m := NewManager()
+	m.Decide("storage.example.com", "", "", "", StatusApproved, "")
+	m.Decide("storage.example.com", "", "", "/tfstate/", StatusApproved, "")
+	m.SetDisableTransferEncoding("storage.example.com", "", "", "/tfstate/", true)
+
+	if !m.GetDisableTransferEncoding("storage.example.com", "/tfstate/dev.tfstate", "", "") {
+		t.Error("expected the path rule to apply to its own paths")
+	}
+	if m.GetDisableTransferEncoding("storage.example.com", "/other", "", "") {
+		t.Error("expected paths outside the rule to keep the default")
+	}
+}
+
+func TestManager_DisableTransferEncoding_LevelCascade(t *testing.T) {
+	m := NewManager()
+	// A global rule applies to VM- and skill-scoped traffic as well.
+	m.Decide("storage.example.com", "", "", "", StatusApproved, "")
+	m.SetDisableTransferEncoding("storage.example.com", "", "", "", true)
+	if !m.GetDisableTransferEncoding("storage.example.com", "/x", "skill-1", "10.0.0.5") {
+		t.Error("expected the global rule to apply to skill/VM traffic")
+	}
+
+	// A VM-level rule applies only to that VM.
+	m2 := NewManager()
+	m2.Decide("storage.example.com", "", "10.0.0.5", "", StatusApproved, "")
+	m2.SetDisableTransferEncoding("storage.example.com", "", "10.0.0.5", "", true)
+	if !m2.GetDisableTransferEncoding("storage.example.com", "/x", "", "10.0.0.5") {
+		t.Error("expected the VM rule to apply to that VM")
+	}
+	if m2.GetDisableTransferEncoding("storage.example.com", "/x", "", "10.0.0.6") {
+		t.Error("expected another VM to keep the default")
+	}
+}
+
+func TestManager_DisableTransferEncodingPersistence(t *testing.T) {
+	m := NewManager()
+	m.Decide("storage.example.com", "", "", "", StatusApproved, "")
+	m.SetDisableTransferEncoding("storage.example.com", "", "", "", true)
+
+	m2 := NewManager()
+	m2.LoadApprovals(m.Export())
+	if !m2.GetDisableTransferEncoding("storage.example.com", "/x", "", "") {
+		t.Error("expected the setting to survive a state.json round trip")
+	}
+}

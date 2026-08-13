@@ -683,13 +683,16 @@ async function loadApprovals() {
              ${promoteBtn}
              ${editBtn} ${deleteBtn}`;
         }
+        const teDisplay = a.disable_transfer_encoding
+          ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px" title="Forwarded without Transfer-Encoding">no chunked</span>'
+          : '';
         const logModeDisplay = a.logging_mode === 'full'
           ? '<span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent)">Full</span>'
           : '<span class="badge-status" style="opacity:0.4">Normal</span>';
         rows.push(`<tr>
           <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('url',this)"></td>
           <td><strong>${esc(a.host)}</strong>${a.host.includes('*') ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px">wildcard</span>' : ''}</td>
-          <td>${pathDisplay}</td>
+          <td>${pathDisplay}${teDisplay}</td>
           <td>${categoryDisplay}</td>
           <td>${logModeDisplay}</td>
           <td>${sourceDisplay}</td>
@@ -804,6 +807,7 @@ function showAddRule() {
   document.getElementById('rule-status').value = 'approved';
   populateCategorySelect('rule-category', '');
   document.getElementById('rule-logging-mode').value = 'normal';
+  document.getElementById('rule-transfer-encoding').value = 'default';
   document.getElementById('rule-note').value = '';
   updateRuleFields();
   updateWildcardHint();
@@ -831,6 +835,7 @@ function showEditRule(idx) {
   document.getElementById('rule-status').value = a.status === 'pending' ? 'approved' : a.status;
   populateCategorySelect('rule-category', a.category || '');
   document.getElementById('rule-logging-mode').value = a.logging_mode || 'normal';
+  document.getElementById('rule-transfer-encoding').value = a.disable_transfer_encoding ? 'disabled' : 'default';
   document.getElementById('rule-note').value = a.note || '';
   updateRuleFields();
   updateWildcardHint();
@@ -856,6 +861,7 @@ async function submitRule() {
   const status = document.getElementById('rule-status').value;
   const category = document.getElementById('rule-category').value.trim();
   const loggingMode = document.getElementById('rule-logging-mode').value;
+  const disableTransferEncoding = document.getElementById('rule-transfer-encoding').value === 'disabled';
   const note = document.getElementById('rule-note').value.trim();
   let sourceIP = '';
   let skillID = '';
@@ -883,7 +889,7 @@ async function submitRule() {
         });
       }
     }
-    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, category, logging_mode: loggingMode, status, note });
+    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, category, logging_mode: loggingMode, disable_transfer_encoding: disableTransferEncoding, status, note });
     hideAddRule();
     loadApprovals();
   } catch (e) {

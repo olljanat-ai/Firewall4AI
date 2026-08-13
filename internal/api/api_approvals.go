@@ -57,6 +57,9 @@ func (h *Handler) decideApproval(w http.ResponseWriter, r *http.Request) {
 	if req.LoggingMode != "" {
 		h.Approvals.SetLoggingMode(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, req.LoggingMode)
 	}
+	if req.DisableTransferEncoding != nil {
+		h.Approvals.SetDisableTransferEncoding(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, *req.DisableTransferEncoding)
+	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }

@@ -101,6 +101,25 @@ TLS  k8s.internal.example.com
 
 Access control stays with the approval system: an untrusted certificate does not grant access to a host that has not been approved.
 
+### Disabling Transfer-Encoding per URL
+When the agent's request has no declared length, the proxy forwards it with `Transfer-Encoding: chunked`. Some servers refuse chunked requests outright — Azure Blob Storage answers:
+
+```xml
+<Error><Code>UnsupportedHeader</Code><Message>One of the HTTP headers specified in the request is not supported.
+...</Message><HeaderName>Transfer-Encoding</HeaderName></Error>
+```
+
+Edit the URL rule for that host (Rules → Edit) and set **Transfer-Encoding** to *Disabled*. The proxy then buffers the request body, sends an explicit `Content-Length`, and strips the `Transfer-Encoding` header for every request the rule covers. Combine it with a path prefix to limit the scope, e.g. host `onek8stfstate.blob.core.windows.net` with path prefix `/tfstate/`.
+
+Bodies are buffered in memory, so requests larger than 10 MB are rejected with a `502` naming the limit instead of being sent chunked. Rules without the setting keep the default behaviour.
+
+The same rule can be set through the API:
+
+```bash
+curl -X POST https://<firewall>/api/approvals/decide \
+  -d '{"host":"onek8stfstate.blob.core.windows.net","path_prefix":"/tfstate/","status":"approved","disable_transfer_encoding":true}'
+```
+
 ### Container Registry Control
 Firewall4AI transparently intercepts container image pulls via the same TLS MITM proxy used for web traffic. **No Docker or containerd mirror configuration is needed on agent VMs** — image pulls are intercepted automatically, just like any other HTTPS traffic.
 

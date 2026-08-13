@@ -29,18 +29,32 @@ import (
 
 const (
 	approvalTimeout = 15 * time.Minute
+
+	// maxBufferedRequestBody caps how much of a request body is held in memory
+	// when Transfer-Encoding is disabled for a URL and the body has to be
+	// buffered to compute a Content-Length.
+	maxBufferedRequestBody = 10 << 20 // 10 MB
 )
 
-// responseBodyWrapper restores the full original response body (prefix for logging
-// + remaining stream from upstream) while still allowing the original body to be
-// closed properly by the defer resp.Body.Close().
-type responseBodyWrapper struct {
+// bodyWrapper restores the full original body (prefix read for logging +
+// remaining stream) while still allowing the original body to be closed
+// properly by the defer resp.Body.Close().
+type bodyWrapper struct {
 	io.Reader
 	original io.ReadCloser
 }
 
-func (w *responseBodyWrapper) Close() error {
+func (w *bodyWrapper) Close() error {
 	return w.original.Close()
+}
+
+// rewindBody returns a body that replays prefix before continuing with the
+// rest of orig, so a body inspected for logging can still be forwarded whole.
+func rewindBody(prefix []byte, orig io.ReadCloser) io.ReadCloser {
+	return &bodyWrapper{
+		Reader:   io.MultiReader(bytes.NewReader(prefix), orig),
+		original: orig,
+	}
 }
 
 // Proxy is the main proxy server.
@@ -246,6 +260,15 @@ func (p *Proxy) getLoggingMode(host, path string, skill *auth.Skill, sourceIP st
 	return p.Approvals.GetLoggingMode(host, path, sid, sourceIP)
 }
 
+// transferEncodingDisabled reports whether the URL rule matching this request
+// asks the proxy to forward it without a Transfer-Encoding header.
+func (p *Proxy) transferEncodingDisabled(host, path string, skill *auth.Skill, sourceIP string) bool {
+	if p.Approvals == nil {
+		return false
+	}
+	return p.Approvals.GetDisableTransferEncoding(host, path, getSkillID(skill), sourceIP)
+}
+
 // --- Error response helpers ---
 
 // statusToHTTPCode maps an approval status to the appropriate HTTP status code.
@@ -327,23 +350,72 @@ func write502TLS(conn net.Conn) {
 
 // --- Body capture helpers ---
 
-// captureRequestBody reads the request body (up to maxFullLogBody) and replaces it
-// with a new reader so the request can still be forwarded.
+// captureRequestBody reads the start of the request body (up to maxFullLogBody)
+// for logging and restores it so the request can still be forwarded.
+//
+// The body is rewound rather than replaced: replacing it with only the bytes
+// read would truncate uploads larger than the log limit, and replacing an
+// http.NoBody (any request without a body, e.g. a plain GET) with a reader
+// makes net/http forward the request with `Transfer-Encoding: chunked`, which
+// some servers reject outright.
 func captureRequestBody(r *http.Request) string {
-	if r.Body == nil {
+	if r.Body == nil || r.Body == http.NoBody {
 		return ""
 	}
 	maxBody := config.GetMaxFullLogBody()
-	body, err := io.ReadAll(io.LimitReader(r.Body, int64(maxBody)+1))
-	r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	if err != nil {
+	orig := r.Body
+	prefix, err := io.ReadAll(io.LimitReader(orig, int64(maxBody)+1))
+	r.Body = rewindBody(prefix, orig)
+	if err != nil && err != io.EOF {
 		return ""
 	}
-	if len(body) > maxBody {
-		return string(body[:maxBody]) + "... (truncated)"
+	if len(prefix) > maxBody {
+		return string(prefix[:maxBody]) + "... (truncated)"
 	}
-	return string(body)
+	return string(prefix)
+}
+
+// stripRequestTransferEncoding rewrites an outgoing request so it carries no
+// Transfer-Encoding header. A body of unknown length is buffered so an explicit
+// Content-Length can be sent instead; a request that already has a
+// Content-Length is left untouched.
+//
+// This is opt-in per URL rule (DisableTransferEncoding) because it forces the
+// whole body into memory. Servers such as Azure Blob Storage need it: they
+// answer any chunked request with
+// `<Error><Code>UnsupportedHeader</Code>...<HeaderName>Transfer-Encoding</HeaderName></Error>`.
+func stripRequestTransferEncoding(r *http.Request) error {
+	r.TransferEncoding = nil
+	r.Header.Del("Transfer-Encoding")
+
+	if r.Body == nil || r.Body == http.NoBody {
+		r.ContentLength = 0
+		return nil
+	}
+	// A known length is already sent as Content-Length by net/http.
+	if r.ContentLength > 0 {
+		return nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBufferedRequestBody+1))
+	r.Body.Close()
+	if err != nil {
+		return fmt.Errorf("read request body: %w", err)
+	}
+	if int64(len(body)) > maxBufferedRequestBody {
+		return fmt.Errorf("request body exceeds %d bytes and cannot be sent without Transfer-Encoding", int64(maxBufferedRequestBody))
+	}
+
+	r.ContentLength = int64(len(body))
+	if len(body) == 0 {
+		r.Body = http.NoBody
+	} else {
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	r.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	return nil
 }
 
 // captureResponseBody reads the response body (up to maxFullLogBody),
@@ -360,10 +432,7 @@ func captureResponseBody(resp *http.Response) string {
 		prefix = nil
 	}
 
-	resp.Body = &responseBodyWrapper{
-		Reader:   io.MultiReader(bytes.NewReader(prefix), origBody),
-		original: origBody,
-	}
+	resp.Body = rewindBody(prefix, origBody)
 
 	decoded := prefix
 	switch strings.ToLower(resp.Header.Get("Content-Encoding")) {

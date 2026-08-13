@@ -690,6 +690,14 @@
         </select>
       </div>
       <div class="form-group">
+        <label>Transfer-Encoding</label>
+        <select id="rule-transfer-encoding">
+          <option value="default">Default (chunked when the body length is unknown)</option>
+          <option value="disabled">Disabled (buffer body, always send Content-Length)</option>
+        </select>
+        <div class="field-hint">Disable for servers that reject chunked requests, e.g. Azure Blob Storage returning <code>UnsupportedHeader</code> for <code>Transfer-Encoding</code>. Bodies are buffered in memory (10 MB max).</div>
+      </div>
+      <div class="form-group">
         <label>Note (optional)</label>
         <input type="text" id="rule-note" placeholder="e.g., Allow access to GitHub API">
       </div>
